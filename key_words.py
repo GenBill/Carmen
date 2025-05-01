@@ -71,6 +71,10 @@ def analysis_message(upper_message, stock_list):
     return results
 
 def key_word_check(message):
+    
+    if '\n引用' in message:
+        return 0
+    
     # Convert message to uppercase ONCE here
     upper_message = message.upper()
     score = 0
