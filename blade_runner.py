@@ -6,7 +6,7 @@ import multiprocessing # 导入 multiprocessing 模块
 import uiautomation as auto
 
 from key_words import key_word_check
-
+from get_stock_list import get_nasdaq_stock_symbols
 MASTER = '卡门卡'
 MASTER_GROUP = '天天去旅行'
 
@@ -84,6 +84,10 @@ def monitor_wechat():
         time.sleep(10)  # 每 10 秒检查一次
 
 if __name__ == '__main__':
+
+    # 更新股票代码列表
+    get_nasdaq_stock_symbols()
+    
     # 对于 Windows 打包或冻结应用时需要
     multiprocessing.freeze_support()
 
