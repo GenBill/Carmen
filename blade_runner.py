@@ -1,10 +1,14 @@
-import uiautomation as auto
+
 import time
 import os
 import winsound # 导入 winsound 模块
 import multiprocessing # 导入 multiprocessing 模块
+import uiautomation as auto
+
+from key_words import key_word_check
 
 MASTER = '卡门卡'
+MASTER_GROUP = '天天去旅行'
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -41,22 +45,32 @@ def add_this_message_list_to_all_message_list(this_message_list, all_message_lis
     for message in this_message_list:
         if message not in all_message_list:
             all_message_list.append(message)
-            if '@所有人' in message:
-                print("ALERT! @所有人 message detected!") # 在主进程中立即打印提示
+            alert_score = key_word_check(message)
+            if alert_score >= 1:
+                print(f"ALERT! Message detected! BUY BUY BUY! Score: {alert_score}") # 在主进程中立即打印提示
                 # 创建并启动一个新进程来播放声音
-                alert_process = multiprocessing.Process(target=call_alert_sound, args=(10,)) # 使用默认10秒
+                alert_process = multiprocessing.Process(target=call_alert_sound, args=(10*alert_score,)) # 使用默认10秒
                 alert_process.start() # 启动进程，不会阻塞主进程
 
 def monitor_wechat():
-    wechat_window = auto.WindowControl(searchDepth=1, Name='天天去旅行')
+    wechat_window = auto.WindowControl(searchDepth=1, Name=MASTER_GROUP)
     chat_list = wechat_window.ListControl(Name='消息')
 
     all_message_list = []
     
     while True:
+        
+        try:
+            main_children = chat_list.GetChildren()
+        except:
+            print(f'窗口未找到...请确保"{MASTER_GROUP}"窗口存在')
+            time.sleep(2)
+            continue
+        
         clear_screen()
+        
         this_message_list = []
-        for item in chat_list.GetChildren():
+        for item in main_children:
             try:
                 this_user = item.GetChildren()[0].GetChildren()[0].Name
             except:
