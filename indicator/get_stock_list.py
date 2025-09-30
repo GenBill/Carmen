@@ -48,8 +48,8 @@ def get_nasdaq_stock_symbols():
 
         # 检查必需的列是否存在
         if 'Test Issue' not in df.columns or 'Symbol' not in df.columns:
-             print(f"错误：文件 {url} 缺少必需的列 ('Test Issue' 或 'Symbol')。")
-             return []
+            print(f"错误：文件 {url} 缺少必需的列 ('Test Issue' 或 'Symbol')。")
+            return get_nasdaq_stock_symbols_from_file()
 
         # 过滤掉测试股票 (Test Issue 列为 'N')
         df_filtered = df[df['Test Issue'] == 'N']
@@ -59,21 +59,27 @@ def get_nasdaq_stock_symbols():
 
         # 提取股票代码列，并确保它们是字符串
         # 先使用 dropna() 移除 NaN 值，然后转换为字符串列表
-        valid_symbols = df_filtered['Symbol'].dropna().tolist()
-        symbols.extend([str(s) for s in valid_symbols])
-        print(f"已处理 NASDAQ 上市股票 {len(df_filtered)} 只 (移除了 NaN 后得到 {len(valid_symbols)} 个有效代码)。")
+        all_symbols = df_filtered['Symbol'].dropna().tolist()
+        all_symbols = [str(s) for s in all_symbols]
+        
+        # 过滤特殊证券（权证、单位、优先股等）
+        valid_symbols = [s for s in all_symbols if is_valid_common_stock(s)]
+        symbols.extend(valid_symbols)
+        
+        filtered_count = len(all_symbols) - len(valid_symbols)
+        print(f"已处理 NASDAQ 上市股票 {len(df_filtered)} 只 -> 过滤特殊证券 {filtered_count} 个 -> 保留 {len(valid_symbols)} 只普通股")
 
         # 去重并排序
         unique_symbols = sorted(list(set(symbols)))
-        print(f"获取完成。总共找到 {len(unique_symbols)} 只唯一的 NASDAQ 股票代码。")
+        print(f"获取完成。总共找到 {len(unique_symbols)} 只唯一的 NASDAQ 普通股代码。")
 
-        # 将代码保存到文件
+        # 将代码保存到文件（保存过滤后的普通股）
         try:
             # 更新保存的文件名
             with open("nasdaq_stock_symbols.txt", "w") as f:
                 for symbol in unique_symbols:
                     f.write(symbol + "\n")
-            print("\n所有 NASDAQ 股票代码已保存到 nasdaq_stock_symbols.txt")
+            print("\n所有 NASDAQ 普通股代码已保存到 nasdaq_stock_symbols.txt")
         except IOError as e:
             print(f"\n错误：无法将代码写入文件。 {e}")
 
@@ -100,12 +106,60 @@ def get_nasdaq_stock_symbols():
         return get_nasdaq_stock_symbols_from_file()
     
 
+def is_valid_common_stock(symbol: str) -> bool:
+    """
+    判断是否是有效的普通股票代码
+    过滤掉权证、单位、优先股等特殊证券
+    
+    Args:
+        symbol: 股票代码
+        
+    Returns:
+        bool: True表示是普通股票
+    """
+    symbol = symbol.strip().upper()
+    
+    # 排除空代码
+    if not symbol or len(symbol) < 1:
+        return False
+    
+    # 排除特殊后缀：
+    # W - 权证 (Warrants)
+    # U - 单位 (Units)
+    # R - 权利 (Rights)  
+    # P - 优先股 (Preferred)
+    # V - 临时代码
+    special_suffixes = ['W', 'U', 'R', 'P', 'V']
+    
+    # 检查是否以特殊后缀结尾
+    for suffix in special_suffixes:
+        if symbol.endswith(suffix) and len(symbol) > 1:
+            # 确保不是普通股票（如单字母或正常结尾）
+            # 例如：AAPL正常，AAPLW是权证
+            return False
+    
+    # 排除过长的代码（通常普通股是1-5个字母）
+    if len(symbol) > 5:
+        return False
+    
+    return True
+
+
 def get_nasdaq_stock_symbols_from_file(path: str="nasdaq_stock_symbols.txt"):
+    """从文件读取股票列表并过滤"""
+    symbols = []
     with open(path, "r") as f:
-        return f.readlines()
+        for line in f:
+            symbol = line.strip()
+            if is_valid_common_stock(symbol):
+                symbols.append(symbol)
+    
+    print(f"从文件读取: 原始{sum(1 for _ in open(path))}个 -> 过滤后{len(symbols)}个普通股")
+    return symbols
+
 
 def get_stock_list(path: str = ''):
-    if path is not '':
+    if path != '':
         return get_nasdaq_stock_symbols_from_file(path)
     else:
         return get_nasdaq_stock_symbols()

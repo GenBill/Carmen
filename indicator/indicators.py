@@ -26,12 +26,12 @@ def carmen_indicator(stock_data):
     
     # RSI8 超卖买入，超买卖出
     rsi_state = [False, False]
-    if stock_data['rsi'] is not None:
+    if stock_data['rsi'] != None:
         rsi_state = [stock_data['rsi'] <= rsi_minmax[0], stock_data['rsi'] >= rsi_minmax[1]]
     
     # RSI8 反转买入/卖出
     rsi_prev_state = [False, False]
-    if stock_data['rsi'] is not None and stock_data['rsi_prev'] is not None:
+    if stock_data['rsi'] != None and stock_data['rsi_prev'] != None:
         rsi_prev_state = [
             stock_data['rsi_prev'] + rsi_delta < stock_data['rsi'],  # 反转上涨
             stock_data['rsi_prev'] - rsi_delta > stock_data['rsi'],  # 反转下跌
@@ -39,12 +39,16 @@ def carmen_indicator(stock_data):
     
     # MACD 金叉买入，死叉卖出
     macd_state = [False, False]
-    if (stock_data['dif'] is not None and stock_data['dif_slope'] is not None 
-        and stock_data['dea'] is not None):
-        macd_state[0] = (stock_data['dif'] > 0 and stock_data['dif_slope'] > 0 
-                        and stock_data['dif'] + stock_data['dif_slope'] > stock_data['dea'])
-        macd_state[1] = (stock_data['dif'] < 0 and stock_data['dif_slope'] < 0 
-                        and stock_data['dif'] + stock_data['dif_slope'] < stock_data['dea'])
+    if (stock_data['dif'] != None and stock_data['dif_dea_slope'] != None 
+        and stock_data['dea'] != None):
+        macd_state[0] = (
+            stock_data['dif'] > 0 and stock_data['dif_dea_slope'] > 0 
+            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea']
+        )
+        macd_state[1] = (
+            stock_data['dif'] < 0 and stock_data['dif_dea_slope'] < 0 
+            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea']
+        )
 
     score = [0, 0]
 

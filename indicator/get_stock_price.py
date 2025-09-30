@@ -6,6 +6,9 @@ import pytz
 import os
 import pickle
 from pathlib import Path
+import time
+
+from lut import INTRADAY_VOLUME_LUT
 
 # 缓存目录
 CACHE_DIR = Path(__file__).parent / '.cache'
@@ -15,24 +18,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # 同时支持本地文件缓存，避免程序重启后重新获取数据
 _DATA_CACHE = {}
 
-# 盘中成交量估算LUT表（美东时间）
-# 键：交易时间（小时:分钟），值：预期该时间点的成交量占全天成交量的比例
-INTRADAY_VOLUME_LUT = {
-    '09:30': 0.08,   # 开盘30分钟，快速启动
-    '10:00': 0.25,   # 开盘1小时，约占1/3
-    '10:30': 0.32,
-    '11:00': 0.37,
-    '11:30': 0.41,
-    '12:00': 0.45,   # 中午前低谷
-    '12:30': 0.48,
-    '13:00': 0.52,
-    '13:30': 0.56,
-    '14:00': 0.60,   # 中间平稳
-    '14:30': 0.68,
-    '15:00': 0.78,   # 尾盘开始加速
-    '15:30': 0.90,
-    '16:00': 1.00,   # 收盘，约占尾盘1/3
-}
+broken_stock_symbols = [line.strip() for line in open('broken_stock_symbols.txt')]
 
 def calculate_rsi(prices, period=14, return_series=False):
     """
@@ -80,7 +66,7 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         signal: 信号线周期，默认 9
         
     Returns:
-        dict: 包含 dif(macd), dea(signal), histogram, dif_slope 的字典
+        dict: 包含 dif(macd), dea(signal), histogram, dif_dea_slope 的字典
     """
     exp1 = prices.ewm(span=fast, adjust=False).mean()
     exp2 = prices.ewm(span=slow, adjust=False).mean()
@@ -89,15 +75,19 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
     histogram = dif - dea
     
     # 计算DIF斜率（当日DIF - 前一日DIF）
-    dif_slope = None
+    dif_slope, dea_slope, dif_dea_slope = None, None, None
     if len(dif) >= 2 and not pd.isna(dif.iloc[-1]) and not pd.isna(dif.iloc[-2]):
-        dif_slope = round(dif.iloc[-1] - dif.iloc[-2], 2)
+        dif_slope = dif.iloc[-1] - dif.iloc[-2]
+    if len(dea) >= 2 and not pd.isna(dea.iloc[-1]) and not pd.isna(dea.iloc[-2]):
+        dea_slope = dea.iloc[-1] - dea.iloc[-2]
+    if dif_slope != None and dea_slope != None:
+        dif_dea_slope = round(dif_slope - dea_slope, 2)
     
     return {
         'dif': round(dif.iloc[-1], 2) if not pd.isna(dif.iloc[-1]) else None,
         'dea': round(dea.iloc[-1], 2) if not pd.isna(dea.iloc[-1]) else None,
         'histogram': round(histogram.iloc[-1], 2) if not pd.isna(histogram.iloc[-1]) else None,
-        'dif_slope': dif_slope
+        'dif_dea_slope': dif_dea_slope
     }
 
 
@@ -131,6 +121,22 @@ def is_intraday_data(trading_date_timestamp):
     
     return is_today, current_et
 
+def is_market_time(current_et_time):
+    """
+    检查当前ET时间是否在美股交易时间内（9:30-16:00 ET，全年固定）。
+    
+    Args:
+        current_et_time (datetime): 已转换为ET的datetime对象（无时区或带ET时区）。
+    
+    Returns:
+        bool: 是否在交易时间内。
+    """
+    # 美股交易时间固定为ET 9:30-16:00（不含周末/假期，此函数仅查时间）
+    current_time_minutes = current_et_time.hour * 60 + current_et_time.minute
+    market_open = 9 * 60 + 30
+    market_close = 16 * 60
+    
+    return market_open <= current_time_minutes < market_close  # 注意：收盘不含16:00本身，若需含可改<=
 
 def estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=None):
     """
@@ -152,15 +158,7 @@ def estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=
         # 不是今天的数据，直接返回原值（这是已收盘的完整数据）
         return current_volume
     
-    # 检查是否在交易时间内（9:30-16:00）
-    current_hour = current_et_time.hour
-    current_minute = current_et_time.minute
-    current_time_minutes = current_hour * 60 + current_minute
-    
-    market_open = 9 * 60 + 30   # 9:30
-    market_close = 16 * 60       # 16:00
-    
-    if current_time_minutes < market_open or current_time_minutes >= market_close:
+    if not is_market_time(current_et_time):
         # 不在交易时间内，返回原值
         return current_volume
     
@@ -268,24 +266,52 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                     # 加载到内存缓存
                     _DATA_CACHE[cache_key] = (cached_time, cached_hist)
         
-        # 3. 如果没有缓存或缓存过期，从API获取
+        # 3. 如果没有缓存或缓存过期，从API获取（带指数退避重试）
         if hist is None:
-            stock = yf.Ticker(symbol)
+            max_retries = 4   # 最多重试4次
+            base_delay = 2    # 基础延迟2秒
             
-            # 获取足够的历史数据以计算技术指标
-            # 数据越多，EMA越稳定。API调用次数与数据长度无关，所以尽可能多获取
-            # EMA需要足够的warmup期才能稳定，建议至少(慢线+信号线)*5 或 100天以上
-            # 对于MACD(8,17,9)：(17+9)*5 = 130天
-            # 对于MACD(12,26,9)：(26+9)*5 = 175天
-            # 使用1y获取约250天数据，精度最佳且API消耗不变
-            hist = stock.history(period="1y")
-            cache_source = "API"
-            
-            # 更新缓存（内存+文件）
-            if use_cache and not hist.empty:
-                _DATA_CACHE[cache_key] = (now, hist)
-                _save_cache_to_file(symbol, now, hist)
-                # print(f"更新缓存: {symbol} (内存+文件)")
+            for attempt in range(max_retries):
+
+                if symbol in broken_stock_symbols:
+                    return None
+                
+                try:
+                    stock = yf.Ticker(symbol)
+                    
+                    # 获取足够的历史数据以计算技术指标
+                    # 数据越多，EMA越稳定。API调用次数与数据长度无关，所以尽可能多获取
+                    # EMA需要足够的warmup期才能稳定，建议至少(慢线+信号线)*5 或 100天以上
+                    # 对于MACD(8,17,9)：(17+9)*5 = 130天
+                    # 对于MACD(12,26,9)：(26+9)*5 = 175天
+                    # 使用1y获取约250天数据，精度最佳且API消耗不变
+                    hist = stock.history(period="1y", timeout=10)
+                    
+                    if not hist.empty:
+                        cache_source = "API"
+                        # 更新缓存（内存+文件）
+                        if use_cache:
+                            _DATA_CACHE[cache_key] = (now, hist)
+                            _save_cache_to_file(symbol, now, hist)
+                        break  # 成功获取，跳出重试循环
+                    else:
+                        raise Exception("返回空数据")
+                        
+                except Exception as api_error:
+                    if attempt < max_retries - 1:
+                        # 指数退避：1秒, 2秒, 4秒...
+                        delay = base_delay * (2 ** attempt)
+                        print(f"⚠️  {symbol} API调用失败 (尝试 {attempt + 1}/{max_retries}): {api_error}")
+                        print(f"   等待 {delay} 秒后重试...")
+                        time.sleep(delay)
+                    else:
+                        # 最后一次尝试也失败
+                        print(f"❌ {symbol} API调用最终失败 (已重试{max_retries}次): {api_error}")
+                        broken_stock_symbols.append(symbol)
+                        with open('broken_stock_symbols.txt', 'w') as f:
+                            for symbol in broken_stock_symbols:
+                                f.write(symbol + "\n")
+                        return None
         
         # 显示缓存来源（调试用）
         # if cache_source:
@@ -336,10 +362,13 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
             'dif': macd_data['dif'],
             'dea': macd_data['dea'],
             'macd_histogram': macd_data['histogram'],
-            'dif_slope': macd_data['dif_slope']
+            'dif_dea_slope': macd_data['dif_dea_slope']
         }
+    except KeyboardInterrupt:
+        # 允许用户中断
+        raise
     except Exception as e:
-        print(f"获取 {symbol} 数据时出错: {e}")
+        print(f"⚠️  获取 {symbol} 数据时出错: {e}")
         return None
 
 
@@ -402,7 +431,7 @@ def get_cache_stats():
             info['sources'].append({
                 'type': '内存',
                 'age_minutes': age_minutes,
-                'data_points': len(hist) if hist is not None else 0
+                'data_points': len(hist) if hist != None else 0
             })
         
         # 检查文件缓存
@@ -415,7 +444,7 @@ def get_cache_stats():
                 info['sources'].append({
                     'type': '文件',
                     'age_minutes': age_minutes,
-                    'data_points': len(hist) if hist is not None else 0
+                    'data_points': len(hist) if hist != None else 0
                 })
         
         if info['sources']:

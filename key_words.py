@@ -64,7 +64,7 @@ def analysis_message(upper_message, stock_list):
         if item_type == 'ACTION':
             last_action = value
         elif item_type == 'STOCK':
-            if last_action is not None and value not in results:
+            if last_action != None and value not in results:
                 results[value] = last_action
 
     # Return the dictionary containing {stock_code: action} pairs
