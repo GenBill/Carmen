@@ -54,33 +54,61 @@ def get_nasdaq_stock_symbols():
         # 过滤掉测试股票 (Test Issue 列为 'N')
         df_filtered = df[df['Test Issue'] == 'N']
 
+        # 过滤掉 ETF 股票 (ETF 列不为空)
+        df_filtered = df_filtered[df_filtered['ETF'] == 'N']
+
         # 提取股票代码列，并确保它们是字符串
         # 先使用 dropna() 移除 NaN 值，然后转换为字符串列表
         valid_symbols = df_filtered['Symbol'].dropna().tolist()
         symbols.extend([str(s) for s in valid_symbols])
         print(f"已处理 NASDAQ 上市股票 {len(df_filtered)} 只 (移除了 NaN 后得到 {len(valid_symbols)} 个有效代码)。")
 
+        # 去重并排序
+        unique_symbols = sorted(list(set(symbols)))
+        print(f"获取完成。总共找到 {len(unique_symbols)} 只唯一的 NASDAQ 股票代码。")
+
+        # 将代码保存到文件
+        try:
+            # 更新保存的文件名
+            with open("nasdaq_stock_symbols.txt", "w") as f:
+                for symbol in unique_symbols:
+                    f.write(symbol + "\n")
+            print("\n所有 NASDAQ 股票代码已保存到 nasdaq_stock_symbols.txt")
+        except IOError as e:
+            print(f"\n错误：无法将代码写入文件。 {e}")
+
+        return unique_symbols
+
     except requests.exceptions.ProxyError as e:
         print(f"错误：连接代理服务器失败。请检查脚本中的代理设置或系统网络环境。 {e}")
-        return [] # 返回空列表表示失败
+        return get_nasdaq_stock_symbols_from_file()
+    
     except requests.exceptions.RequestException as e:
         print(f"错误：无法从 {url} 下载数据。 {e}")
-        return [] # 返回空列表表示失败
+        return get_nasdaq_stock_symbols_from_file()
+    
     except pd.errors.ParserError as e:
         print(f"错误：解析文件 {url} 时出错。文件格式可能已更改。 {e}")
-        return []
+        return get_nasdaq_stock_symbols_from_file()
+    
     except pd.errors.EmptyDataError:
-         print(f"警告：从 {url} 下载的数据为空或无法解析。")
-         return [] # 返回空列表
+        print(f"警告：从 {url} 下载的数据为空或无法解析。")
+        return get_nasdaq_stock_symbols_from_file()
+    
     except Exception as e:
         print(f"错误：处理来自 {url} 的数据时出错。 {e}")
-        return [] # 返回空列表表示失败
+        return get_nasdaq_stock_symbols_from_file()
+    
 
-    # 去重并排序
-    unique_symbols = sorted(list(set(symbols)))
-    print(f"获取完成。总共找到 {len(unique_symbols)} 只唯一的 NASDAQ 股票代码。")
+def get_nasdaq_stock_symbols_from_file(path: str="nasdaq_stock_symbols.txt"):
+    with open(path, "r") as f:
+        return f.readlines()
 
-    return unique_symbols
+def get_stock_list(path: str = ''):
+    if path is not '':
+        return get_nasdaq_stock_symbols_from_file(path)
+    else:
+        return get_nasdaq_stock_symbols()
 
 if __name__ == "__main__":
     # 调用更新后的函数
@@ -93,14 +121,5 @@ if __name__ == "__main__":
         print("...")
         print(nasdaq_symbols[-10:])
 
-        # 将代码保存到文件
-        try:
-            # 更新保存的文件名
-            with open("nasdaq_stock_symbols.txt", "w") as f:
-                for symbol in nasdaq_symbols:
-                    f.write(symbol + "\n")
-            print("\n所有 NASDAQ 股票代码已保存到 nasdaq_stock_symbols.txt")
-        except IOError as e:
-            print(f"\n错误：无法将代码写入文件。 {e}")
     else:
         print("\n未能获取 NASDAQ 股票代码。")

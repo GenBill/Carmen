@@ -1,0 +1,8 @@
+# 缓存目录
+.cache/
+*.pkl
+
+# Python缓存
+__pycache__/
+*.pyc
+*.pyo

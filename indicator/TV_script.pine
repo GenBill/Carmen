@@ -1,0 +1,120 @@
+//@version=5
+indicator("Buy and Sell Signal Detector (Daily Volume Completion)", overlay=true)
+
+// Configurable Parameters
+buy_volume_mult = input.float(1.5, title="Buy Volume Multiplier (e.g., 2.0 for 200%)", minval=1.0, step=0.1)
+sell_volume_mult = input.float(0.8, title="Sell Volume Multiplier (e.g., 0.8 for 80%)", minval=0.1, step=0.1)
+volume_avg_period = input.int(5, title="Volume Average Period", minval=1)
+buy_rsi_low = input.float(30, title="Buy RSI Low Threshold", minval=0, maxval=100, step=1)
+sell_rsi_high = input.float(70, title="Sell RSI High Threshold", minval=0, maxval=100, step=1)
+rsi_period = input.int(8, title="RSI Period", minval=1)
+macd_fast = input.int(8, title="MACD Fast Length", minval=1)
+macd_slow = input.int(17, title="MACD Slow Length", minval=1)
+macd_signal = input.int(9, title="MACD Signal Length", minval=1)
+est_flag = input.bool(true, title="Estimate Volume Flag")
+
+// 获取 session 类型
+session_type = syminfo.session  // "regular" 或 "extended"
+
+// 根据类型选择 session time part (hardcoded for US stocks)
+session_time_part = session_type == "extended" ? "0400-2000" : "0930-1600"
+
+// 解析 session_time_part
+open_hour = str.tonumber(str.substring(session_time_part, 0, 2))
+open_min = str.tonumber(str.substring(session_time_part, 2, 4))
+close_hour = str.tonumber(str.substring(session_time_part, 5, 7))
+close_min = str.tonumber(str.substring(session_time_part, 7, 9))
+
+// 计算 daily_trading_minutes
+daily_trading_minutes = (close_hour * 60 + close_min) - (open_hour * 60 + open_min)
+daily_trading_minutes := math.max(daily_trading_minutes, 1)
+
+// 计算开盘时间戳 (从实际开盘开始)
+open_timestamp = timestamp(syminfo.timezone, year(time), month(time), dayofmonth(time), int(open_hour), int(open_min), 0)
+
+// Calculate elapsed trading minutes (from open)
+elapsed_trading_mins = (time - open_timestamp) / (1000 * 60)
+elapsed_trading_mins := math.max(elapsed_trading_mins, 1)
+
+// Fetch daily data
+d_volume = request.security(syminfo.tickerid, "D", volume)  // Current day's real-time volume
+d_prev_avg_vol = request.security(syminfo.tickerid, "D", ta.sma(volume[1], volume_avg_period))
+
+// Estimate full daily volume: d_volume / elapsed_time * full_trading_time
+est_daily_volume = session.ismarket or (not est_flag) ? d_volume * daily_trading_minutes / elapsed_trading_mins : d_volume
+
+// --- Buy Signal Conditions ---
+// Condition 1: Estimated daily volume > Buy Volume Multiplier * previous average volume
+buy_cond1 = est_daily_volume > buy_volume_mult * d_prev_avg_vol
+buy_cond1_text = buy_cond1 ? "Vol > " + str.tostring(buy_volume_mult * 100, "#.#") + "% OK" : "Vol > " + str.tostring(buy_volume_mult * 100, "#.#") + "% Failed"
+
+// Daily RSI
+d_rsi = request.security(syminfo.tickerid, "D", ta.rsi(close, rsi_period))
+
+// Condition 2: Previous day's RSI <= Buy RSI Low
+buy_cond2 = d_rsi[1] <= buy_rsi_low
+buy_cond2_text = buy_cond2 ? "RSI <= " + str.tostring(buy_rsi_low, "#.#") + " OK" : "RSI <= " + str.tostring(buy_rsi_low, "#.#") + " Failed"
+
+// Daily MACD
+[d_macd, d_signal, _] = request.security(syminfo.tickerid, "D", ta.macd(close, macd_fast, macd_slow, macd_signal))
+
+// Condition 3: MACD line crosses above the signal line (golden cross) and DIF above 0
+buy_cond3 = ta.crossover(d_macd, d_signal) and d_macd > 0
+buy_cond3_text = buy_cond3 ? "MACD Cross OK" : "MACD Cross Failed"
+
+// Buy signal when all conditions are met
+buy_signal = buy_cond1 and buy_cond2 and buy_cond3
+buy_signal_text = buy_signal ? "Buy Signal OK" : "No Buy Signal"
+
+// --- Sell Signal Conditions ---
+// Condition 1: Estimated daily volume < Sell Volume Multiplier * previous average volume
+sell_cond1 = est_daily_volume < sell_volume_mult * d_prev_avg_vol
+sell_cond1_text = sell_cond1 ? "Vol < " + str.tostring(sell_volume_mult * 100, "#.#") + "% OK" : "Vol < " + str.tostring(sell_volume_mult * 100, "#.#") + "% Failed"
+
+// Condition 2: Today's RSI >= Sell RSI High
+sell_cond2 = d_rsi >= sell_rsi_high
+sell_cond2_text = sell_cond2 ? "RSI >= " + str.tostring(sell_rsi_high, "#.#") + " OK" : "RSI >= " + str.tostring(sell_rsi_high, "#.#") + " Failed"
+
+// Condition 3: MACD line crosses below the signal line (death cross) and DIF below 0
+sell_cond3 = ta.crossunder(d_macd, d_signal) and d_macd < 0
+sell_cond3_text = sell_cond3 ? "MACD Cross OK" : "MACD Cross Failed"
+
+// Sell signal when all conditions are met
+sell_signal = sell_cond1 and sell_cond2 and sell_cond3
+sell_signal_text = sell_signal ? "Sell Signal OK" : "No Sell Signal"
+
+// Plot buy and sell signals as shapes on the chart
+plotshape(buy_signal, title="Buy Signal", location=location.belowbar, style=shape.labelup, color=color.green, text="BUY", textcolor=color.white)
+plotshape(sell_signal, title="Sell Signal", location=location.abovebar, style=shape.labeldown, color=color.red, text="SELL", textcolor=color.white)
+
+// Debug table: 4 rows (Current Values, Buy Conditions, Sell Conditions), 4 columns
+var table debug_table = table.new(position.top_right, 4, 3, border_width=1)
+if barstate.islast
+    // Row 0: Current values
+    table.cell(debug_table, 0, 0, "Current Values", text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.cell(debug_table, 1, 0, "Vol: " + str.tostring(est_daily_volume, "#") + "/" + str.tostring(d_prev_avg_vol, "#") + " (" + str.tostring(est_daily_volume / d_prev_avg_vol * 100, "#.#") + "%)", text_color=color.black)
+    table.cell(debug_table, 2, 0, "RSI: " + str.tostring(d_rsi, "#.##") + " (Δ" + str.tostring(d_rsi - d_rsi[1], "#.##") + ")", text_color=d_rsi >= d_rsi[1] ? color.green : color.red)
+    table.cell(debug_table, 3, 0, "MACD: " + str.tostring(d_macd, "#.##") + " (Δ" + str.tostring(d_macd - d_macd[1], "#.##") + ")", text_color=d_macd >= d_macd[1] ? color.green : color.red)
+    
+    // Row 1: Buy Conditions
+    table.cell(debug_table, 0, 1, "Buy Conditions", text_color=color.white, bgcolor=color.new(color.green, 90))
+    table.cell(debug_table, 1, 1, buy_cond1_text, text_color=buy_cond1 ? color.green : color.red)
+    table.cell(debug_table, 2, 1, buy_cond2_text, text_color=buy_cond2 ? color.green : color.red)
+    table.cell(debug_table, 3, 1, buy_cond3_text, text_color=buy_cond3 ? color.green : color.red)
+
+    // Row 2: Sell Conditions
+    table.cell(debug_table, 0, 2, "Sell Conditions", text_color=color.white, bgcolor=color.new(color.red, 90))
+    table.cell(debug_table, 1, 2, sell_cond1_text, text_color=sell_cond1 ? color.green : color.red)
+    table.cell(debug_table, 2, 2, sell_cond2_text, text_color=sell_cond2 ? color.green : color.red)
+    table.cell(debug_table, 3, 2, sell_cond3_text, text_color=sell_cond3 ? color.green : color.red)
+
+// Optional: Debug plots to visualize conditions (uncomment if needed)
+// plot(est_daily_volume, title="Estimated Daily Volume", color=color.blue, style=plot.style_histogram)
+// plot(d_prev_avg_vol * sell_volume_mult, title="Sell Volume Threshold", color=color.red)
+// plot(d_prev_avg_vol * buy_volume_mult, title="Buy Volume Threshold", color=color.green)
+// plot(d_rsi, title="RSI", color=color.purple)
+// hline(buy_rsi_low, title="Buy RSI Threshold", color=color.gray)
+// hline(sell_rsi_high, title="Sell RSI Threshold", color=color.gray)
+// plot(d_macd, title="MACD DIF", color=color.blue)
+// plot(d_signal, title="MACD DEA", color=color.red)
+// hline(0, title="Zero Line", color=color.gray)
