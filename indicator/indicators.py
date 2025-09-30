@@ -19,8 +19,10 @@ def carmen_indicator(stock_data):
     rsi_delta = 5
 
     # Volume 爆量买入，缩量卖出
-    volume_scale = stock_data['estimated_volume'] / stock_data['avg_volume']
-    volume_state = [volume_scale >= volume_minmax[1], volume_scale <= volume_minmax[0]]
+    volume_state = [False, False]
+    if stock_data.get('estimated_volume') and stock_data.get('avg_volume') and stock_data['avg_volume'] > 0:
+        volume_scale = stock_data['estimated_volume'] / stock_data['avg_volume']
+        volume_state = [volume_scale >= volume_minmax[1], volume_scale <= volume_minmax[0]]
     
     # RSI8 超卖买入，超买卖出
     rsi_state = [False, False]
@@ -52,8 +54,8 @@ def carmen_indicator(stock_data):
     if rsi_state[0]: score[0] += 1
     if rsi_state[1]: score[1] += 1
     
-    if rsi_prev_state[0]: score[0] += 1
-    if rsi_prev_state[1]: score[1] += 1
+    if rsi_prev_state[0]: score[0] += 0.2
+    if rsi_prev_state[1]: score[1] += 0.2
 
     if macd_state[0]: score[0] += 1
     if macd_state[1]: score[1] += 1

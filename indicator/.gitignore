@@ -2,6 +2,9 @@
 .cache/
 *.pkl
 
+# 关注清单
+daily_watchlist.json
+
 # Python缓存
 __pycache__/
 *.pyc

@@ -2,15 +2,18 @@
 import sys
 sys.path.append('..')
 from get_stock_list import get_stock_list
-from get_stock_price import get_stock_data, get_cache_stats
+from get_stock_price import get_stock_data
 from indicators import carmen_indicator
+from market_hours import is_market_open, get_market_status, get_cache_expiry_for_premarket
+from alert_system import add_to_watchlist, print_watchlist_summary
+from display_utils import print_stock_info, print_header
 
 import time
 
 def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
          avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5):
     """
-    主循环函数，轮询股票数据
+    主循环函数，轮询股票数据（双模式：盘中/盘前盘后）
     
     Args:
         stock_path: 股票列表文件路径，空字符串则从纳斯达克获取
@@ -20,19 +23,39 @@ def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_sig
         macd_signal: MACD 信号线周期，默认 9
         avg_volume_days: 平均成交量计算天数，默认 8
         poll_interval: 轮询间隔（秒），默认 10
+        use_cache: 是否使用缓存
+        cache_minutes: 缓存有效期（分钟）
     """
     while True:
-        # 获取股票列表
-        stock_symbols = get_stock_list(stock_path)
+        # 获取市场状态
+        market_status = get_market_status()
+        is_open = market_status['is_open']
         
-        # 清理股票代码（去除换行符等）
+        # 根据市场状态决定股票列表和缓存策略
+        if is_open:
+            # 盘中：查询自选股，使用短缓存
+            stock_symbols = get_stock_list(stock_path)
+            actual_cache_minutes = cache_minutes
+            mode = "盘中模式"
+        else:
+            # 盘前/盘后：查询全部nasdaq股票，使用长缓存（到开盘）
+            stock_symbols = get_stock_list('')  # 空路径=获取全nasdaq
+            actual_cache_minutes = get_cache_expiry_for_premarket()
+            mode = "盘前/盘后模式"
+        
+        # 清理股票代码
         stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
         
+        # 打印状态栏
         print(f"\n{'='*120}")
-        print(f"开始查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | {avg_volume_days}日平均成交量")
-        print(f"{'='*120}\n")
+        print(f"{market_status['message']} | {mode} | {market_status['current_time_et']}")
+        print(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 缓存{actual_cache_minutes}分钟")
+        
+        # 打印表头
+        print_header()
         
         # 轮询每支股票
+        alert_count = 0
         for symbol in stock_symbols:
             stock_data = get_stock_data(
                 symbol, 
@@ -42,52 +65,38 @@ def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_sig
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
                 use_cache=use_cache,
-                cache_minutes=cache_minutes
+                cache_minutes=actual_cache_minutes
             )
-
-            my_score = carmen_indicator(stock_data)
-            print(f"Carmen Indicator Score: {my_score}")
             
             if stock_data:
-                # 格式化成交量显示
-                vol_str = f"{stock_data['volume']:,}" if stock_data['volume'] else "N/A"
-                est_vol_str = f"{stock_data['estimated_volume']:,}" if stock_data['estimated_volume'] else "N/A"
-                avg_vol_str = f"{stock_data['avg_volume']:,}" if stock_data['avg_volume'] else "N/A"
+                # 计算Carmen指标
+                score = carmen_indicator(stock_data)
                 
-                # 格式化技术指标显示
-                rsi_str = f"{stock_data['rsi']:.2f}" if stock_data['rsi'] else "N/A"
-                rsi_prev_str = f"{stock_data['rsi_prev']:.2f}" if stock_data['rsi_prev'] else "N/A"
-                dif_str = f"{stock_data['dif']:.2f}" if stock_data['dif'] else "N/A"
-                dea_str = f"{stock_data['dea']:.2f}" if stock_data['dea'] else "N/A"
-                hist_str = f"{stock_data['macd_histogram']:.2f}" if stock_data['macd_histogram'] else "N/A"
-                dif_slope_str = f"{stock_data['dif_slope']:+.2f}" if stock_data['dif_slope'] is not None else "N/A"
+                # 检查报警条件
+                if score[0] == 3:
+                    # 买入信号
+                    if add_to_watchlist(symbol, 'BUY', score, stock_data):
+                        alert_count += 1
+                elif score[1] == 3:
+                    # 卖出信号
+                    if add_to_watchlist(symbol, 'SELL', score, stock_data):
+                        alert_count += 1
                 
-                print(f"{stock_data['symbol']:6s} | {stock_data['date']} | "
-                      f"开: ${stock_data['open']:>8.2f} | 收: ${stock_data['close']:>8.2f} | "
-                      f"当日量: {vol_str:>15s} | 估算量: {est_vol_str:>15s} | 均量: {avg_vol_str:>15s}")
-                print(f"       | RSI{rsi_period}: {rsi_str:>6s} | RSI前日: {rsi_prev_str:>6s} | "
-                      f"DIF: {dif_str:>7s} | DEA: {dea_str:>7s} | Hist: {hist_str:>7s} | DIF斜率: {dif_slope_str:>7s}\n")
-            else:
-                print(f"{symbol:6s} | 无法获取数据\n")
+                # 打印股票信息（简化版）
+                print_stock_info(stock_data, score)
         
+        # 打印分隔线
         print(f"{'='*120}")
         
-        # 显示缓存统计
-        cache_stats = get_cache_stats()
-        if cache_stats['symbols']:
-            print(f"缓存状态: {cache_stats['memory_cached']} 内存 | {cache_stats['file_cached']} 文件")
-            for s in cache_stats['symbols']:
-                sources_str = " + ".join([
-                    f"{src['type']}({src['age_minutes']:.1f}分钟, {src['data_points']}天)" 
-                    for src in s['sources']
-                ])
-                print(f"  - {s['symbol']}: {sources_str}")
+        # 显示今日关注清单
+        if alert_count > 0:
+            print(f"\n🔔 本次扫描发现 {alert_count} 个新信号！")
+        print_watchlist_summary()
         
-        print(f"等待 {poll_interval} 秒后进行下一次查询...")
+        # 等待下次轮询
+        print(f"\n等待 {poll_interval} 秒后进行下一次查询...")
         print(f"{'='*120}\n")
         time.sleep(poll_interval)
-
-        # exit()  # 调试用退出
 
 
 
