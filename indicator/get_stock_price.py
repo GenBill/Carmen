@@ -18,7 +18,15 @@ CACHE_DIR.mkdir(exist_ok=True)
 # 同时支持本地文件缓存，避免程序重启后重新获取数据
 _DATA_CACHE = {}
 
-broken_stock_symbols = [line.strip() for line in open('broken_stock_symbols.txt')]
+# 损坏的股票代码列表（多次失败后不再尝试）
+broken_stock_symbols = []
+try:
+    broken_symbols_file = Path(__file__).parent.parent / 'broken_stock_symbols.txt'
+    if broken_symbols_file.exists():
+        with open(broken_symbols_file, 'r') as f:
+            broken_stock_symbols = [line.strip() for line in f if line.strip()]
+except:
+    broken_stock_symbols = []
 
 def calculate_rsi(prices, period=14, return_series=False):
     """
@@ -218,6 +226,141 @@ def _save_cache_to_file(symbol: str, cached_time, hist_data):
         print(f"保存缓存文件失败 {symbol}: {e}")
 
 
+def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
+    """
+    从缓存加载数据（公共函数）
+    
+    Args:
+        symbol: 股票代码
+        cache_minutes: 缓存有效期（分钟）
+        ignore_expiry: 是否忽略过期时间（离线模式用）
+        
+    Returns:
+        tuple: (hist_data, cache_source) 或 (None, None)
+    """
+    now = datetime.now()
+    cache_key = symbol
+    
+    # 1. 检查内存缓存
+    if cache_key in _DATA_CACHE:
+        cached_time, cached_hist = _DATA_CACHE[cache_key]
+        cache_age = (now - cached_time).total_seconds() / 60
+        
+        if ignore_expiry or cache_age < cache_minutes:
+            return cached_hist, "内存"
+    
+    # 2. 检查文件缓存
+    file_cache = _load_cache_from_file(symbol)
+    if file_cache:
+        cached_time, cached_hist = file_cache
+        cache_age = (now - cached_time).total_seconds() / 60
+        
+        if ignore_expiry or cache_age < cache_minutes:
+            # 加载到内存缓存
+            _DATA_CACHE[cache_key] = (cached_time, cached_hist)
+            return cached_hist, "文件"
+    
+    return None, None
+
+
+def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow, 
+                                    macd_signal, avg_volume_days, volume_lut):
+    """
+    从历史数据计算所有指标（公共计算逻辑）
+    
+    Args:
+        hist: 历史数据DataFrame
+        symbol: 股票代码
+        其他参数: 技术指标参数
+        
+    Returns:
+        dict: 包含所有计算结果的字典
+    """
+    if hist.empty or len(hist) < avg_volume_days + 1:
+        return None
+    
+    # 获取最后一个交易日数据（当日或最近交易日）
+    last_trading_day = hist.iloc[-1]
+    trading_date_timestamp = hist.index[-1]
+    trading_date = trading_date_timestamp.strftime('%Y-%m-%d')
+    
+    # 计算过去 N 日平均成交量（明确排除当日，即最后一个交易日）
+    if len(hist) >= avg_volume_days + 1:
+        avg_volume = hist.iloc[-(avg_volume_days+1):-1]['Volume'].mean()
+    else:
+        avg_volume = hist.iloc[:-1]['Volume'].mean()
+    
+    # 当日成交量
+    current_volume = last_trading_day['Volume']
+    
+    # 估算全天成交量（只在确认是当日盘中数据时才估算）
+    estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
+    
+    # 计算 RSI（获取完整序列以便提取前一日数据）
+    rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
+    rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else None
+    rsi_prev = None
+    if len(rsi_series) >= 2 and not pd.isna(rsi_series.iloc[-2]):
+        rsi_prev = rsi_series.iloc[-2]
+    
+    # 计算 MACD
+    macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
+    
+    return {
+        'symbol': symbol,
+        'date': trading_date,
+        'open': round(last_trading_day['Open'], 2),
+        'close': round(last_trading_day['Close'], 2),
+        'volume': int(current_volume),
+        'estimated_volume': estimated_volume,
+        'avg_volume': int(avg_volume),
+        'rsi': round(rsi, 2) if rsi else None,
+        'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
+        'dif': macd_data['dif'],
+        'dea': macd_data['dea'],
+        'macd_histogram': macd_data['histogram'],
+        'dif_dea_slope': macd_data['dif_dea_slope']
+    }
+
+
+def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 
+                           avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5):
+    """
+    离线模式：仅从缓存读取数据，不调用API（忽略缓存过期时间）
+    
+    Args:
+        symbol: 股票代码
+        rsi_period: RSI 周期，默认 14
+        macd_fast: MACD 快线周期，默认 12
+        macd_slow: MACD 慢线周期，默认 26
+        macd_signal: MACD 信号线周期，默认 9
+        avg_volume_days: 平均成交量计算天数，默认 8
+        volume_lut: 自定义成交量估算LUT表，None则使用默认表
+        use_cache: 是否使用缓存（离线模式固定为True）
+        cache_minutes: 忽略（离线模式不检查过期）
+        
+    Returns:
+        dict: 包含所有数据的字典，缓存不存在返回 None
+    """
+    try:
+        # 从缓存加载（忽略过期时间）
+        hist, cache_source = _load_from_cache(symbol, cache_minutes=0, ignore_expiry=True)
+        
+        if hist is None:
+            # 离线模式下缓存不存在则返回None
+            return None
+        
+        # 使用历史数据计算指标（公共计算逻辑）
+        return _calculate_indicators_from_hist(
+            hist, symbol, rsi_period, macd_fast, macd_slow,
+            macd_signal, avg_volume_days, volume_lut
+        )
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        print(f"⚠️  离线模式获取 {symbol} 数据时出错: {e}")
+        return None
+
 def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 
                    avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5):
     """
@@ -233,40 +376,16 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
         volume_lut: 自定义成交量估算LUT表，None则使用默认表
         use_cache: 是否使用本地缓存，默认 True
         cache_minutes: 缓存有效期（分钟），默认 5分钟
+        offline_mode: 是否离线模式，默认 False
         
     Returns:
         dict: 包含所有数据的字典，失败返回 None
     """
     try:
-        # 检查缓存（先内存，后文件）
-        now = datetime.now()
-        cache_key = symbol
-        hist = None
-        cache_source = None
+        # 1. 尝试从缓存加载（使用公共函数）
+        hist, cache_source = _load_from_cache(symbol, cache_minutes, ignore_expiry=False) if use_cache else (None, None)
         
-        # 1. 检查内存缓存
-        if use_cache and cache_key in _DATA_CACHE:
-            cached_time, cached_hist = _DATA_CACHE[cache_key]
-            cache_age = (now - cached_time).total_seconds() / 60  # 转换为分钟
-            
-            if cache_age < cache_minutes:
-                hist = cached_hist
-                cache_source = "内存"
-        
-        # 2. 如果内存缓存失效，检查文件缓存
-        if hist is None and use_cache:
-            file_cache = _load_cache_from_file(symbol)
-            if file_cache:
-                cached_time, cached_hist = file_cache
-                cache_age = (now - cached_time).total_seconds() / 60
-                
-                if cache_age < cache_minutes:
-                    hist = cached_hist
-                    cache_source = "文件"
-                    # 加载到内存缓存
-                    _DATA_CACHE[cache_key] = (cached_time, cached_hist)
-        
-        # 3. 如果没有缓存或缓存过期，从API获取（带指数退避重试）
+        # 2. 如果没有缓存或缓存过期，从API获取（带指数退避重试）
         if hist is None:
             max_retries = 4   # 最多重试4次
             base_delay = 2    # 基础延迟2秒
@@ -291,7 +410,8 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                         cache_source = "API"
                         # 更新缓存（内存+文件）
                         if use_cache:
-                            _DATA_CACHE[cache_key] = (now, hist)
+                            now = datetime.now()
+                            _DATA_CACHE[symbol] = (now, hist)
                             _save_cache_to_file(symbol, now, hist)
                         break  # 成功获取，跳出重试循环
                     else:
@@ -313,57 +433,11 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                                 f.write(symbol + "\n")
                         return None
         
-        # 显示缓存来源（调试用）
-        # if cache_source:
-        #     print(f"{symbol}: 数据来源 {cache_source}")
-        
-        if hist.empty or len(hist) < avg_volume_days + 1:
-            return None
-        
-        # 获取最后一个交易日数据（当日或最近交易日）
-        last_trading_day = hist.iloc[-1]
-        trading_date_timestamp = hist.index[-1]  # 保留完整时间戳
-        trading_date = trading_date_timestamp.strftime('%Y-%m-%d')
-        
-        # 计算过去 N 日平均成交量（明确排除当日，即最后一个交易日）
-        # 例如：如果avg_volume_days=8，则计算倒数第2到倒数第9天（共8天）的平均成交量
-        if len(hist) >= avg_volume_days + 1:
-            avg_volume = hist.iloc[-(avg_volume_days+1):-1]['Volume'].mean()
-        else:
-            # 如果数据不足，使用所有可用的历史数据（排除当日）
-            avg_volume = hist.iloc[:-1]['Volume'].mean()
-        
-        # 当日成交量（最后一个交易日）
-        current_volume = last_trading_day['Volume']
-        
-        # 估算全天成交量（只在确认是当日盘中数据时才估算）
-        estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
-        
-        # 计算 RSI（获取完整序列以便提取前一日数据）
-        rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
-        rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else None
-        rsi_prev = None
-        if len(rsi_series) >= 2 and not pd.isna(rsi_series.iloc[-2]):
-            rsi_prev = rsi_series.iloc[-2]
-        
-        # 计算 MACD
-        macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
-        
-        return {
-            'symbol': symbol,
-            'date': trading_date,
-            'open': round(last_trading_day['Open'], 2),
-            'close': round(last_trading_day['Close'], 2),
-            'volume': int(current_volume),
-            'estimated_volume': estimated_volume,
-            'avg_volume': int(avg_volume),
-            'rsi': round(rsi, 2) if rsi else None,
-            'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
-            'dif': macd_data['dif'],
-            'dea': macd_data['dea'],
-            'macd_histogram': macd_data['histogram'],
-            'dif_dea_slope': macd_data['dif_dea_slope']
-        }
+        # 3. 使用历史数据计算指标（公共计算逻辑）
+        return _calculate_indicators_from_hist(
+            hist, symbol, rsi_period, macd_fast, macd_slow,
+            macd_signal, avg_volume_days, volume_lut
+        )
     except KeyboardInterrupt:
         # 允许用户中断
         raise

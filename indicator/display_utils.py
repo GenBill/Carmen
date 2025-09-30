@@ -51,11 +51,11 @@ def format_price_change(current_price, open_price):
         sign = ' '
     
     # 格式化价格和涨幅
-    price_str = f"${current_price:>7.2f}"
-    pct_str = f"{sign}{change_pct:>5.2f}%"
+    price_str = f"${current_price:.2f}"
+    pct_str = f"{sign}{change_pct:.2f}%"
     
     # 返回固定宽度：价格(9字符) + 空格 + 彩色涨幅(7字符显示) = 17字符显示 + 颜色代码
-    return f"{price_str} {color}{pct_str}{Colors.RESET}"
+    return f"{price_str:>7} {color}{pct_str:>7}{Colors.RESET}"
 
 
 def format_volume_ratio(estimated_volume, avg_volume):
@@ -85,7 +85,7 @@ def format_volume_ratio(estimated_volume, avg_volume):
         color = Colors.WHITE
     
     # 固定宽度：7字符显示（含%）
-    ratio_str = f"{ratio:>6.1f}%"
+    ratio_str = f"{ratio:>8.1f}%"
     return f"{color}{ratio_str}{Colors.RESET}"
 
 
@@ -146,15 +146,17 @@ def format_macd_info(dif, dea, dif_dea_slope):
     dif_dea_slope = round(dif_dea_slope, 2)
     # 斜率颜色和符号
     if dif_dea_slope != None:
-        if dif_dea_slope > 0:
+        if dif_dea_slope > 1e-2:
             slope_color = Colors.RED
             slope_sign = '+'
-        elif dif_dea_slope < 0:
+        elif dif_dea_slope < -1e-2:
             slope_color = Colors.GREEN
             slope_sign = ''
         else:
+            dif_dea_slope = 0
             slope_color = Colors.WHITE
-            slope_sign = ''
+            slope_sign = ' '
+            
         slope_str = f"{slope_color}{slope_sign}{dif_dea_slope:.2f}{Colors.RESET}"
     else:
         slope_str = "N/A"
@@ -186,7 +188,7 @@ def is_data_valid(stock_data):
     return True
 
 
-def print_stock_info(stock_data, score):
+def print_stock_info(stock_data, score, print_all=True):
     """
     打印单个股票的信息（简化版）
     只打印有效数据，跳过N/A
@@ -194,6 +196,7 @@ def print_stock_info(stock_data, score):
     Args:
         stock_data: 股票数据字典
         score: Carmen指标分数 [买入分数, 卖出分数]
+        print_all: 是否打印所有数据
         
     Returns:
         bool: True表示已打印，False表示数据无效已跳过
@@ -232,14 +235,32 @@ def print_stock_info(stock_data, score):
         signal = f"{Colors.RED}{Colors.BOLD}[买入信号]{Colors.RESET}"
     elif score[1] >= 3:
         signal = f"{Colors.GREEN}{Colors.BOLD}[卖出信号]{Colors.RESET}"
+    else:
+        if score[0] >= 2 or score[1] >= 2:
+            if score[0] < 1.0:
+                str_buy = f"Buy {score[0]:.1f}"
+            elif score[0] < 2.0:
+                str_buy = f"{Colors.RED}Buy {score[0]:.1f}{Colors.RESET}"
+            else:
+                str_buy = f"{Colors.RED}{Colors.BOLD}Buy {score[0]:.1f}{Colors.RESET}"
+            
+            if score[1] < 1.0:
+                str_sell = f"Sell {score[1]:.1f}"
+            elif score[1] < 2.0:
+                str_sell = f"{Colors.GREEN}Sell {score[1]:.1f}{Colors.RESET}"
+            else:
+                str_sell = f"{Colors.GREEN}{Colors.BOLD}Sell {score[1]:.1f}{Colors.RESET}"
+            
+            signal = f"{str_buy} vs {str_sell}"
     
     # 打印信息（所有字段固定宽度对齐）
-    print(f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI8: {rsi_trend} | {macd_info} {signal}")
+    if print_all or (score[0] >= 2 or score[1] >= 2):
+        print(f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}")
     return True
 
 
 def print_header():
     """打印表头"""
     print(f"\n{'='*120}")
-    print(f"{'股票':^5}|{'价格涨跌幅':^13}|{'量比':^12}|{'RSI8(前->今)':^18}|{'MACD指标':^34}|{'信号':^16}")
+    print(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前->今)':^17}|{'MACD指标':^33}|{'信号':^16}")
     print(f"{'='*120}")

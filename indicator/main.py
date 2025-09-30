@@ -2,7 +2,7 @@
 import sys
 sys.path.append('..')
 from get_stock_list import get_stock_list
-from get_stock_price import get_stock_data
+from get_stock_price import get_stock_data, get_stock_data_offline
 from indicators import carmen_indicator
 from market_hours import is_market_open, get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
@@ -11,8 +11,8 @@ from display_utils import print_stock_info, print_header
 import time
 import signal
 
-def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
-         avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5):
+def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
+         avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5, offline_mode=False):
     """
     主循环函数，轮询股票数据（双模式：盘中/盘前盘后）
     
@@ -33,16 +33,18 @@ def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_sig
         is_open = market_status['is_open']
         
         # 根据市场状态决定股票列表和缓存策略
-        if is_open:
+        if is_open and not offline_mode:
             # 盘中：查询自选股，使用短缓存
             stock_symbols = get_stock_list(stock_path)
             actual_cache_minutes = cache_minutes
             mode = "盘中模式"
+            print_all = True
         else:
             # 盘前/盘后：查询全部nasdaq股票，使用长缓存（到开盘）
             stock_symbols = get_stock_list('')  # 空路径=获取全nasdaq
             actual_cache_minutes = get_cache_expiry_for_premarket()
             mode = "盘前/盘后模式"
+            print_all = False
         
         # 清理股票代码
         stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
@@ -58,10 +60,15 @@ def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_sig
         # 轮询每支股票
         alert_count = 0
         failed_count = 0
+
+        if offline_mode:
+            get_stock_data_func = get_stock_data_offline
+        else:
+            get_stock_data_func = get_stock_data
         
         for symbol in stock_symbols:
             try:
-                stock_data = get_stock_data(
+                stock_data = get_stock_data_func(
                     symbol, 
                     rsi_period=rsi_period,
                     macd_fast=macd_fast,
@@ -87,7 +94,7 @@ def main(stock_path: str = '', rsi_period=8, macd_fast=8, macd_slow=17, macd_sig
                             alert_count += 1
                     
                     # 打印股票信息（简化版，自动跳过无效数据）
-                    if not print_stock_info(stock_data, score):
+                    if not print_stock_info(stock_data, score, print_all):
                         failed_count += 1  # 数据无效，计入失败
                 else:
                     failed_count += 1
@@ -143,6 +150,7 @@ if __name__ == "__main__":
     POLL_INTERVAL = 120      # 轮询间隔（秒）
     USE_CACHE = True         # 是否使用缓存
     CACHE_MINUTES = 10       # 缓存有效期（分钟）
+    OFFLINE_MODE = False     # 是否离线模式
     
     # 启动时清空旧缓存（可选，确保使用最新验证逻辑）
     CLEAR_CACHE_ON_START = False  # 设为True可清空启动时的缓存
@@ -169,7 +177,8 @@ if __name__ == "__main__":
             avg_volume_days=AVG_VOLUME_DAYS,
             poll_interval=POLL_INTERVAL,
             use_cache=USE_CACHE,
-            cache_minutes=CACHE_MINUTES
+            cache_minutes=CACHE_MINUTES,
+            offline_mode=OFFLINE_MODE
         )
     except KeyboardInterrupt:
         print('\n\n👋 程序已被用户中断，正在退出...')

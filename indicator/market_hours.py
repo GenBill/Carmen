@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz
 
 
@@ -72,7 +72,7 @@ def get_cache_expiry_for_premarket():
         # 到下周一9:30
         days_until_monday = 7 - now_et.weekday()
         target_time = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-        target_time = target_time + pytz.timedelta(days=days_until_monday)
+        target_time = target_time + timedelta(days=days_until_monday)
     else:
         current_time = now_et.time()
         if current_time < time(9, 30):
@@ -81,7 +81,7 @@ def get_cache_expiry_for_premarket():
         else:
             # 盘后，到明天9:30
             target_time = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-            target_time = target_time + pytz.timedelta(days=1)
+            target_time = target_time + timedelta(days=1)
     
     diff = target_time - now_et
     minutes = int(diff.total_seconds() / 60)
