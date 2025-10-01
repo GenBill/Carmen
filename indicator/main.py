@@ -11,6 +11,12 @@ from display_utils import print_stock_info, print_header
 import time
 import signal
 
+# 强制刷新输出缓冲区，解决重定向时的缓冲问题
+def flush_output():
+    """强制刷新所有输出缓冲区"""
+    sys.stdout.flush()
+    sys.stderr.flush()
+
 def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
          avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5, offline_mode=False):
     """
@@ -53,9 +59,11 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         print(f"\n{'='*120}")
         print(f"{market_status['message']} | {mode} | {market_status['current_time_et']}")
         print(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 缓存{actual_cache_minutes}分钟")
+        flush_output()  # 强制刷新输出
         
         # 打印表头
         print_header()
+        flush_output()  # 强制刷新输出
         
         # 轮询每支股票
         alert_count = 0
@@ -96,6 +104,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                     # 打印股票信息（简化版，自动跳过无效数据）
                     if not print_stock_info(stock_data, score, print_all):
                         failed_count += 1  # 数据无效，计入失败
+                    flush_output()  # 每处理一只股票后刷新输出
                 else:
                     failed_count += 1
                     
@@ -121,6 +130,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         # 等待下次轮询（支持Ctrl+C中断）
         print(f"\n等待 {poll_interval} 秒后进行下一次查询... (按 Ctrl+C 退出)")
         print(f"{'='*120}\n")
+        flush_output()  # 轮询结束前刷新输出
         
         try:
             # 将长时间sleep分割，以便快速响应中断
@@ -136,6 +146,10 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
 
 
 if __name__ == "__main__":
+    
+    # 设置无缓冲输出，解决重定向时的缓冲问题
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
     
     # 配置参数
     stock_path = 'my_stock_symbols.txt'  # 股票列表文件路径
