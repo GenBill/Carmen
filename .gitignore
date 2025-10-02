@@ -1,2 +1,5 @@
 @AutomationLog.txt
 *.pyc
+indicator/main.py
+low_volume_blacklist.json
+*.log

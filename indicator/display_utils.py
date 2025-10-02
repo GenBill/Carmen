@@ -188,7 +188,7 @@ def is_data_valid(stock_data):
     return True
 
 
-def print_stock_info(stock_data, score, print_all=True):
+def print_stock_info(stock_data, score, is_watchlist_stock=False):
     """
     打印单个股票的信息（简化版）
     只打印有效数据，跳过N/A
@@ -196,7 +196,7 @@ def print_stock_info(stock_data, score, print_all=True):
     Args:
         stock_data: 股票数据字典
         score: Carmen指标分数 [买入分数, 卖出分数]
-        print_all: 是否打印所有数据
+        is_watchlist_stock: 是否是自选股列表中的股票（自选股始终显示）
         
     Returns:
         bool: True表示已打印，False表示数据无效已跳过
@@ -253,8 +253,14 @@ def print_stock_info(stock_data, score, print_all=True):
             
             signal = f"{str_buy} vs {str_sell}"
     
+    buy_signal = score[0] >= 2.4
+    sell_signal = score[1] >= 2.0 and False # 暂时关闭卖出信号
+
     # 打印信息（所有字段固定宽度对齐）
-    if print_all or (score[0] >= 2 or score[1] >= 2):
+    # 显示条件：自选股始终显示，或者有买入/卖出信号
+    should_print = is_watchlist_stock or buy_signal or sell_signal
+    
+    if should_print:
         print(f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}")
     return True
 
