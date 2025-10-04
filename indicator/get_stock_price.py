@@ -387,6 +387,9 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
         
         # 2. 如果没有缓存或缓存过期，从API获取（带指数退避重试）
         if hist is None:
+            # 避免过于频繁的API调用
+            time.sleep(0.1)
+            
             max_retries = 4   # 最多重试4次
             base_delay = 2    # 基础延迟2秒
             
@@ -427,10 +430,10 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                     else:
                         # 最后一次尝试也失败
                         print(f"❌ {symbol} API调用最终失败 (已重试{max_retries}次): {api_error}")
-                        broken_stock_symbols.append(symbol)
-                        with open('broken_stock_symbols.txt', 'w') as f:
-                            for symbol in broken_stock_symbols:
-                                f.write(symbol + "\n")
+                        # broken_stock_symbols.append(symbol)
+                        # with open('broken_stock_symbols.txt', 'w') as f:
+                        #     for symbol in broken_stock_symbols:
+                        #         f.write(symbol + "\n")
                         return None
         
         # 3. 使用历史数据计算指标（公共计算逻辑）
@@ -438,6 +441,7 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
             hist, symbol, rsi_period, macd_fast, macd_slow,
             macd_signal, avg_volume_days, volume_lut
         )
+    
     except KeyboardInterrupt:
         # 允许用户中断
         raise

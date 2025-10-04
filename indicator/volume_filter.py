@@ -12,7 +12,7 @@ from typing import Set, Dict, List
 class VolumeFilter:
     """低成交量股票过滤器"""
     
-    def __init__(self, blacklist_file: str = "low_volume_blacklist.json", min_volume_usd: float = 1000000):
+    def __init__(self, blacklist_file: str = "low_volume_blacklist.json", min_volume_usd: float = 2000000):
         """
         初始化成交量过滤器
         

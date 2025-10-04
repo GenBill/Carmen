@@ -73,14 +73,15 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
             
             # 获取自选股列表（用于显示判断）
-            if intraday_use_all_stocks and is_open:
-                # 盘中使用全股票时，需要获取自选股列表用于显示判断
-                watchlist_stocks = set(get_stock_list(stock_path))
-            else:
-                watchlist_stocks = set()
-            
+            watchlist_stocks = set(get_stock_list(stock_path))
+
             # 应用成交量过滤器，移除黑名单中的股票
             stock_symbols = filter_low_volume_stocks(stock_symbols)
+            
+            # 确保自选股始终在处理列表中（即使被成交量过滤器移除也要加回来）
+            if intraday_use_all_stocks and is_open:
+                stock_symbols.extend([s for s in watchlist_stocks if s not in stock_symbols])
+            
             # 打印状态栏
             print(f"\n{'='*120}")
             print(f"{market_status['message']} | {mode} | {market_status['current_time_et']}")
@@ -221,11 +222,11 @@ if __name__ == "__main__":
     MACD_SIGNAL = 9         # MACD 信号线
     AVG_VOLUME_DAYS = 8     # 平均成交量天数
     
-    POLL_INTERVAL = 1      # 轮询间隔（秒）
+    POLL_INTERVAL = 120      # 轮询间隔（秒）
     USE_CACHE = True         # 是否使用缓存
     CACHE_MINUTES = 10       # 缓存有效期（分钟）
     OFFLINE_MODE = False     # 是否离线模式
-    INTRADAY_USE_ALL_STOCKS = False  # 盘中时段是否使用全股票列表
+    INTRADAY_USE_ALL_STOCKS = True  # 盘中时段是否使用全股票列表
     
     # 启动时清空旧缓存（可选，确保使用最新验证逻辑）
     CLEAR_CACHE_ON_START = False  # 设为True可清空启动时的缓存
