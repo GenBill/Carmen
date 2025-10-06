@@ -85,3 +85,254 @@ def carmen_indicator(stock_data):
     if macd_state_easy[1]: score[1] += 0.4
     
     return score
+
+def vegas_indicator(stock_data):
+    """
+    Vegas 综合指标评分系统
+    基于12 EMA vs 144 EMA和收盘价位置的趋势判断
+    
+    Args:
+        stock_data: 包含股票数据的字典
+        
+    Returns:
+        list: [买入分数, 卖出分数]
+    """
+    if not stock_data:
+        return [0, 0]
+    
+    # 检查必要的数据是否存在
+    ema_12 = stock_data.get('ema_12')
+    ema_144 = stock_data.get('ema_144')
+    close_price = stock_data.get('close')
+    
+    if ema_12 is None or ema_144 is None or close_price is None:
+        return [0, 0]
+
+    score = [0.0, 0.0]  # [买入分数, 卖出分数]
+    
+    # 1. 12 EMA > 144 EMA 且 收盘 > 144 EMA - 强势牛市
+    if ema_12 > ema_144 and close_price > ema_144:
+        score[0] = 1.0  # 强势买入信号
+    # 2. 12 EMA < 144 EMA 且 收盘 < 144 EMA - 强势熊市  
+    if ema_12 < ema_144 and close_price < ema_144:
+        score[1] = 1.0  # 强势卖出信号
+    
+    return score
+
+
+def _calculate_historical_indicators(historical_data, rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8):
+    """
+    计算历史数据的技术指标（优化版本）
+    
+    Args:
+        historical_data: 历史数据DataFrame
+        rsi_period: RSI周期
+        macd_fast: MACD快线周期
+        macd_slow: MACD慢线周期
+        macd_signal: MACD信号线周期
+        avg_volume_days: 平均成交量天数
+        
+    Returns:
+        dict: 包含所有技术指标的字典
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # 计算RSI
+    delta = historical_data['Close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.ewm(alpha=1/rsi_period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/rsi_period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    rsi_series = 100 - (100 / (1 + rs))
+    
+    # 计算MACD
+    exp1 = historical_data['Close'].ewm(span=macd_fast, adjust=False).mean()
+    exp2 = historical_data['Close'].ewm(span=macd_slow, adjust=False).mean()
+    dif_series = exp1 - exp2
+    dea_series = dif_series.ewm(span=macd_signal, adjust=False).mean()
+    
+    # 计算MACD斜率
+    dif_dea_slope_series = dif_series.diff() - dea_series.diff()
+    
+    # 计算成交量比率
+    volume_series = historical_data['Volume']
+    avg_volume_series = volume_series.rolling(window=avg_volume_days, min_periods=1).mean()
+    
+    return {
+        'rsi': rsi_series,
+        'dif': dif_series,
+        'dea': dea_series,
+        'dif_dea_slope': dif_dea_slope_series,
+        'volume': volume_series,
+        'avg_volume': avg_volume_series,
+        'close': historical_data['Close']
+    }
+
+
+def _get_historical_data_with_cache(symbol):
+    """
+    获取历史数据（智能缓存策略）
+    
+    解决缓存矛盾：
+    - 实时指标：需要最新1-2天数据（短期缓存）
+    - 回测分析：需要2-5年历史数据（长期缓存）
+    
+    Args:
+        symbol: 股票代码
+        
+    Returns:
+        DataFrame: 历史数据，失败返回None
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+    
+    try:
+        # 策略1: 检查现有缓存
+        from get_stock_price import _load_from_cache
+        cached_hist, cache_source = _load_from_cache(symbol, cache_minutes=0, ignore_expiry=True)
+        
+        if cached_hist is not None:
+            data_points = len(cached_hist)
+            last_date = cached_hist.index[-1]
+            if isinstance(last_date, str):
+                last_date = pd.Timestamp(last_date)
+            # 处理时区问题
+            if last_date.tz is not None:
+                days_old = (pd.Timestamp.now(tz=last_date.tz) - last_date).days
+            else:
+                days_old = (pd.Timestamp.now() - last_date).days
+            
+            # 回测专用缓存策略：确保有足够的历史数据
+            IDEAL_BACKTEST_DAYS = 500  # 理想回测数据要求
+            
+            if data_points >= IDEAL_BACKTEST_DAYS and days_old <= 7:
+                return cached_hist
+
+        # 策略2: 缓存不可用或数据不足，下载新的历史数据
+        # print(f"📥 下载 {symbol} 历史数据 (5年, 目标>1000天)...")
+        import yfinance as yf
+        stock = yf.Ticker(symbol)
+        historical_data = stock.history(period="5y", timeout=15)
+        
+        if not historical_data.empty:
+            
+            # 保存到缓存供后续使用
+            try:
+                from get_stock_price import _save_cache_to_file
+                _save_cache_to_file(symbol, datetime.now(), historical_data)
+
+            except Exception as cache_error:
+                print(f"⚠️  缓存保存失败: {cache_error}")
+            
+            return historical_data
+        
+        print(f"❌ {symbol} 无法获取历史数据")
+        return None
+        
+    except Exception as e:
+        print(f"❌ 获取 {symbol} 历史数据失败: {e}")
+        return None
+
+
+def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, gate=2.4,
+                             rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8):
+    """
+    对Carmen指标进行回测，统计相似点第二天第三天连续上涨概率（优化版本）
+    
+    Args:
+        symbol: 股票代码
+        score: 当前Carmen指标分数 [买入分数, 卖出分数]
+        stock_data: 当前股票数据
+        historical_data: 历史数据DataFrame，如果为None则自动获取
+        gate: 回测阈值，默认2.4
+        rsi_period: RSI周期，默认8
+        macd_fast: MACD快线周期，默认8
+        macd_slow: MACD慢线周期，默认17
+        macd_signal: MACD信号线周期，默认9
+        avg_volume_days: 平均成交量天数，默认8
+        
+    Returns:
+        dict: 包含回测结果的字典，格式为 {'buy_prob': (成功次数, 总次数), 'sell_prob': (成功次数, 总次数)}
+              如果未找到相似点或未进行回测，返回None
+    """
+    # 只有当score >= gate时才进行回测
+    if score[0] < gate and score[1] < gate:
+        return None
+    
+    # 获取历史数据
+    if historical_data is None:
+        historical_data = _get_historical_data_with_cache(symbol)
+        if historical_data is None:
+            return None
+    
+    # 需要足够的历史数据
+    if len(historical_data) < 50:
+        return None
+    
+    try:
+        # 计算历史技术指标
+        indicators = _calculate_historical_indicators(
+            historical_data, rsi_period, macd_fast, macd_slow, macd_signal, avg_volume_days
+        )
+        
+        # 统计相似点和成功情况
+        buy_similar_count = 0
+        sell_similar_count = 0
+        buy_success_count = 0
+        sell_success_count = 0
+        
+        # 批量处理历史数据
+        import pandas as pd
+        
+        for i in range(max(14, macd_slow + macd_signal), len(historical_data) - 3):
+            # 构建历史股票数据
+            hist_stock_data = {
+                'estimated_volume': indicators['volume'].iloc[i],
+                'avg_volume': indicators['avg_volume'].iloc[i],
+                'rsi': indicators['rsi'].iloc[i] if not pd.isna(indicators['rsi'].iloc[i]) else None,
+                'rsi_prev': indicators['rsi'].iloc[i-1] if i > 0 and not pd.isna(indicators['rsi'].iloc[i-1]) else None,
+                'dif': indicators['dif'].iloc[i] if not pd.isna(indicators['dif'].iloc[i]) else None,
+                'dea': indicators['dea'].iloc[i] if not pd.isna(indicators['dea'].iloc[i]) else None,
+                'dif_dea_slope': indicators['dif_dea_slope'].iloc[i] if not pd.isna(indicators['dif_dea_slope'].iloc[i]) else None,
+                'close': indicators['close'].iloc[i]
+            }
+            
+            # 计算历史Carmen指标
+            hist_score = carmen_indicator(hist_stock_data)
+            
+            # 检查是否是相似点
+            is_buy_similar = (hist_score[0] >= gate)
+            is_sell_similar = (hist_score[1] >= gate)
+            
+            if is_buy_similar or is_sell_similar:
+                
+                day1_close = historical_data['Close'].iloc[i]
+                day2_close = historical_data['Close'].iloc[i+1]
+                day3_close = historical_data['Close'].iloc[i+2]
+                
+                if is_buy_similar:
+                    is_success = (day2_close > day1_close or day3_close > day1_close)
+                    buy_similar_count += 1
+                    if is_success:
+                        buy_success_count += 1
+                
+                if is_sell_similar:
+                    is_success = (day2_close < day1_close or day3_close < day1_close)
+                    sell_similar_count += 1
+                    if is_success:
+                        sell_success_count += 1
+        
+        # 构建结果
+        result = {}
+        if buy_similar_count > 0:
+            result['buy_prob'] = (buy_success_count, buy_similar_count)
+        if sell_similar_count > 0:
+            result['sell_prob'] = (sell_success_count, sell_similar_count)
+        
+        return result if result else None
+        
+    except Exception as e:
+        print(f"回测 {symbol} 时出错: {e}")
+        return None

@@ -188,7 +188,7 @@ def is_data_valid(stock_data):
     return True
 
 
-def print_stock_info(stock_data, score, is_watchlist_stock=False):
+def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_result=None):
     """
     打印单个股票的信息（简化版）
     只打印有效数据，跳过N/A
@@ -197,6 +197,7 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False):
         stock_data: 股票数据字典
         score: Carmen指标分数 [买入分数, 卖出分数]
         is_watchlist_stock: 是否是自选股列表中的股票（自选股始终显示）
+        backtest_result: 回测结果字典，格式为 {'buy_prob': (成功次数, 总次数), 'sell_prob': (成功次数, 总次数)}
         
     Returns:
         bool: True表示已打印，False表示数据无效已跳过
@@ -237,19 +238,33 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False):
         signal = f"{Colors.GREEN}{Colors.BOLD}[卖出信号]{Colors.RESET}"
     else:
         if score[0] >= 2 or score[1] >= 2:
+            # 构建买入信号字符串
             if score[0] < 1.0:
                 str_buy = f"Buy {score[0]:.1f}"
-            elif score[0] < 2.0:
+            elif score[0] < 2.4:
                 str_buy = f"{Colors.RED}Buy {score[0]:.1f}{Colors.RESET}"
             else:
                 str_buy = f"{Colors.RED}{Colors.BOLD}Buy {score[0]:.1f}{Colors.RESET}"
             
+            # 构建卖出信号字符串
             if score[1] < 1.0:
                 str_sell = f"Sell {score[1]:.1f}"
-            elif score[1] < 2.0:
+            elif score[1] < 2.4:
                 str_sell = f"{Colors.GREEN}Sell {score[1]:.1f}{Colors.RESET}"
             else:
                 str_sell = f"{Colors.GREEN}{Colors.BOLD}Sell {score[1]:.1f}{Colors.RESET}"
+            
+            # 添加回测结果
+            if backtest_result:
+                # 买入回测结果
+                if 'buy_prob' in backtest_result and score[0] >= 2.4:
+                    buy_success, buy_total = backtest_result['buy_prob']
+                    str_buy += f" ({buy_success}/{buy_total})"
+                
+                # 卖出回测结果
+                if 'sell_prob' in backtest_result and score[1] >= 2.4:
+                    sell_success, sell_total = backtest_result['sell_prob']
+                    str_sell += f" ({sell_success}/{sell_total})"
             
             signal = f"{str_buy} vs {str_sell}"
     

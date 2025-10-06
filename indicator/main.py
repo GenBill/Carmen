@@ -3,7 +3,7 @@ import sys
 sys.path.append('..')
 from get_stock_list import get_stock_list
 from get_stock_price import get_stock_data, get_stock_data_offline
-from indicators import carmen_indicator
+from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
 from market_hours import is_market_open, get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
 from display_utils import print_stock_info, print_header
@@ -50,6 +50,12 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         status_changed = (last_market_status is None or 
                          last_market_status['message'] != market_status['message'] or
                          last_market_status['is_open'] != market_status['is_open'])
+        
+        # 每日黑名单更新（只在首次运行时执行）
+        if last_data_cache is None:
+            from get_stock_price import get_stock_data
+            volume_filter_instance = get_volume_filter()
+            volume_filter_instance.daily_update_blacklist(get_stock_data)
         
         # 只在状态变化或首次运行时重新获取数据
         if status_changed or last_data_cache is None:
@@ -123,7 +129,26 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             continue  # 跳过后续处理
                         
                         # 计算Carmen指标
-                        score = carmen_indicator(stock_data)
+                        score_carmen = carmen_indicator(stock_data)
+                        score_vegas = vegas_indicator(stock_data)
+                        score = [score_carmen[0] * score_vegas[0], score_carmen[1] * score_vegas[1]]
+                        
+                        # 进行回测（只有当score >= 2.0时才回测）
+                        backtest_result = None
+                        if score[0] >= 2.0 or score[1] >= 2.0:
+                            try:
+                                backtest_result = backtest_carmen_indicator(
+                                    symbol, score, stock_data, 
+                                    gate=2.0,  # 使用2.0作为回测阈值
+                                    rsi_period=rsi_period,
+                                    macd_fast=macd_fast,
+                                    macd_slow=macd_slow,
+                                    macd_signal=macd_signal,
+                                    avg_volume_days=avg_volume_days
+                                )
+                            except Exception as e:
+                                # 回测失败不影响主流程
+                                pass
                         
                         # 检查报警条件
                         if score[0] >= 3:
@@ -137,7 +162,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                         
                         # 打印股票信息（简化版，自动跳过无效数据）
                         is_watchlist = symbol in watchlist_stocks
-                        if not print_stock_info(stock_data, score, is_watchlist):
+                        if not print_stock_info(stock_data, score, is_watchlist, backtest_result):
                             failed_count += 1  # 数据无效，计入失败
                         flush_output()  # 每处理一只股票后刷新输出
                     else:

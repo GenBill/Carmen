@@ -63,6 +63,26 @@ def calculate_rsi(prices, period=14, return_series=False):
         return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else None
 
 
+def calculate_ema(prices, period, return_series=False):
+    """
+    计算 EMA (指数移动平均线)
+    
+    Args:
+        prices: 价格序列（pandas Series）
+        period: EMA 周期
+        return_series: 是否返回整个序列，默认 False（只返回最后一个值）
+        
+    Returns:
+        float 或 Series: EMA 值或整个 EMA 序列
+    """
+    ema = prices.ewm(span=period, adjust=False).mean()
+    
+    if return_series:
+        return ema
+    else:
+        return ema.iloc[-1] if not pd.isna(ema.iloc[-1]) else None
+
+
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     """
     计算 MACD 指标
@@ -306,6 +326,21 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     # 计算 MACD
     macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
     
+    # 计算 EMA 指标（获取完整序列以便提取前一日数据）
+    ema_12_series = calculate_ema(hist['Close'], period=12, return_series=True)
+    ema_144_series = calculate_ema(hist['Close'], period=144, return_series=True)
+    
+    ema_12 = ema_12_series.iloc[-1] if not pd.isna(ema_12_series.iloc[-1]) else None
+    ema_144 = ema_144_series.iloc[-1] if not pd.isna(ema_144_series.iloc[-1]) else None
+    
+    # 获取前一日 EMA 数据
+    ema_12_prev = None
+    ema_144_prev = None
+    if len(ema_12_series) >= 2 and not pd.isna(ema_12_series.iloc[-2]):
+        ema_12_prev = ema_12_series.iloc[-2]
+    if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]):
+        ema_144_prev = ema_144_series.iloc[-2]
+    
     return {
         'symbol': symbol,
         'date': trading_date,
@@ -319,7 +354,11 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'dif': macd_data['dif'],
         'dea': macd_data['dea'],
         'macd_histogram': macd_data['histogram'],
-        'dif_dea_slope': macd_data['dif_dea_slope']
+        'dif_dea_slope': macd_data['dif_dea_slope'],
+        'ema_12': round(ema_12, 2) if ema_12 else None,
+        'ema_144': round(ema_144, 2) if ema_144 else None,
+        'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
+        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None
     }
 
 

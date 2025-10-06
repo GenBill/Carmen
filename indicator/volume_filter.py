@@ -12,16 +12,19 @@ from typing import Set, Dict, List
 class VolumeFilter:
     """低成交量股票过滤器"""
     
-    def __init__(self, blacklist_file: str = "low_volume_blacklist.json", min_volume_usd: float = 2000000):
+    def __init__(self, blacklist_file: str = "low_volume_blacklist.json", min_volume_usd: float = 10000000,
+                 update_cycle_days: int = 30):
         """
         初始化成交量过滤器
         
         Args:
             blacklist_file: 黑名单文件路径
-            min_volume_usd: 最小成交量阈值（美元），默认100万
+            min_volume_usd: 最小成交量阈值（美元），默认1000万
+            update_cycle_days: 黑名单完全更新周期（天），默认30天
         """
         self.blacklist_file = Path(blacklist_file)
         self.min_volume_usd = min_volume_usd
+        self.update_cycle_days = update_cycle_days
         self.blacklist: Set[str] = set()
         self.blacklist_metadata: Dict[str, Dict] = {}
         self.load_blacklist()
@@ -199,6 +202,133 @@ class VolumeFilter:
         self.blacklist_metadata.clear()
         print("🗑️  黑名单已清空")
     
+    def calculate_daily_update_quota(self) -> int:
+        """
+        计算今日需要更新的股票数量
+        
+        Returns:
+            int: 今日需要更新的股票数量
+        """
+        if not self.blacklist:
+            return 0
+        
+        # 获取黑名单中最早的添加日期
+        earliest_date = None
+        for symbol, metadata in self.blacklist_metadata.items():
+            added_date_str = metadata.get('added_date', '')
+            if added_date_str:
+                try:
+                    added_date = datetime.fromisoformat(added_date_str)
+                    if earliest_date is None or added_date < earliest_date:
+                        earliest_date = added_date
+                except:
+                    pass
+        
+        if earliest_date is None:
+            # 如果没有日期信息，按添加顺序处理（先进先出）
+            return max(1, len(self.blacklist) // self.update_cycle_days)
+        
+        # 计算从最早日期到今天的天数
+        days_since_earliest = (datetime.now() - earliest_date).days
+        
+        # 计算更新进度
+        update_progress = days_since_earliest / self.update_cycle_days
+        
+        if update_progress >= 1.0:
+            # 超过更新周期，全部更新
+            return len(self.blacklist)
+        
+        # 计算剩余需要更新的股票数量
+        total_stocks = len(self.blacklist)
+        remaining_stocks = int(total_stocks * (1 - update_progress))
+        remaining_days = self.update_cycle_days - days_since_earliest
+        
+        # 计算每日更新配额
+        daily_quota = max(1, remaining_stocks // remaining_days)
+        
+        return min(daily_quota, remaining_stocks)
+    
+    def get_candidates_for_update(self) -> List[str]:
+        """
+        获取需要重新验证的股票候选列表（按添加时间排序，先进先出）
+        
+        Returns:
+            List[str]: 需要重新验证的股票代码列表
+        """
+        if not self.blacklist:
+            return []
+        
+        # 按添加时间排序，最早添加的优先更新
+        sorted_candidates = sorted(
+            self.blacklist_metadata.items(),
+            key=lambda x: x[1].get('added_date', '1970-01-01')
+        )
+        
+        return [symbol for symbol, _ in sorted_candidates]
+    
+    def daily_update_blacklist(self, stock_data_func=None):
+        """
+        每日更新黑名单：重新验证部分股票，移除满足条件的股票
+        
+        Args:
+            stock_data_func: 获取股票数据的函数，如果为None则跳过更新
+        """
+        if not self.blacklist:
+            return
+        
+        daily_quota = self.calculate_daily_update_quota()
+        if daily_quota <= 0:
+            return
+        
+        candidates = self.get_candidates_for_update()
+        update_count = min(daily_quota, len(candidates))
+        
+        print(f"🔄 开始每日黑名单更新: 计划更新 {update_count}/{len(self.blacklist)} 只股票")
+        
+        updated_count = 0
+        removed_count = 0
+        
+        for i, symbol in enumerate(candidates[:update_count]):
+            if stock_data_func is None:
+                # 如果没有数据获取函数，只移除最早添加的股票（模拟更新）
+                if symbol in self.blacklist:
+                    self.remove_from_blacklist(symbol)
+                    removed_count += 1
+                    updated_count += 1
+                continue
+            
+            try:
+                # 重新获取股票数据
+                stock_data = stock_data_func(symbol)
+                
+                if stock_data and not self.should_filter_by_volume(stock_data):
+                    # 股票现在满足条件，从黑名单中移除
+                    self.remove_from_blacklist(symbol)
+                    removed_count += 1
+                    print(f"✅ {symbol} 已从黑名单移除: 成交量已改善")
+                else:
+                    # 股票仍然不满足条件，更新元数据
+                    if stock_data:
+                        self.blacklist_metadata[symbol] = {
+                            'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
+                            'last_checked': datetime.now().isoformat(),
+                            'avg_volume': stock_data.get('avg_volume', 0),
+                            'avg_price': stock_data.get('close', 0),
+                            'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
+                            'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
+                        }
+                
+                updated_count += 1
+                
+            except Exception as e:
+                print(f"⚠️  更新 {symbol} 时出错: {e}")
+                continue
+        
+        print(f"📊 每日更新完成: 检查 {updated_count} 只，移除 {removed_count} 只")
+        
+        if updated_count > 0 or removed_count > 0:
+            self.save_blacklist()
+
     def export_blacklist_report(self, report_file: str = "volume_blacklist_report.txt"):
         """导出黑名单报告"""
         if not self.blacklist:
@@ -211,6 +341,8 @@ class VolumeFilter:
                 f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"最小成交量阈值: ${self.min_volume_usd:,}\n")
                 f.write(f"黑名单股票数量: {len(self.blacklist)}\n")
+                f.write(f"更新周期: {self.update_cycle_days} 天\n")
+                f.write(f"今日更新配额: {self.calculate_daily_update_quota()} 只\n")
                 f.write("=" * 80 + "\n\n")
                 
                 # 按成交金额排序
@@ -228,7 +360,8 @@ class VolumeFilter:
 
 
 # 全局过滤器实例
-volume_filter = VolumeFilter()
+min_volume_usd = 400 * 10000
+volume_filter = VolumeFilter(min_volume_usd=min_volume_usd)
 
 def get_volume_filter() -> VolumeFilter:
     """获取全局成交量过滤器实例"""
