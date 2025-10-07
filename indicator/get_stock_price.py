@@ -246,6 +246,86 @@ def _save_cache_to_file(symbol: str, cached_time, hist_data):
         print(f"保存缓存文件失败 {symbol}: {e}")
 
 
+def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry=False):
+    """
+    智能缓存有效性检查（基于数据最新日期和市场状态）
+    
+    核心思想：
+    - 股票价格只在盘中变化
+    - 缓存应该基于"数据的最新交易日"而不是"缓存保存时间"
+    
+    Args:
+        cached_time: 缓存保存时间
+        cached_hist: 缓存的历史数据
+        cache_minutes: 缓存有效期（分钟）
+        ignore_expiry: 是否忽略过期（离线模式）
+        
+    Returns:
+        bool: 缓存是否有效
+    """
+    if ignore_expiry:
+        return True
+    
+    now = datetime.now()
+    et_tz = pytz.timezone('America/New_York')
+    
+    # 将缓存时间转换为美东时间
+    if cached_time.tzinfo is None:
+        cached_time_et = pytz.utc.localize(cached_time).astimezone(et_tz)
+    else:
+        cached_time_et = cached_time.astimezone(et_tz)
+    
+    current_et = datetime.now(et_tz)
+    
+    # 判断缓存保存时间是否在盘中（9:30-16:30 ET，含盘后30分钟缓冲期）
+    cached_hour_minute = cached_time_et.hour * 60 + cached_time_et.minute
+    market_open = 9 * 60 + 30   # 9:30
+    market_close = 16 * 60 + 30  # 16:30（盘后30分钟缓冲，因API有5-10分钟延迟）
+    was_cached_during_market = market_open <= cached_hour_minute < market_close
+    
+    # 如果缓存时间戳在盘中，使用传统的时间判断（短缓存）
+    if was_cached_during_market:
+        cache_age_minutes = (now - cached_time).total_seconds() / 60
+        return cache_age_minutes < cache_minutes
+    
+    # 如果缓存时间戳不在盘中（盘前/盘后/周末），检查数据的最新日期
+    if cached_hist is None or cached_hist.empty:
+        return False
+    
+    # 获取缓存数据的最后交易日
+    last_data_date = cached_hist.index[-1]
+    if last_data_date.tzinfo is None:
+        last_data_date_et = pytz.utc.localize(last_data_date).astimezone(et_tz)
+    else:
+        last_data_date_et = last_data_date.astimezone(et_tz)
+    
+    # 判断当前是否在盘中（含盘后30分钟缓冲期）
+    current_hour_minute = current_et.hour * 60 + current_et.minute
+    is_market_open_now = (market_open <= current_hour_minute < market_close and 
+                          current_et.weekday() < 5)
+    
+    if is_market_open_now:
+        # 当前在盘中，需要实时数据
+        # 检查数据是否是今天的，且缓存不超过指定时间
+        current_date = current_et.date()
+        last_data_only_date = last_data_date_et.date()
+        
+        if last_data_only_date >= current_date:
+            # 数据是今天的，检查缓存年龄
+            cache_age_minutes = (now - cached_time).total_seconds() / 60
+            return cache_age_minutes < cache_minutes
+        else:
+            # 数据不是今天的，需要刷新
+            return False
+    else:
+        # 当前不在盘中（盘前/盘后/周末），只需要最新交易日数据
+        # 计算数据距今天数
+        days_old = (current_et.date() - last_data_date_et.date()).days
+        
+        # 如果数据是最近2天内的，认为有效（考虑周末和节假日）
+        return days_old <= 2
+
+
 def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
     """
     从缓存加载数据（公共函数）
@@ -264,18 +344,16 @@ def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
     # 1. 检查内存缓存
     if cache_key in _DATA_CACHE:
         cached_time, cached_hist = _DATA_CACHE[cache_key]
-        cache_age = (now - cached_time).total_seconds() / 60
         
-        if ignore_expiry or cache_age < cache_minutes:
+        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry):
             return cached_hist, "内存"
     
     # 2. 检查文件缓存
     file_cache = _load_cache_from_file(symbol)
     if file_cache:
         cached_time, cached_hist = file_cache
-        cache_age = (now - cached_time).total_seconds() / 60
         
-        if ignore_expiry or cache_age < cache_minutes:
+        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry):
             # 加载到内存缓存
             _DATA_CACHE[cache_key] = (cached_time, cached_hist)
             return cached_hist, "文件"

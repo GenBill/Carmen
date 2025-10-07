@@ -41,6 +41,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
     # 状态跟踪变量
     last_market_status = None
     last_data_cache = None
+    last_refresh_time = None  # 追踪上次数据刷新时间
     while True:
         # 获取市场状态
         market_status = get_market_status()
@@ -51,14 +52,21 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                          last_market_status['message'] != market_status['message'] or
                          last_market_status['is_open'] != market_status['is_open'])
         
+        # 检查缓存是否过期
+        cache_expired = False
+        if last_refresh_time is not None and last_data_cache is not None:
+            current_cache_minutes = last_data_cache.get('cache_minutes', cache_minutes)
+            elapsed_minutes = (time.time() - last_refresh_time) / 60
+            cache_expired = elapsed_minutes >= current_cache_minutes
+        
         # 每日黑名单更新（只在首次运行时执行）
         if last_data_cache is None:
             from get_stock_price import get_stock_data
             volume_filter_instance = get_volume_filter()
             volume_filter_instance.daily_update_blacklist(get_stock_data)
         
-        # 只在状态变化或首次运行时重新获取数据
-        if status_changed or last_data_cache is None:
+        # 在状态变化、首次运行或缓存过期时重新获取数据
+        if status_changed or last_data_cache is None or cache_expired:
             # 根据市场状态决定股票列表和缓存策略
             if is_open and not offline_mode:
                 # 盘中：根据开关决定使用自选股还是全股票列表
@@ -94,6 +102,8 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             print(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 缓存{actual_cache_minutes}分钟")
             if status_changed:
                 print("🔄 市场状态变化，重新获取数据...")
+            elif cache_expired:
+                print("🔄 缓存已过期，重新获取数据...")
             flush_output()  # 强制刷新输出
             
             # 打印表头
@@ -202,6 +212,9 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                 'cache_minutes': actual_cache_minutes,
                 'watchlist_stocks': watchlist_stocks
             }
+            
+            # 更新刷新时间
+            last_refresh_time = time.time()
         else:
             # 状态未变化，使用缓存的数据
             stock_symbols = last_data_cache['stock_symbols']
@@ -212,8 +225,8 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         # 更新上次状态
         last_market_status = market_status
         
-        # 只在状态变化时显示等待信息
-        if status_changed or last_data_cache is None:
+        # 只在刷新数据后才显示等待信息
+        if status_changed or last_data_cache is None or cache_expired:
             print(f"\n等待 {poll_interval} 秒后进行下一次查询... (按 Ctrl+C 退出)")
             print(f"{'='*120}\n")
             flush_output()  # 轮询结束前刷新输出

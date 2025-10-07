@@ -217,15 +217,6 @@ def _get_historical_data_with_cache(symbol):
         historical_data = stock.history(period="5y", timeout=15)
         
         if not historical_data.empty:
-            
-            # 保存到缓存供后续使用
-            try:
-                from get_stock_price import _save_cache_to_file
-                _save_cache_to_file(symbol, datetime.now(), historical_data)
-
-            except Exception as cache_error:
-                print(f"⚠️  缓存保存失败: {cache_error}")
-            
             return historical_data
         
         print(f"❌ {symbol} 无法获取历史数据")
