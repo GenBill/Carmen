@@ -14,8 +14,8 @@ def carmen_indicator(stock_data):
         return [0, 0]
     
     # state[0] Buy, state[1] Sell
-    volume_minmax = [0.75, 1.5]
-    rsi_minmax = [32, 68]
+    volume_minmax = [0.6, 2.0]
+    rsi_minmax = [35, 65]
     rsi_delta = 5
 
     # Volume 爆量买入，缩量卖出
@@ -227,7 +227,7 @@ def _get_historical_data_with_cache(symbol):
         return None
 
 
-def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, gate=2.4,
+def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, gate=2.0,
                              rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8):
     """
     对Carmen指标进行回测，统计相似点第二天第三天连续上涨概率（优化版本）

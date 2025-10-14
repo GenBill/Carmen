@@ -34,8 +34,8 @@ def main():
     
     print(f"📊 当前指标: Buy {score[0]:.1f} vs Sell {score[1]:.1f}")
     
-    # 进行回测（使用2.0作为阈值）
-    backtest_result = backtest_carmen_indicator(symbol, [3.0, 3.0], stock_data, gate=2.0)
+    # 进行回测（使用2.4作为阈值）
+    backtest_result = backtest_carmen_indicator(symbol, [3.0, 3.0], stock_data, gate=2.4)
     
     if backtest_result:
         print(f"\n📈 回测结果:")

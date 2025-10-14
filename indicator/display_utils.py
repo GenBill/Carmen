@@ -75,12 +75,14 @@ def format_volume_ratio(estimated_volume, avg_volume):
     ratio = (estimated_volume / avg_volume) * 100
     
     # 根据量比选择颜色
-    if ratio >= 160:  # 爆量
+    if ratio >= 200:    # 大放量
         color = Colors.RED + Colors.BOLD
-    elif ratio >= 120:  # 放量
+    elif ratio >= 150:  # 放量
         color = Colors.RED
-    elif ratio <= 80:  # 缩量
+    elif ratio <= 75:   # 缩量
         color = Colors.GREEN
+    elif ratio <= 50:   # 大缩量
+        color = Colors.GREEN + Colors.BOLD
     else:  # 正常
         color = Colors.WHITE
     

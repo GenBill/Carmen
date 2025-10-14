@@ -8,6 +8,8 @@ from market_hours import is_market_open, get_market_status, get_cache_expiry_for
 from alert_system import add_to_watchlist, print_watchlist_summary
 from display_utils import print_stock_info, print_header
 from volume_filter import get_volume_filter, filter_low_volume_stocks, should_filter_stock
+from html_generator import generate_html_report, prepare_report_data
+from git_publisher import GitPublisher
 
 import time
 import signal
@@ -20,7 +22,7 @@ def flush_output():
 
 def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
          avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5, offline_mode=False,
-         intraday_use_all_stocks=False):
+         intraday_use_all_stocks=False, enable_github_pages=True, github_branch='gh-pages'):
     """
     主循环函数，轮询股票数据（双模式：盘中/盘前盘后）
     
@@ -36,7 +38,12 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         cache_minutes: 缓存有效期（分钟）
         offline_mode: 是否离线模式
         intraday_use_all_stocks: 盘中时段是否使用全股票列表，默认False（使用自选股）
+        enable_github_pages: 是否启用GitHub Pages自动推送，默认True
+        github_branch: GitHub Pages分支名，默认gh-pages
     """
+    
+    # 初始化Git推送器
+    git_publisher = GitPublisher(branch=github_branch) if enable_github_pages else None
     
     # 状态跟踪变量
     last_market_status = None
@@ -113,6 +120,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             # 轮询每支股票
             alert_count = 0
             failed_count = 0
+            stocks_data_for_html = []  # 收集股票数据用于生成HTML
 
             if offline_mode:
                 get_stock_data_func = get_stock_data_offline
@@ -143,19 +151,22 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                         score_vegas = vegas_indicator(stock_data)
                         score = [score_carmen[0] * score_vegas[0], score_carmen[1] * score_vegas[1]]
                         
-                        # 进行回测（只有当score >= 2.0时才回测）
+                        # 进行回测
                         backtest_result = None
-                        if score[0] >= 2.0 or score[1] >= 2.0:
+                        backtest_str = ''
+                        if score[0] >= 2.4 or score[1] >= 2.4:
                             try:
                                 backtest_result = backtest_carmen_indicator(
                                     symbol, score, stock_data, 
-                                    gate=2.0,  # 使用2.0作为回测阈值
-                                    rsi_period=rsi_period,
-                                    macd_fast=macd_fast,
-                                    macd_slow=macd_slow,
-                                    macd_signal=macd_signal,
+                                    gate=2.0, 
+                                    rsi_period=rsi_period, 
+                                    macd_fast=macd_fast, 
+                                    macd_slow=macd_slow, 
+                                    macd_signal=macd_signal, 
                                     avg_volume_days=avg_volume_days
                                 )
+                                if backtest_result:
+                                    backtest_str = f"({backtest_result.get('buy_count', 0)}/{backtest_result.get('total_days', 0)})"
                             except Exception as e:
                                 # 回测失败不影响主流程
                                 pass
@@ -172,8 +183,28 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                         
                         # 打印股票信息（简化版，自动跳过无效数据）
                         is_watchlist = symbol in watchlist_stocks
-                        if not print_stock_info(stock_data, score, is_watchlist, backtest_result):
+                        print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result)
+                        
+                        if not print_success:
                             failed_count += 1  # 数据无效，计入失败
+                        else:
+                            # 收集数据用于HTML生成（只收集有效数据）
+                            stocks_data_for_html.append({
+                                'symbol': symbol,
+                                'price': stock_data.get('current_price', 0),
+                                'change_pct': ((stock_data.get('current_price', 0) - stock_data.get('open_price', 0)) / stock_data.get('open_price', 1)) * 100 if stock_data.get('open_price', 0) else 0,
+                                'volume_ratio': stock_data.get('volume_ratio', 0),
+                                'rsi_prev': stock_data.get('rsi_previous', 0),
+                                'rsi_current': stock_data.get('rsi', 0),
+                                'dif': stock_data.get('macd_histogram', 0),
+                                'dea': stock_data.get('macd_signal', 0),
+                                'macd_slope': stock_data.get('macd_slope', 0),
+                                'score_buy': score[0],
+                                'score_sell': score[1],
+                                'backtest_str': backtest_str,
+                                'is_watchlist': is_watchlist
+                            })
+                        
                         flush_output()  # 每处理一只股票后刷新输出
                     else:
                         failed_count += 1
@@ -199,10 +230,64 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             
             # 显示成交量过滤器状态
             volume_filter = get_volume_filter()
-            print(f"\n{volume_filter.get_blacklist_summary()}")
+            blacklist_summary = volume_filter.get_blacklist_summary()
+            print(f"\n{blacklist_summary}")
             
             # 保存黑名单（如果有新增）
             volume_filter.save_blacklist()
+            
+            # 生成HTML报告并推送到GitHub Pages
+            if git_publisher and stocks_data_for_html:
+                try:
+                    # 准备报告数据
+                    report_data = prepare_report_data(
+                        stocks_data=stocks_data_for_html,
+                        market_info={
+                            'status': market_status['message'],
+                            'current_time': market_status['current_time_et'],
+                            'mode': mode
+                        },
+                        stats={
+                            'total_scanned': len(stock_symbols),
+                            'success_count': success_count,
+                            'signal_count': alert_count,
+                            'blacklist_filtered': volume_filter.get_blacklist_count()
+                        },
+                        blacklist_info={
+                            'summary': blacklist_summary
+                        },
+                        config={
+                            'rsi_period': rsi_period,
+                            'macd_fast': macd_fast,
+                            'macd_slow': macd_slow,
+                            'macd_signal': macd_signal
+                        }
+                    )
+                    
+                    # 生成HTML（会自动检测内容是否变化）
+                    print(f"\n{'='*60}")
+                    print("📄 正在生成HTML报告...")
+                    content_changed = generate_html_report(report_data)
+                    
+                    if content_changed:
+                        print("✅ HTML报告已生成（内容有更新）")
+                        
+                        # 自动推送到GitHub
+                        print("🚀 检测到内容变化，准备推送到GitHub Pages...")
+                        if git_publisher.publish():
+                            pages_url = git_publisher.get_pages_url()
+                            if pages_url:
+                                print(f"🌐 访问您的页面: {pages_url}")
+                        else:
+                            print("⚠️  推送失败，请检查Git配置")
+                    else:
+                        print("ℹ️  HTML内容无变化，跳过推送")
+                    print(f"{'='*60}\n")
+                    
+                except Exception as e:
+                    print(f"⚠️  生成HTML或推送时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # 缓存当前状态和数据
             last_data_cache = {
@@ -266,6 +351,10 @@ if __name__ == "__main__":
     OFFLINE_MODE = False     # 是否离线模式
     INTRADAY_USE_ALL_STOCKS = True  # 盘中时段是否使用全股票列表
     
+    # GitHub Pages 配置
+    ENABLE_GITHUB_PAGES = True   # 是否启用GitHub Pages自动推送
+    GITHUB_BRANCH = 'gh-pages'   # GitHub Pages分支名
+    
     # 启动时清空旧缓存（可选，确保使用最新验证逻辑）
     CLEAR_CACHE_ON_START = False  # 设为True可清空启动时的缓存
     
@@ -293,7 +382,9 @@ if __name__ == "__main__":
             use_cache=USE_CACHE,
             cache_minutes=CACHE_MINUTES,
             offline_mode=OFFLINE_MODE,
-            intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS
+            intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
+            enable_github_pages=ENABLE_GITHUB_PAGES,
+            github_branch=GITHUB_BRANCH
         )
     except KeyboardInterrupt:
         print('\n\n👋 程序已被用户中断，正在退出...')
