@@ -3,39 +3,601 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carmen Stock Scanner</title>
+    <meta data-hash="afc6d0a950757610608f9fbe2134fc4f">
+    <title>Carmen Stock Scanner - 盘前/盘后股票扫描</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
+        * {
             margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 0;
+            box-sizing: border-box;
         }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
         .container {
+            max-width: 1400px;
+            margin: 0 auto;
             background: white;
-            padding: 40px;
             border-radius: 16px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
             text-align: center;
         }
-        h1 {
-            color: #2a5298;
-            margin-bottom: 20px;
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
         }
-        p {
+        
+        .header .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .market-info {
+            background: #f8f9fa;
+            padding: 20px 30px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        
+        .market-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .info-value {
+            color: #212529;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .status-premarket {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-afterhours {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .status-open {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .stats-bar {
+            background: white;
+            padding: 15px 30px;
+            border-bottom: 2px solid #e9ecef;
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #2a5298;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
             color: #6c757d;
-            line-height: 1.6;
+            margin-top: 5px;
+        }
+        
+        .table-container {
+            padding: 30px;
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }
+        
+        thead {
+            background: #343a40;
+            color: white;
+        }
+        
+        th {
+            padding: 15px 10px;
+            text-align: left;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        tbody tr {
+            border-bottom: 1px solid #dee2e6;
+            transition: background-color 0.2s;
+        }
+        
+        tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        tbody tr.watchlist {
+            background-color: #fff3cd;
+        }
+        
+        tbody tr.watchlist:hover {
+            background-color: #ffeaa7;
+        }
+        
+        td {
+            padding: 12px 10px;
+        }
+        
+        .symbol {
+            font-weight: 700;
+            font-size: 1.1em;
+            color: #2a5298;
+        }
+        
+        .symbol.watchlist-symbol {
+            color: #856404;
+        }
+        
+        .symbol::before {
+            content: "⭐ ";
+            display: none;
+        }
+        
+        .watchlist .symbol::before {
+            display: inline;
+        }
+        
+        .price-positive {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .price-negative {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        
+        .rsi-arrow {
+            font-size: 1.2em;
+        }
+        
+        .signal-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.85em;
+        }
+        
+        .signal-buy {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .signal-sell {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .footer {
+            background: #f8f9fa;
+            padding: 20px 30px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 0.9em;
+            border-top: 2px solid #e9ecef;
+        }
+        
+        .blacklist-summary {
+            background: #fff3cd;
+            padding: 15px 30px;
+            border-top: 2px solid #ffc107;
+            color: #856404;
+        }
+        
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+            
+            .table-container {
+                padding: 15px;
+            }
+            
+            table {
+                font-size: 0.85em;
+            }
+            
+            th, td {
+                padding: 8px 5px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📊 Carmen Stock Scanner</h1>
-        <p>页面正在初始化...</p>
-        <p>请运行程序生成第一份报告</p>
+        <div class="header">
+            <h1>📊 Carmen Stock Scanner</h1>
+            <div class="subtitle">NASDAQ 盘前/盘后技术指标扫描</div>
+        </div>
+        
+        <div class="market-info">
+            <div class="market-info-grid">
+                <div class="info-item">
+                    <span class="info-label">市场状态:</span>
+                    <span class="status-badge status-open">🟢 美股盘中</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">更新时间:</span>
+                    <span class="info-value">2025-10-14 11:07:14 EDT</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">扫描模式:</span>
+                    <span class="info-value">盘中模式(自选股)</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">技术指标:</span>
+                    <span class="info-value">RSI8 | MACD(8,17,9)</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value">34</div>
+                <div class="stat-label">扫描股票</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">34</div>
+                <div class="stat-label">成功获取</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">0</div>
+                <div class="stat-label">交易信号</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">2115</div>
+                <div class="stat-label">黑名单过滤</div>
+            </div>
+        </div>
+        
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>股票代码</th>
+                        <th>价格涨跌</th>
+                        <th>量比</th>
+                        <th>RSI (前→今)</th>
+                        <th>MACD指标</th>
+                        <th>交易信号</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">QQQ</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 46.6</td>
+                        <td>DIF:  -2.09 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">TQQQ</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 44.9</td>
+                        <td>DIF:  -1.14 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">TSLA</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 47.6</td>
+                        <td>DIF:  -5.98 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">NVDA</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 45.4</td>
+                        <td>DIF:  -0.70 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">GOOG</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 52.1</td>
+                        <td>DIF:  -1.42 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">MSFT</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 40.0</td>
+                        <td>DIF:  -1.73 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">AAPL</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 40.1</td>
+                        <td>DIF:  -2.38 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">AMZN</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 39.3</td>
+                        <td>DIF:  -0.20 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">META</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 38.8</td>
+                        <td>DIF:  -0.88 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">ACN</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 44.7</td>
+                        <td>DIF:  -0.19 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">ADBE</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 29.6</td>
+                        <td>DIF:  -1.95 DEA:   0.00 斜率: +0.00</td>
+                        <td>Sell 2.4</td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">SEZL</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 27.3</td>
+                        <td>DIF:  -0.41 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">TEM</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 51.9</td>
+                        <td>DIF:  -0.02 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">RXRX</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 49.3</td>
+                        <td>DIF:  -0.01 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">NBIS</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 62.9</td>
+                        <td>DIF:  -0.32 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">DUOL</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 59.3</td>
+                        <td>DIF:   1.01 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">RUN</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 64.8</td>
+                        <td>DIF:   0.14 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">SYM</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 74.4</td>
+                        <td>DIF:   0.81 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">CRCL</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 44.4</td>
+                        <td>DIF:  -1.27 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">HOOD</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 47.9</td>
+                        <td>DIF:  -1.93 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">COIN</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 42.9</td>
+                        <td>DIF:  -3.61 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">OKLO</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 83.7</td>
+                        <td>DIF:   3.89 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">TSM</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 55.9</td>
+                        <td>DIF:  -1.08 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">AMD</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 70.7</td>
+                        <td>DIF:   4.06 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">UNH</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 57.8</td>
+                        <td>DIF:  -1.44 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">U</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 36.6</td>
+                        <td>DIF:  -0.28 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">ORCL</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 52.9</td>
+                        <td>DIF:  -0.05 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">IOT</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 40.3</td>
+                        <td>DIF:  -0.33 DEA:   0.00 斜率: +0.00</td>
+                        <td>Sell 2.4</td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">TRMB</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 37.9</td>
+                        <td>DIF:  -0.45 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">RBLX</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 57.9</td>
+                        <td>DIF:  -0.03 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">OPEN</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 37.1</td>
+                        <td>DIF:  -0.31 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">CHA</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 44.1</td>
+                        <td>DIF:   0.06 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">GILD</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 68.0</td>
+                        <td>DIF:   0.70 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr class="watchlist">
+                        <td class="symbol watchlist-symbol">LLY</td>
+                        <td><span class="price-positive">$0.00 +0.00%</span></td>
+                        <td>量比:     0.0%</td>
+                        <td>RSI: 0.0 <span class="rsi-arrow">↑</span> 50.8</td>
+                        <td>DIF:  -2.57 DEA:   0.00 斜率: +0.00</td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="blacklist-summary">
+            <strong>📋 黑名单摘要:</strong> 📋 黑名单摘要: 2115 只股票 | 最近7天新增: 36 | 今日已检查: 131 | 平均成交金额: $1,677,638 | 移除阈值: $8,000,000 (2.0x)
+        </div>
+        
+        <div class="footer">
+            <p>自动生成于 2025-10-14 23:07:25</p>
+            <p>Powered by Carmen Stock Scanner | RSI8 | MACD(8,17,9)</p>
+        </div>
     </div>
 </body>
 </html>
