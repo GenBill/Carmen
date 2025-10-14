@@ -25,17 +25,17 @@ def calculate_content_hash(data: dict) -> str:
         # 只保留核心字段，并规范化数值精度到合理位数
         normalized_stock = {
             'symbol': stock.get('symbol', ''),
-            'price': round(stock.get('price', 0), 2),
-            'change_pct': round(stock.get('change_pct', 0), 2),
-            'volume_ratio': round(stock.get('volume_ratio', 0), 1),
-            'rsi_prev': round(stock.get('rsi_prev', 0), 1),
-            'rsi_current': round(stock.get('rsi_current', 0), 1),
-            'dif': round(stock.get('dif', 0), 2),
-            'dea': round(stock.get('dea', 0), 2),
-            'dif_dea_slope': round(stock.get('dif_dea_slope', 0), 2),
-            'score_buy': round(stock.get('score_buy', 0), 1),
-            'score_sell': round(stock.get('score_sell', 0), 1),
-            'backtest_str': stock.get('backtest_str', ''),
+            'price': stock.get('price', 0), 
+            'change_pct': stock.get('change_pct', 0), 
+            'volume_ratio': stock.get('volume_ratio', 0), 
+            'rsi_prev': stock.get('rsi_prev', 0), 
+            'rsi_current': stock.get('rsi_current', 0), 
+            'dif': stock.get('dif', 0), 
+            'dea': stock.get('dea', 0), 
+            'dif_dea_slope': stock.get('dif_dea_slope', 0), 
+            'score_buy': stock.get('score_buy', 0), 
+            'score_sell': stock.get('score_sell', 0), 
+            'backtest_str': stock.get('backtest_str', ''), 
             'is_watchlist': stock.get('is_watchlist', False)
         }
         normalized_stocks.append(normalized_stock)

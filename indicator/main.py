@@ -255,6 +255,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             
             # 生成HTML报告并推送到GitHub Pages（仅盘前/盘后，避免盘中频繁推送）
             if git_publisher and stocks_data_for_html and (not is_open):
+            # if git_publisher and stocks_data_for_html:
                 try:
                     # 获取终端输出缓冲区
                     terminal_output = get_output_buffer()

@@ -313,5 +313,5 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
 def print_header():
     """打印表头"""
     capture_output(f"\n{'='*120}")
-    capture_output(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前→今)':^17}|{'MACD指标':^33}|{'信号':^16}")
+    capture_output(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前 → 今)':^17}|{'MACD指标':^33}|{'信号':^16}")
     capture_output(f"{'='*120}")
