@@ -552,7 +552,7 @@ def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict,
             'price_change': format_price_change(stock['price'], stock['change_pct']),
             'volume_ratio': f"量比: {stock['volume_ratio']:7.1f}%",
             'rsi': format_rsi(stock['rsi_prev'], stock['rsi_current']),
-            'macd': format_macd(stock['dif'], stock['dea'], stock['macd_slope']),
+            'macd': format_macd(stock['dif'], stock['dea'], stock['dif_dea_slope']),
             'signal': format_signal(stock.get('score_buy', 0), stock.get('score_sell', 0), 
                                    stock.get('backtest_str', '')),
             'is_watchlist': stock.get('is_watchlist', False)

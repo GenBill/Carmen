@@ -189,16 +189,28 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             failed_count += 1  # 数据无效，计入失败
                         else:
                             # 收集数据用于HTML生成（只收集有效数据）
+                            # 使用正确的字段名
+                            price = stock_data.get('close', 0)
+                            open_price = stock_data.get('open', 0)
+                            estimated_volume = stock_data.get('estimated_volume', 0)
+                            avg_volume = stock_data.get('avg_volume', 1)
+                            
+                            # 计算涨跌幅
+                            change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
+                            
+                            # 计算量比（使用estimated_volume）
+                            volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
+                            
                             stocks_data_for_html.append({
                                 'symbol': symbol,
-                                'price': stock_data.get('current_price', 0),
-                                'change_pct': ((stock_data.get('current_price', 0) - stock_data.get('open_price', 0)) / stock_data.get('open_price', 1)) * 100 if stock_data.get('open_price', 0) else 0,
-                                'volume_ratio': stock_data.get('volume_ratio', 0),
-                                'rsi_prev': stock_data.get('rsi_previous', 0),
+                                'price': price,
+                                'change_pct': change_pct,
+                                'volume_ratio': volume_ratio,
+                                'rsi_prev': stock_data.get('rsi_prev', 0),
                                 'rsi_current': stock_data.get('rsi', 0),
-                                'dif': stock_data.get('macd_histogram', 0),
-                                'dea': stock_data.get('macd_signal', 0),
-                                'macd_slope': stock_data.get('macd_slope', 0),
+                                'dif': stock_data.get('dif', 0),
+                                'dea': stock_data.get('dea', 0),
+                                'dif_dea_slope': stock_data.get('dif_dea_slope', 0),
                                 'score_buy': score[0],
                                 'score_sell': score[1],
                                 'backtest_str': backtest_str,
