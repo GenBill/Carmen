@@ -67,7 +67,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             cache_expired = elapsed_minutes >= current_cache_minutes
         
         # 每日黑名单更新（只在首次运行时执行）
-        if last_data_cache is None:
+        if last_data_cache is None and (not is_open):
             from get_stock_price import get_stock_data
             volume_filter_instance = get_volume_filter()
             volume_filter_instance.daily_update_blacklist(get_stock_data)
@@ -98,10 +98,10 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
 
             # 应用成交量过滤器，移除黑名单中的股票
             stock_symbols = filter_low_volume_stocks(stock_symbols)
+            stock_symbols.extend([s for s in watchlist_stocks if s not in stock_symbols])
             
-            # 确保自选股始终在处理列表中（即使被成交量过滤器移除也要加回来）
-            if intraday_use_all_stocks and is_open:
-                stock_symbols.extend([s for s in watchlist_stocks if s not in stock_symbols])
+            if (not intraday_use_all_stocks) and is_open:
+                stock_symbols = watchlist_stocks
             
             # 打印状态栏
             print(f"\n{'='*120}")
