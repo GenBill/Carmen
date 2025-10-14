@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 import json
+from display_utils import capture_output
 
 # 关注清单文件路径
 ALERT_FILE = Path(__file__).parent / 'daily_watchlist.json'
@@ -82,12 +83,12 @@ def print_watchlist_summary():
     sell_count = len(watchlist['sell'])
     
     if buy_count > 0 or sell_count > 0:
-        print(f"\n📋 今日关注清单: {buy_count} 买入信号 | {sell_count} 卖出信号")
+        capture_output(f"\n📋 今日关注清单: {buy_count} 买入信号 | {sell_count} 卖出信号")
         
         if buy_count > 0:
-            print(f"  🟢 买入: {', '.join([item['symbol'] for item in watchlist['buy']])}")
+            capture_output(f"  🟢 买入: {', '.join([item['symbol'] for item in watchlist['buy']])}")
         
         if sell_count > 0:
-            print(f"  🔴 卖出: {', '.join([item['symbol'] for item in watchlist['sell']])}")
+            capture_output(f"  🔴 卖出: {', '.join([item['symbol'] for item in watchlist['sell']])}")
         
-        print()
+        capture_output("")

@@ -87,12 +87,12 @@ class GitPublisher:
             print(f"❌ HTML文件不存在: {self.html_file}")
             return False
         
-        print(f"\n{'='*60}")
-        print(f"📤 开始推送到 GitHub Pages...")
-        print(f"{'='*60}")
+        # print(f"\n{'='*60}")
+        # print(f"📤 开始推送到 GitHub Pages...")
+        # print(f"{'='*60}")
         
         try:
-            print(f"📁 gh-pages目录: {self.gh_pages_dir}")
+            # print(f"📁 gh-pages目录: {self.gh_pages_dir}")
             
             # 确保目标目录存在
             os.makedirs(self.target_docs_dir, exist_ok=True)
@@ -101,19 +101,19 @@ class GitPublisher:
             import shutil
             target_html = os.path.join(self.target_docs_dir, 'index.html')
             
-            print(f"📄 复制HTML文件...")
-            print(f"   从: {self.html_file}")
-            print(f"   到: {target_html}")
+            # print(f"📄 复制HTML文件...")
+            # print(f"   从: {self.html_file}")
+            # print(f"   到: {target_html}")
             shutil.copy2(self.html_file, target_html)
             
             # 复制meta.json（如果存在）
             if os.path.exists(self.meta_file):
                 target_meta = os.path.join(self.target_docs_dir, 'meta.json')
-                print(f"📝 复制meta文件...")
+                # print(f"📝 复制meta文件...")
                 shutil.copy2(self.meta_file, target_meta)
             
             # 添加文件到Git
-            print(f"\n📝 添加文件到暂存区...")
+            # print(f"\n📝 添加文件到暂存区...")
             success, output = self._run_command(['git', 'add', 'docs/'], cwd=self.gh_pages_dir)
             if not success:
                 print(f"❌ 添加文件失败: {output}")
@@ -129,14 +129,14 @@ class GitPublisher:
             if commit_message is None:
                 commit_message = f"Update stock report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
-            print(f"💾 提交变更: {commit_message}")
+            # print(f"💾 提交变更: {commit_message}")
             success, output = self._run_command(['git', 'commit', '-m', commit_message], cwd=self.gh_pages_dir)
             if not success:
                 print(f"❌ 提交失败: {output}")
                 return False
             
             # 推送到远程
-            print(f"🚀 推送到远程仓库...")
+            # print(f"🚀 推送到远程仓库...")
             success, output = self._run_command(['git', 'push'], cwd=self.gh_pages_dir)
             if not success:
                 print(f"❌ 推送失败: {output}")
@@ -144,7 +144,7 @@ class GitPublisher:
                 return False
             
             print(f"✅ 成功推送到 GitHub Pages!")
-            print(f"🌐 您的页面将在几分钟后更新")
+            # print(f"🌐 您的页面将在几分钟后更新")
             
             return True
             
@@ -154,8 +154,8 @@ class GitPublisher:
             traceback.print_exc()
             return False
         
-        finally:
-            print(f"{'='*60}\n")
+        # finally:
+        #     print(f"{'='*60}\n")
     
     def get_pages_url(self) -> Optional[str]:
         """

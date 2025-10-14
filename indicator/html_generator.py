@@ -10,12 +10,40 @@ import hashlib
 import os
 
 def calculate_content_hash(data: dict) -> str:
-    """计算数据内容的哈希值，用于检测内容是否变化"""
-    # 只对关键数据计算哈希，忽略时间戳
+    """
+    计算数据内容的哈希值，用于检测内容是否变化
+    
+    只对股票数据本身计算哈希，忽略：
+    - 时间戳
+    - 市场状态消息（避免状态变化触发推送）
+    - 终端输出
+    """
+    # 规范化股票数据，统一浮点数精度（避免精度差异）
+    stocks = data.get('stocks', [])
+    normalized_stocks = []
+    for stock in stocks:
+        # 只保留核心字段，并规范化数值精度到合理位数
+        normalized_stock = {
+            'symbol': stock.get('symbol', ''),
+            'price': round(stock.get('price', 0), 2),
+            'change_pct': round(stock.get('change_pct', 0), 2),
+            'volume_ratio': round(stock.get('volume_ratio', 0), 1),
+            'rsi_prev': round(stock.get('rsi_prev', 0), 1),
+            'rsi_current': round(stock.get('rsi_current', 0), 1),
+            'dif': round(stock.get('dif', 0), 2),
+            'dea': round(stock.get('dea', 0), 2),
+            'dif_dea_slope': round(stock.get('dif_dea_slope', 0), 2),
+            'score_buy': round(stock.get('score_buy', 0), 1),
+            'score_sell': round(stock.get('score_sell', 0), 1),
+            'backtest_str': stock.get('backtest_str', ''),
+            'is_watchlist': stock.get('is_watchlist', False)
+        }
+        normalized_stocks.append(normalized_stock)
+    
+    # 只对股票数据和统计信息计算哈希，不包含市场状态
     key_data = {
-        'stocks': data.get('stocks', []),
-        'stats': data.get('stats', {}),
-        'market_status': data.get('market_info', {}).get('status', '')
+        'stocks': normalized_stocks,
+        'stats': data.get('stats', {})
     }
     content_str = json.dumps(key_data, sort_keys=True)
     return hashlib.md5(content_str.encode()).hexdigest()
@@ -23,7 +51,7 @@ def calculate_content_hash(data: dict) -> str:
 
 def generate_html_report(report_data: dict, output_file: str = 'docs/index.html') -> bool:
     """
-    生成HTML报告
+    生成HTML报告（纯文本终端风格）
     
     Args:
         report_data: 包含股票数据、市场状态等信息的字典
@@ -36,8 +64,8 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     # 检查文件是否存在
     file_exists = os.path.exists(output_file)
     
-    if not file_exists:
-        print(f"💡 HTML文件不存在，将强制生成: {output_file}")
+    # if not file_exists:
+    #     print(f"💡 HTML文件不存在，将强制生成: {output_file}")
     
     # 检查是否有内容变化
     new_hash = calculate_content_hash(report_data)
@@ -52,14 +80,25 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
             print(f"⚠️ 读取旧HTML文件时出错: {e}")
             pass  # 读取失败，重新生成
     
-    # 生成HTML内容
+    # 获取上传时间
+    upload_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 从report_data中获取缓存的终端输出
+    terminal_output = report_data.get('terminal_output', '暂无输出')
+    
+    # HTML转义，但保留ANSI代码
+    import html
+    escaped_output = html.escape(terminal_output)
+    
+    # 生成HTML（使用ansi_up.js渲染ANSI颜色）
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta data-hash="{new_hash}">
-    <title>Carmen Stock Scanner - 盘前/盘后股票扫描</title>
+    <title>Carmen Stock Scanner - 实时监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
         * {{
             margin: 0;
@@ -68,338 +107,79 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
         }}
         
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            font-family: 'Courier New', Courier, Monaco, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
             padding: 20px;
+            line-height: 1.6;
         }}
         
         .container {{
-            max-width: 1400px;
+            max-width: 1800px;
             margin: 0 auto;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
         }}
         
         .header {{
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-weight: bold;
         }}
         
-        .header h1 {{
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            font-weight: 700;
-        }}
-        
-        .header .subtitle {{
-            font-size: 1.1em;
-            opacity: 0.9;
-        }}
-        
-        .market-info {{
-            background: #f8f9fa;
-            padding: 20px 30px;
-            border-bottom: 2px solid #e9ecef;
-        }}
-        
-        .market-info-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }}
-        
-        .info-item {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-        
-        .info-label {{
-            font-weight: 600;
-            color: #495057;
-        }}
-        
-        .info-value {{
-            color: #212529;
-        }}
-        
-        .status-badge {{
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }}
-        
-        .status-premarket {{
-            background: #fff3cd;
-            color: #856404;
-        }}
-        
-        .status-afterhours {{
-            background: #d1ecf1;
-            color: #0c5460;
-        }}
-        
-        .status-open {{
-            background: #d4edda;
-            color: #155724;
-        }}
-        
-        .stats-bar {{
-            background: white;
-            padding: 15px 30px;
-            border-bottom: 2px solid #e9ecef;
-            display: flex;
-            justify-content: space-around;
-            flex-wrap: wrap;
-            gap: 20px;
-        }}
-        
-        .stat-item {{
-            text-align: center;
-        }}
-        
-        .stat-value {{
-            font-size: 1.8em;
-            font-weight: 700;
-            color: #2a5298;
-        }}
-        
-        .stat-label {{
-            font-size: 0.9em;
-            color: #6c757d;
-            margin-top: 5px;
-        }}
-        
-        .table-container {{
-            padding: 30px;
+        #output {{
+            white-space: pre;
             overflow-x: auto;
+            font-family: inherit;
+            margin: 0;
         }}
         
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.95em;
-        }}
-        
-        thead {{
-            background: #343a40;
-            color: white;
-        }}
-        
-        th {{
-            padding: 15px 10px;
-            text-align: left;
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }}
-        
-        tbody tr {{
-            border-bottom: 1px solid #dee2e6;
-            transition: background-color 0.2s;
-        }}
-        
-        tbody tr:hover {{
-            background-color: #f8f9fa;
-        }}
-        
-        tbody tr.watchlist {{
-            background-color: #fff3cd;
-        }}
-        
-        tbody tr.watchlist:hover {{
-            background-color: #ffeaa7;
-        }}
-        
-        td {{
-            padding: 12px 10px;
-        }}
-        
-        .symbol {{
-            font-weight: 700;
-            font-size: 1.1em;
-            color: #2a5298;
-        }}
-        
-        .symbol.watchlist-symbol {{
-            color: #856404;
-        }}
-        
-        .symbol::before {{
-            content: "⭐ ";
-            display: none;
-        }}
-        
-        .watchlist .symbol::before {{
-            display: inline;
-        }}
-        
-        .price-positive {{
-            color: #28a745;
-            font-weight: 600;
-        }}
-        
-        .price-negative {{
-            color: #dc3545;
-            font-weight: 600;
-        }}
-        
-        .rsi-arrow {{
-            font-size: 1.2em;
-        }}
-        
-        .signal-badge {{
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 0.85em;
-        }}
-        
-        .signal-buy {{
-            background: #d4edda;
-            color: #155724;
-        }}
-        
-        .signal-sell {{
-            background: #f8d7da;
-            color: #721c24;
-        }}
-        
-        .footer {{
-            background: #f8f9fa;
-            padding: 20px 30px;
-            text-align: center;
-            color: #6c757d;
+        .upload-time {{
+            color: #8b949e;
             font-size: 0.9em;
-            border-top: 2px solid #e9ecef;
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #30363d;
+            text-align: right;
         }}
         
-        .blacklist-summary {{
-            background: #fff3cd;
-            padding: 15px 30px;
-            border-top: 2px solid #ffc107;
-            color: #856404;
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {{
+            height: 10px;
+            width: 10px;
         }}
         
-        @media (max-width: 768px) {{
-            .header h1 {{
-                font-size: 1.8em;
-            }}
-            
-            .table-container {{
-                padding: 15px;
-            }}
-            
-            table {{
-                font-size: 0.85em;
-            }}
-            
-            th, td {{
-                padding: 8px 5px;
-            }}
+        ::-webkit-scrollbar-track {{
+            background: #0d1117;
+        }}
+        
+        ::-webkit-scrollbar-thumb {{
+            background: #30363d;
+            border-radius: 5px;
+        }}
+        
+        ::-webkit-scrollbar-thumb:hover {{
+            background: #484f58;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>📊 Carmen Stock Scanner</h1>
-            <div class="subtitle">NASDAQ 盘前/盘后技术指标扫描</div>
-        </div>
-        
-        <div class="market-info">
-            <div class="market-info-grid">
-                <div class="info-item">
-                    <span class="info-label">市场状态:</span>
-                    <span class="status-badge {report_data['market_info']['status_class']}">{report_data['market_info']['status']}</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">更新时间:</span>
-                    <span class="info-value">{report_data['market_info']['update_time']}</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">扫描模式:</span>
-                    <span class="info-value">{report_data['market_info']['mode']}</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">技术指标:</span>
-                    <span class="info-value">{report_data['market_info']['indicators']}</span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="stats-bar">
-            <div class="stat-item">
-                <div class="stat-value">{report_data['stats']['total_scanned']}</div>
-                <div class="stat-label">扫描股票</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">{report_data['stats']['success_count']}</div>
-                <div class="stat-label">成功获取</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">{report_data['stats']['signal_count']}</div>
-                <div class="stat-label">交易信号</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">{report_data['stats']['blacklist_count']}</div>
-                <div class="stat-label">黑名单过滤</div>
-            </div>
-        </div>
-        
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>股票代码</th>
-                        <th>价格涨跌</th>
-                        <th>量比</th>
-                        <th>RSI (前→今)</th>
-                        <th>MACD指标</th>
-                        <th>交易信号</th>
-                    </tr>
-                </thead>
-                <tbody>
-"""
-    
-    # 添加股票数据行
-    for stock in report_data['stocks']:
-        row_class = 'watchlist' if stock.get('is_watchlist', False) else ''
-        symbol_class = 'symbol watchlist-symbol' if stock.get('is_watchlist', False) else 'symbol'
-        
-        html_content += f"""                    <tr class="{row_class}">
-                        <td class="{symbol_class}">{stock['symbol']}</td>
-                        <td>{stock['price_change']}</td>
-                        <td>{stock['volume_ratio']}</td>
-                        <td>{stock['rsi']}</td>
-                        <td>{stock['macd']}</td>
-                        <td>{stock['signal']}</td>
-                    </tr>
-"""
-    
-    # 完成HTML
-    html_content += f"""                </tbody>
-            </table>
-        </div>
-        
-        <div class="blacklist-summary">
-            <strong>📋 黑名单摘要:</strong> {report_data['blacklist']['summary']}
-        </div>
-        
-        <div class="footer">
-            <p>自动生成于 {report_data['generation_time']}</p>
-            <p>Powered by Carmen Stock Scanner | RSI{report_data['market_info']['rsi_period']} | MACD({report_data['market_info']['macd_params']})</p>
-        </div>
+        <div class="header">Carmen Stock Scanner - 实时输出</div>
+        <pre id="output"></pre>
+        <div class="upload-time">📤 上传时间: {upload_time}</div>
     </div>
+    <script>
+        // 使用ansi_up将ANSI颜色代码转换为HTML
+        const ansi_up = new AnsiUp();
+        const terminalOutput = `{escaped_output}`;
+        const html = ansi_up.ansi_to_html(terminalOutput);
+        document.getElementById('output').innerHTML = html;
+    </script>
 </body>
 </html>
 """
@@ -484,7 +264,7 @@ def save_meta_info(report_data: dict, content_hash: str, html_file: str):
     try:
         with open(meta_file, 'w', encoding='utf-8') as f:
             json.dump(meta_info, f, ensure_ascii=False, indent=2)
-        print(f"📝 Meta信息已保存: {meta_file}")
+        # print(f"📝 Meta信息已保存: {meta_file}")
     except Exception as e:
         print(f"⚠️ 保存meta文件失败: {e}")
 
@@ -529,7 +309,7 @@ def format_signal(score_buy: float, score_sell: float, backtest_str: str = '') -
 
 
 def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict, 
-                        blacklist_info: dict, config: dict) -> dict:
+                        blacklist_info: dict, config: dict, terminal_output: str = '') -> dict:
     """
     准备报告数据
     
@@ -539,6 +319,7 @@ def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict,
         stats: 统计信息
         blacklist_info: 黑名单信息
         config: 配置参数
+        terminal_output: 终端输出内容（包含ANSI颜色代码）
         
     Returns:
         dict: 格式化后的报告数据
@@ -587,6 +368,7 @@ def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict,
         'blacklist': {
             'summary': blacklist_info['summary']
         },
-        'generation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'generation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'terminal_output': terminal_output
     }
 

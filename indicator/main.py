@@ -4,9 +4,9 @@ sys.path.append('..')
 from get_stock_list import get_stock_list
 from get_stock_price import get_stock_data, get_stock_data_offline
 from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
-from market_hours import is_market_open, get_market_status, get_cache_expiry_for_premarket
+from market_hours import get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
-from display_utils import print_stock_info, print_header
+from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, filter_low_volume_stocks, should_filter_stock
 from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
@@ -68,12 +68,14 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         
         # 每日黑名单更新（只在首次运行时执行）
         if last_data_cache is None and (not is_open):
-            from get_stock_price import get_stock_data
             volume_filter_instance = get_volume_filter()
             volume_filter_instance.daily_update_blacklist(get_stock_data)
         
         # 在状态变化、首次运行或缓存过期时重新获取数据
         if status_changed or last_data_cache is None or cache_expired:
+            # 清空输出缓冲区，开始新一轮扫描
+            clear_output_buffer()
+            
             # 根据市场状态决定股票列表和缓存策略
             if is_open and not offline_mode:
                 # 盘中：根据开关决定使用自选股还是全股票列表
@@ -105,12 +107,14 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             
             # 打印状态栏
             print(f"\n{'='*120}")
-            print(f"{market_status['message']} | {mode} | {market_status['current_time_et']}")
-            print(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 缓存{actual_cache_minutes}分钟")
+            capture_output(f"{market_status['message']} | {mode} | {market_status['current_time_et']}")
+            capture_output(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 缓存{actual_cache_minutes}分钟")
+            
             if status_changed:
-                print("🔄 市场状态变化，重新获取数据...")
+                capture_output("🔄 市场状态变化，重新获取数据...")
             elif cache_expired:
-                print("🔄 缓存已过期，重新获取数据...")
+                capture_output("🔄 缓存已过期，重新获取数据...")
+            
             flush_output()  # 强制刷新输出
             
             # 打印表头
@@ -230,27 +234,31 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                     continue  # 继续处理下一个股票
             
             # 打印分隔线
-            print(f"{'='*120}")
+            capture_output(f"{'='*120}")
             
             # 显示统计
             success_count = len(stock_symbols) - failed_count
-            print(f"⚠️  本轮查询: 成功 {success_count} | 失败 {failed_count}")
+            capture_output(f"⚠️  本轮查询: 成功 {success_count} | 失败 {failed_count}")
             
             # 显示今日关注清单
-            print(f"\n🔔 本次扫描发现 {alert_count} 个新信号！")
+            capture_output("")
+            capture_output(f"🔔 本次扫描发现 {alert_count} 个新信号！")
             print_watchlist_summary()
             
             # 显示成交量过滤器状态
             volume_filter = get_volume_filter()
             blacklist_summary = volume_filter.get_blacklist_summary()
-            print(f"\n{blacklist_summary}")
+            capture_output(f"\n{blacklist_summary}")
             
             # 保存黑名单（如果有新增）
             volume_filter.save_blacklist()
             
-            # 生成HTML报告并推送到GitHub Pages
-            if git_publisher and stocks_data_for_html:
+            # 生成HTML报告并推送到GitHub Pages（仅盘前/盘后，避免盘中频繁推送）
+            if git_publisher and stocks_data_for_html and (not is_open):
                 try:
+                    # 获取终端输出缓冲区
+                    terminal_output = get_output_buffer()
+                    
                     # 准备报告数据
                     report_data = prepare_report_data(
                         stocks_data=stocks_data_for_html,
@@ -273,28 +281,29 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             'macd_fast': macd_fast,
                             'macd_slow': macd_slow,
                             'macd_signal': macd_signal
-                        }
+                        },
+                        terminal_output=terminal_output
                     )
                     
                     # 生成HTML（会自动检测内容是否变化）
-                    print(f"\n{'='*60}")
-                    print("📄 正在生成HTML报告...")
+                    # print(f"\n{'='*60}")
+                    # print("📄 正在生成HTML报告...")
                     content_changed = generate_html_report(report_data)
                     
                     if content_changed:
-                        print("✅ HTML报告已生成（内容有更新）")
+                        # print("✅ HTML报告已生成（内容有更新）")
                         
                         # 自动推送到GitHub
-                        print("🚀 检测到内容变化，准备推送到GitHub Pages...")
-                        if git_publisher.publish():
+                        # print("🚀 检测到内容变化，准备推送到GitHub Pages...")
+                        if git_publisher.publish(): 
                             pages_url = git_publisher.get_pages_url()
                             if pages_url:
                                 print(f"🌐 访问您的页面: {pages_url}")
-                        else:
+                        else: 
                             print("⚠️  推送失败，请检查Git配置")
                     else:
                         print("ℹ️  HTML内容无变化，跳过推送")
-                    print(f"{'='*60}\n")
+                    # print(f"{'='*60}\n")
                     
                 except Exception as e:
                     print(f"⚠️  生成HTML或推送时出错: {e}")

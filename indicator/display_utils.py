@@ -2,6 +2,33 @@
 终端颜色和显示工具
 """
 
+# 输出缓冲区，用于生成HTML
+_output_buffer = []
+
+def capture_output(text, also_print=True):
+    """
+    将输出内容添加到缓冲区（保留ANSI颜色代码）
+    
+    Args:
+        text: 要输出的文本
+        also_print: 是否同时打印到终端，默认True
+    """
+    if also_print:
+        print(text)
+    _output_buffer.append(text)
+
+def get_output_buffer():
+    """获取并清空输出缓冲区"""
+    global _output_buffer
+    content = '\n'.join(_output_buffer)
+    _output_buffer = []
+    return content
+
+def clear_output_buffer():
+    """清空输出缓冲区"""
+    global _output_buffer
+    _output_buffer = []
+
 # ANSI颜色代码
 class Colors:
     RED = '\033[91m'      # 红色（下跌）
@@ -278,12 +305,13 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
     should_print = is_watchlist_stock or buy_signal or sell_signal
     
     if should_print:
-        print(f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}")
+        line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}"
+        capture_output(line)
     return True
 
 
 def print_header():
     """打印表头"""
-    print(f"\n{'='*120}")
-    print(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前->今)':^17}|{'MACD指标':^33}|{'信号':^16}")
-    print(f"{'='*120}")
+    capture_output(f"\n{'='*120}")
+    capture_output(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前→今)':^17}|{'MACD指标':^33}|{'信号':^16}")
+    capture_output(f"{'='*120}")
