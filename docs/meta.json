@@ -1,12 +1,12 @@
 {
-  "last_update": "2025-10-14T23:29:34.645239",
-  "last_update_readable": "2025-10-14 23:29:34",
-  "content_hash": "fca87ff2682218696d47a6d51ad96609",
+  "last_update": "2025-10-15T00:10:46.444325",
+  "last_update_readable": "2025-10-15 00:10:46",
+  "content_hash": "a1980ed3ef5b2c3e99fb95cf872275e4",
   "html_file": "docs/index.html",
-  "html_file_size": 24484,
+  "html_file_size": 24486,
   "market_status": "🟢 美股盘中",
-  "update_time": "2025-10-14 11:29:08 EDT",
-  "mode": "盘前/盘后模式",
+  "update_time": "2025-10-14 12:10:32 EDT",
+  "mode": "盘中模式(自选股)",
   "stats": {
     "total_scanned": 34,
     "success_count": 34,
@@ -58,7 +58,15 @@
       "market_status": "🟢 美股盘中",
       "stocks_count": 34,
       "signals": 0
+    },
+    {
+      "timestamp": "2025-10-15T00:10:46.444325",
+      "timestamp_readable": "2025-10-15 00:10:46",
+      "content_hash": "a1980ed3ef5b2c3e99fb95cf872275e4",
+      "market_status": "🟢 美股盘中",
+      "stocks_count": 34,
+      "signals": 0
     }
   ],
-  "total_updates": 5
+  "total_updates": 6
 }
