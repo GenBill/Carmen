@@ -538,19 +538,69 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                         raise Exception("返回空数据")
                         
                 except Exception as api_error:
-                    if attempt < max_retries - 1:
-                        # 指数退避：1秒, 2秒, 4秒...
+                    error_str = str(api_error).lower()
+                    error_type = type(api_error).__name__
+                    
+                    # 分类错误类型
+                    # 1. 股票无效/不存在 - 不重试
+                    invalid_stock_indicators = [
+                        "expecting value",      # JSON解析失败，通常是空响应
+                        "no data found",        # yfinance明确返回无数据
+                        "no price data found",  # 无价格数据
+                        "404",                  # HTTP 404
+                        "not found"             # 股票未找到
+                    ]
+                    
+                    # 2. API限流/服务器问题 - 应该重试
+                    rate_limit_indicators = [
+                        "429",                  # HTTP 429 Too Many Requests
+                        "too many requests",    # 限流
+                        "rate limit",           # 速率限制
+                        "503",                  # Service Unavailable
+                        "502",                  # Bad Gateway
+                        "500"                   # Internal Server Error
+                    ]
+                    
+                    # 3. 网络问题 - 应该重试
+                    network_indicators = [
+                        "timeout",              # 超时
+                        "connection",           # 连接问题
+                        "unable to connect",    # 无法连接
+                        "network"               # 网络错误
+                    ]
+                    
+                    # 判断错误类型
+                    is_invalid_stock = any(indicator in error_str for indicator in invalid_stock_indicators)
+                    is_rate_limit = any(indicator in error_str for indicator in rate_limit_indicators)
+                    is_network = any(indicator in error_str for indicator in network_indicators)
+                    
+                    # 股票无效 - 直接失败，不重试
+                    if is_invalid_stock:
+                        print(f"❌ {symbol} 股票代码无效或已退市: {api_error}")
+                        return None
+                    
+                    # API限流 - 需要更长的等待时间
+                    if is_rate_limit:
+                        if attempt < max_retries - 1:
+                            # API限流时使用更长的延迟：5秒, 10秒, 20秒
+                            delay = 5 * (2 ** attempt)
+                            print(f"⚠️  {symbol} API限流 (尝试 {attempt + 1}/{max_retries})")
+                            print(f"   🕐 等待 {delay} 秒后重试...")
+                            time.sleep(delay)
+                        else:
+                            print(f"❌ {symbol} API限流持续，已放弃 (重试{max_retries}次)")
+                            return None
+                    
+                    # 网络问题或其他临时错误 - 正常重试
+                    elif is_network or attempt < max_retries - 1:
                         delay = base_delay * (2 ** attempt)
-                        print(f"⚠️  {symbol} API调用失败 (尝试 {attempt + 1}/{max_retries}): {api_error}")
+                        error_category = "网络错误" if is_network else "API错误"
+                        print(f"⚠️  {symbol} {error_category} (尝试 {attempt + 1}/{max_retries}): {api_error}")
                         print(f"   等待 {delay} 秒后重试...")
                         time.sleep(delay)
                     else:
                         # 最后一次尝试也失败
                         print(f"❌ {symbol} API调用最终失败 (已重试{max_retries}次): {api_error}")
-                        # broken_stock_symbols.append(symbol)
-                        # with open('broken_stock_symbols.txt', 'w') as f:
-                        #     for symbol in broken_stock_symbols:
-                        #         f.write(symbol + "\n")
                         return None
         
         # 3. 使用历史数据计算指标（公共计算逻辑）

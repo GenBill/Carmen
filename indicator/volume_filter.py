@@ -13,7 +13,7 @@ class VolumeFilter:
     """低成交量股票过滤器"""
     
     def __init__(self, blacklist_file: str = "low_volume_blacklist.json", min_volume_usd: float = 10000000,
-                 update_cycle_days: int = 30):
+                 update_cycle_days: int = 30, removal_multiplier: float = 2.0):
         """
         初始化成交量过滤器
         
@@ -21,10 +21,12 @@ class VolumeFilter:
             blacklist_file: 黑名单文件路径
             min_volume_usd: 最小成交量阈值（美元），默认1000万
             update_cycle_days: 黑名单完全更新周期（天），默认30天
+            removal_multiplier: 移除倍数，成交量需达到此倍数才能移除，默认2.0
         """
         self.blacklist_file = Path(blacklist_file)
         self.min_volume_usd = min_volume_usd
         self.update_cycle_days = update_cycle_days
+        self.removal_multiplier = removal_multiplier  # 新增：移除倍数
         self.blacklist: Set[str] = set()
         self.blacklist_metadata: Dict[str, Dict] = {}
         self.load_blacklist()
@@ -122,7 +124,7 @@ class VolumeFilter:
     
     def should_filter_by_volume(self, stock_data: dict) -> bool:
         """
-        检查股票是否应该因为成交量过低而被过滤
+        检查股票是否应该因为成交量过低而被过滤（加入黑名单）
         
         Args:
             stock_data: 股票数据字典，包含 avg_volume 和 close 字段
@@ -145,6 +147,38 @@ class VolumeFilter:
         
         # 如果成交金额小于阈值，应该被过滤
         return volume_usd < self.min_volume_usd
+    
+    def should_remove_from_blacklist(self, stock_data: dict) -> bool:
+        """
+        检查股票是否应该从黑名单中移除（需要达到更高的阈值）
+        
+        使用 removal_multiplier 倍数的阈值，避免股票反复横跳
+        例如：加入黑名单阈值是400万，移除阈值是800万（2倍）
+        
+        Args:
+            stock_data: 股票数据字典，包含 avg_volume 和 close 字段
+            
+        Returns:
+            True表示应该从黑名单移除
+        """
+        if not stock_data:
+            return False
+        
+        avg_volume = stock_data.get('avg_volume', 0)
+        close_price = stock_data.get('close', 0)
+        
+        # 如果没有成交量或价格数据，不移除
+        if avg_volume <= 0 or close_price <= 0:
+            return False
+        
+        # 计算成交金额
+        volume_usd = avg_volume * close_price
+        
+        # 需要达到 removal_multiplier 倍的阈值才能移除
+        removal_threshold = self.min_volume_usd * self.removal_multiplier
+        
+        # 如果成交金额达到移除阈值，应该被移除
+        return volume_usd >= removal_threshold
     
     def process_stock_data(self, symbol: str, stock_data: dict) -> bool:
         """
@@ -198,11 +232,13 @@ class VolumeFilter:
                 checked_today += 1
         
         avg_volume_usd = total_volume_usd / total_symbols if total_symbols > 0 else 0
+        removal_threshold = self.min_volume_usd * self.removal_multiplier
         
         return (f"📋 黑名单摘要: {total_symbols} 只股票 | "
                 f"最近7天新增: {recent_added} | "
                 f"今日已检查: {checked_today} | "
-                f"平均成交金额: ${avg_volume_usd:,.0f}")
+                f"平均成交金额: ${avg_volume_usd:,.0f} | "
+                f"移除阈值: ${removal_threshold:,.0f} ({self.removal_multiplier}x)")
     
     def clear_blacklist(self):
         """清空黑名单"""
@@ -355,11 +391,13 @@ class VolumeFilter:
                 # 重新获取股票数据
                 stock_data = stock_data_func(symbol)
                 
-                if stock_data and not self.should_filter_by_volume(stock_data):
-                    # 股票现在满足条件，从黑名单中移除
+                # 使用更严格的移除条件（需要达到2倍阈值）
+                if stock_data and self.should_remove_from_blacklist(stock_data):
+                    # 股票成交量达到移除阈值，从黑名单中移除
+                    volume_usd = stock_data.get('avg_volume', 0) * stock_data.get('close', 0)
                     self.remove_from_blacklist(symbol)
                     removed_count += 1
-                    print(f"✅ {symbol} 已从黑名单移除: 成交量已改善")
+                    print(f"✅ {symbol} 已从黑名单移除: 成交金额 ${volume_usd:,.0f} (阈值: ${self.min_volume_usd * self.removal_multiplier:,.0f})")
                 else:
                     # 股票仍然不满足条件，更新元数据和检查日期
                     if stock_data:
@@ -427,7 +465,8 @@ class VolumeFilter:
 
 # 全局过滤器实例
 min_volume_usd = 400 * 10000
-volume_filter = VolumeFilter(min_volume_usd=min_volume_usd)
+removal_multiplier = 2.0  # 移除需要达到2倍阈值（避免反复横跳）
+volume_filter = VolumeFilter(min_volume_usd=min_volume_usd, removal_multiplier=removal_multiplier)
 
 def get_volume_filter() -> VolumeFilter:
     """获取全局成交量过滤器实例"""
