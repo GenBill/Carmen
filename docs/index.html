@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="a1980ed3ef5b2c3e99fb95cf872275e4">
-    <title>Carmen Stock Scanner - 盘前/盘后股票扫描</title>
+    <meta data-hash="683e6d99c15e886c36da85c55b9e0bac">
+    <title>Carmen Stock Scanner - 实时监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -13,591 +14,126 @@
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            font-family: 'Courier New', Courier, Monaco, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
             padding: 20px;
+            line-height: 1.6;
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1800px;
             margin: 0 auto;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
         }
         
         .header {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-weight: bold;
         }
         
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            font-weight: 700;
-        }
-        
-        .header .subtitle {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
-        
-        .market-info {
-            background: #f8f9fa;
-            padding: 20px 30px;
-            border-bottom: 2px solid #e9ecef;
-        }
-        
-        .market-info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }
-        
-        .info-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .info-label {
-            font-weight: 600;
-            color: #495057;
-        }
-        
-        .info-value {
-            color: #212529;
-        }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }
-        
-        .status-premarket {
-            background: #fff3cd;
-            color: #856404;
-        }
-        
-        .status-afterhours {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-        
-        .status-open {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .stats-bar {
-            background: white;
-            padding: 15px 30px;
-            border-bottom: 2px solid #e9ecef;
-            display: flex;
-            justify-content: space-around;
-            flex-wrap: wrap;
-            gap: 20px;
-        }
-        
-        .stat-item {
-            text-align: center;
-        }
-        
-        .stat-value {
-            font-size: 1.8em;
-            font-weight: 700;
-            color: #2a5298;
-        }
-        
-        .stat-label {
-            font-size: 0.9em;
-            color: #6c757d;
-            margin-top: 5px;
-        }
-        
-        .table-container {
-            padding: 30px;
+        #output {
+            white-space: pre;
             overflow-x: auto;
+            font-family: inherit;
+            margin: 0;
         }
         
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.95em;
-        }
-        
-        thead {
-            background: #343a40;
-            color: white;
-        }
-        
-        th {
-            padding: 15px 10px;
-            text-align: left;
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        
-        tbody tr {
-            border-bottom: 1px solid #dee2e6;
-            transition: background-color 0.2s;
-        }
-        
-        tbody tr:hover {
-            background-color: #f8f9fa;
-        }
-        
-        tbody tr.watchlist {
-            background-color: #fff3cd;
-        }
-        
-        tbody tr.watchlist:hover {
-            background-color: #ffeaa7;
-        }
-        
-        td {
-            padding: 12px 10px;
-        }
-        
-        .symbol {
-            font-weight: 700;
-            font-size: 1.1em;
-            color: #2a5298;
-        }
-        
-        .symbol.watchlist-symbol {
-            color: #856404;
-        }
-        
-        .symbol::before {
-            content: "⭐ ";
-            display: none;
-        }
-        
-        .watchlist .symbol::before {
-            display: inline;
-        }
-        
-        .price-positive {
-            color: #28a745;
-            font-weight: 600;
-        }
-        
-        .price-negative {
-            color: #dc3545;
-            font-weight: 600;
-        }
-        
-        .rsi-arrow {
-            font-size: 1.2em;
-        }
-        
-        .signal-badge {
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 0.85em;
-        }
-        
-        .signal-buy {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .signal-sell {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .footer {
-            background: #f8f9fa;
-            padding: 20px 30px;
-            text-align: center;
-            color: #6c757d;
+        .upload-time {
+            color: #8b949e;
             font-size: 0.9em;
-            border-top: 2px solid #e9ecef;
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #30363d;
+            text-align: right;
         }
         
-        .blacklist-summary {
-            background: #fff3cd;
-            padding: 15px 30px;
-            border-top: 2px solid #ffc107;
-            color: #856404;
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
         }
         
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 1.8em;
-            }
-            
-            .table-container {
-                padding: 15px;
-            }
-            
-            table {
-                font-size: 0.85em;
-            }
-            
-            th, td {
-                padding: 8px 5px;
-            }
+        ::-webkit-scrollbar-track {
+            background: #0d1117;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>📊 Carmen Stock Scanner</h1>
-            <div class="subtitle">NASDAQ 盘前/盘后技术指标扫描</div>
-        </div>
-        
-        <div class="market-info">
-            <div class="market-info-grid">
-                <div class="info-item">
-                    <span class="info-label">市场状态:</span>
-                    <span class="status-badge status-open">🟢 美股盘中</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">更新时间:</span>
-                    <span class="info-value">2025-10-14 12:10:32 EDT</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">扫描模式:</span>
-                    <span class="info-value">盘中模式(自选股)</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">技术指标:</span>
-                    <span class="info-value">RSI8 | MACD(8,17,9)</span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="stats-bar">
-            <div class="stat-item">
-                <div class="stat-value">34</div>
-                <div class="stat-label">扫描股票</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">34</div>
-                <div class="stat-label">成功获取</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">0</div>
-                <div class="stat-label">交易信号</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value">2115</div>
-                <div class="stat-label">黑名单过滤</div>
-            </div>
-        </div>
-        
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>股票代码</th>
-                        <th>价格涨跌</th>
-                        <th>量比</th>
-                        <th>RSI (前→今)</th>
-                        <th>MACD指标</th>
-                        <th>交易信号</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">TSM</td>
-                        <td><span class="price-positive">$298.27 +0.89%</span></td>
-                        <td>量比:   130.9%</td>
-                        <td>RSI: 62.0 <span class="rsi-arrow">↓</span> 57.9</td>
-                        <td>DIF:   7.74 DEA:   8.60 斜率: -0.16</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">ADBE</td>
-                        <td><span class="price-positive">$336.25 +0.31%</span></td>
-                        <td>量比:    74.8%</td>
-                        <td>RSI: 34.1 <span class="rsi-arrow">↓</span> 30.8</td>
-                        <td>DIF:  -4.36 DEA:  -2.52 斜率: -0.13</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">RUN</td>
-                        <td><span class="price-positive">$20.84 +1.96%</span></td>
-                        <td>量比:    74.2%</td>
-                        <td>RSI: 70.6 <span class="rsi-arrow">↓</span> 66.8</td>
-                        <td>DIF:   0.97 DEA:   0.81 斜率: +0.00</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">U</td>
-                        <td><span class="price-positive">$36.73 +1.60%</span></td>
-                        <td>量比:    53.2%</td>
-                        <td>RSI: 39.2 <span class="rsi-arrow">↓</span> 37.5</td>
-                        <td>DIF:  -1.46 DEA:  -1.21 斜率: +0.11</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">SYM</td>
-                        <td><span class="price-positive">$73.23 +6.72%</span></td>
-                        <td>量比:   140.4%</td>
-                        <td>RSI: 71.0 <span class="rsi-arrow">↑</span> 74.5</td>
-                        <td>DIF:   4.50 DEA:   3.68 斜率: +0.19</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">TRMB</td>
-                        <td><span class="price-positive">$77.97 +3.07%</span></td>
-                        <td>量比:    58.1%</td>
-                        <td>RSI: 36.9 <span class="rsi-arrow">↑</span> 42.5</td>
-                        <td>DIF:  -0.94 DEA:  -0.56 斜率: +0.13</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">AMD</td>
-                        <td><span class="price-positive">$221.43 +0.98%</span></td>
-                        <td>量比:    81.5%</td>
-                        <td>RSI: 68.6 <span class="rsi-arrow">↑</span> 71.0</td>
-                        <td>DIF:  15.88 DEA:  11.77 斜率: -1.27</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">SEZL</td>
-                        <td><span class="price-positive">$76.50 +2.31%</span></td>
-                        <td>量比:   180.0%</td>
-                        <td>RSI: 28.9 <span class="rsi-arrow">↓</span> 27.9</td>
-                        <td>DIF:  -2.68 DEA:  -2.29 斜率: -0.09</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">CHA</td>
-                        <td><span class="price-positive">$16.43 +3.86%</span></td>
-                        <td>量比:    94.5%</td>
-                        <td>RSI: 38.4 <span class="rsi-arrow">↑</span> 45.7</td>
-                        <td>DIF:  -0.34 DEA:  -0.41 斜率: +0.03</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">NVDA</td>
-                        <td><span class="price-negative">$182.16 -1.42%</span></td>
-                        <td>量比:   134.6%</td>
-                        <td>RSI: 57.0 <span class="rsi-arrow">↓</span> 45.7</td>
-                        <td>DIF:   1.66 DEA:   2.34 斜率: -0.61</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">GOOG</td>
-                        <td><span class="price-positive">$246.51 +1.92%</span></td>
-                        <td>量比:    88.4%</td>
-                        <td>RSI: 50.6 <span class="rsi-arrow">↑</span> 54.3</td>
-                        <td>DIF:   0.46 DEA:   1.77 斜率: +0.56</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">RBLX</td>
-                        <td><span class="price-positive">$135.97 +5.00%</span></td>
-                        <td>量比:   149.7%</td>
-                        <td>RSI: 46.1 <span class="rsi-arrow">↑</span> 63.8</td>
-                        <td>DIF:  -0.56 DEA:  -0.82 斜率: +0.99</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">LLY</td>
-                        <td><span class="price-negative">$811.14 -1.33%</span></td>
-                        <td>量比:    50.2%</td>
-                        <td>RSI: 56.0 <span class="rsi-arrow">↓</span> 51.4</td>
-                        <td>DIF:  18.21 DEA:  20.65 斜率: -3.54</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">META</td>
-                        <td><span class="price-positive">$711.69 +0.52%</span></td>
-                        <td>量比:    62.3%</td>
-                        <td>RSI: 42.0 <span class="rsi-arrow">↓</span> 39.9</td>
-                        <td>DIF:  -9.67 DEA:  -8.99 斜率: +0.33</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">DUOL</td>
-                        <td><span class="price-positive">$333.62 +3.03%</span></td>
-                        <td>量比:    65.6%</td>
-                        <td>RSI: 56.6 <span class="rsi-arrow">↑</span> 58.8</td>
-                        <td>DIF:   7.02 DEA:   6.09 斜率: -0.28</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">HOOD</td>
-                        <td><span class="price-positive">$139.05 +1.74%</span></td>
-                        <td>量比:   110.4%</td>
-                        <td>RSI: 53.0 <span class="rsi-arrow">↓</span> 50.4</td>
-                        <td>DIF:   4.47 DEA:   6.24 斜率: -0.61</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">ACN</td>
-                        <td><span class="price-positive">$243.10 +0.43%</span></td>
-                        <td>量比:    69.4%</td>
-                        <td>RSI: 45.9 <span class="rsi-arrow">↓</span> 45.1</td>
-                        <td>DIF:   0.15 DEA:   0.33 斜率: -0.35</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">TQQQ</td>
-                        <td><span class="price-positive">$101.36 +1.62%</span></td>
-                        <td>量比:   174.7%</td>
-                        <td>RSI: 50.0 <span class="rsi-arrow">↓</span> 46.2</td>
-                        <td>DIF:   0.66 DEA:   1.74 斜率: -0.14</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">AAPL</td>
-                        <td><span class="price-positive">$246.91 +0.12%</span></td>
-                        <td>量比:    61.5%</td>
-                        <td>RSI: 40.6 <span class="rsi-arrow">↓</span> 39.2</td>
-                        <td>DIF:   0.49 DEA:   2.92 斜率: -0.09</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">MSFT</td>
-                        <td><span class="price-positive">$511.06 +0.24%</span></td>
-                        <td>量比:    64.8%</td>
-                        <td>RSI: 45.8 <span class="rsi-arrow">↓</span> 41.8</td>
-                        <td>DIF:   0.57 DEA:   2.16 斜率: -0.51</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">NBIS</td>
-                        <td><span class="price-positive">$132.11 +0.24%</span></td>
-                        <td>量比:    80.3%</td>
-                        <td>RSI: 73.8 <span class="rsi-arrow">↓</span> 67.2</td>
-                        <td>DIF:   8.74 DEA:   8.83 斜率: -0.34</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">OPEN</td>
-                        <td><span class="price-positive">$7.41 +5.71%</span></td>
-                        <td>量比:    69.1%</td>
-                        <td>RSI: 37.9 <span class="rsi-arrow">↑</span> 40.2</td>
-                        <td>DIF:  -0.10 DEA:   0.19 斜率: +0.00</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">AMZN</td>
-                        <td><span class="price-positive">$217.39 +0.92%</span></td>
-                        <td>量比:   106.8%</td>
-                        <td>RSI: 44.9 <span class="rsi-arrow">↓</span> 40.4</td>
-                        <td>DIF:  -1.63 DEA:  -1.50 斜率: -0.28</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">UNH</td>
-                        <td><span class="price-positive">$360.75 +1.63%</span></td>
-                        <td>量比:    66.1%</td>
-                        <td>RSI: 56.5 <span class="rsi-arrow">↑</span> 59.0</td>
-                        <td>DIF:   5.85 DEA:   7.20 斜率: -0.15</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">ORCL</td>
-                        <td><span class="price-negative">$300.33 -1.07%</span></td>
-                        <td>量比:    88.4%</td>
-                        <td>RSI: 65.0 <span class="rsi-arrow">↓</span> 56.9</td>
-                        <td>DIF:   3.96 DEA:   3.59 斜率: +0.13</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">QQQ</td>
-                        <td><span class="price-positive">$598.50 +0.56%</span></td>
-                        <td>量比:   131.5%</td>
-                        <td>RSI: 51.9 <span class="rsi-arrow">↓</span> 48.1</td>
-                        <td>DIF:   2.02 DEA:   3.98 斜率: -0.23</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">CRCL</td>
-                        <td><span class="price-negative">$137.47 -0.43%</span></td>
-                        <td>量比:    71.5%</td>
-                        <td>RSI: 41.3 <span class="rsi-arrow">↑</span> 47.2</td>
-                        <td>DIF:   2.15 DEA:   2.78 斜率: -0.74</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">OKLO</td>
-                        <td><span class="price-positive">$175.21 +4.26%</span></td>
-                        <td>量比:   113.1%</td>
-                        <td>RSI: 83.0 <span class="rsi-arrow">↑</span> 84.1</td>
-                        <td>DIF:  15.15 DEA:  11.14 斜率: +1.19</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">GILD</td>
-                        <td><span class="price-positive">$118.21 +0.60%</span></td>
-                        <td>量比:    54.5%</td>
-                        <td>RSI: 68.0 <span class="rsi-arrow">↑</span> 68.0</td>
-                        <td>DIF:   1.37 DEA:   0.68 斜率: -0.07</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">RXRX</td>
-                        <td><span class="price-positive">$5.38 +1.32%</span></td>
-                        <td>量比:   124.2%</td>
-                        <td>RSI: 55.1 <span class="rsi-arrow">↓</span> 51.0</td>
-                        <td>DIF:   0.15 DEA:   0.16 斜率: -0.03</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">COIN</td>
-                        <td><span class="price-positive">$346.00 +1.51%</span></td>
-                        <td>量比:   100.6%</td>
-                        <td>RSI: 49.8 <span class="rsi-arrow">↓</span> 43.1</td>
-                        <td>DIF:   7.32 DEA:  10.91 斜率: -2.49</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">TEM</td>
-                        <td><span class="price-positive">$92.60 +0.59%</span></td>
-                        <td>量比:   100.5%</td>
-                        <td>RSI: 58.3 <span class="rsi-arrow">↓</span> 53.5</td>
-                        <td>DIF:   3.35 DEA:   3.30 斜率: -0.63</td>
-                        <td></td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">IOT</td>
-                        <td><span class="price-positive">$37.36 +1.63%</span></td>
-                        <td>量比:    49.0%</td>
-                        <td>RSI: 43.5 <span class="rsi-arrow">↓</span> 42.4</td>
-                        <td>DIF:  -0.13 DEA:   0.16 斜率: -0.06</td>
-                        <td>Sell 2.4 | (0/0)</td>
-                    </tr>
-                    <tr class="watchlist">
-                        <td class="symbol watchlist-symbol">TSLA</td>
-                        <td><span class="price-negative">$426.74 -0.01%</span></td>
-                        <td>量比:    83.6%</td>
-                        <td>RSI: 53.2 <span class="rsi-arrow">↓</span> 48.7</td>
-                        <td>DIF:   4.46 DEA:  10.21 斜率: +0.07</td>
-                        <td></td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        
-        <div class="blacklist-summary">
-            <strong>📋 黑名单摘要:</strong> 📋 黑名单摘要: 2115 只股票 | 最近7天新增: 36 | 今日已检查: 0 | 平均成交金额: $1,677,638 | 移除阈值: $8,000,000 (2.0x)
-        </div>
-        
-        <div class="footer">
-            <p>自动生成于 2025-10-15 00:10:46</p>
-            <p>Powered by Carmen Stock Scanner | RSI8 | MACD(8,17,9)</p>
-        </div>
+        <div class="header">Carmen Stock Scanner - 实时输出</div>
+        <pre id="output"></pre>
+        <div class="upload-time">📤 上传时间: 2025-10-15 00:40:29</div>
     </div>
+    <script>
+        // 使用ansi_up将ANSI颜色代码转换为HTML
+        const ansi_up = new AnsiUp();
+        const terminalOutput = `
+========================================================================================================================
+🟢 美股盘中 | 盘中模式(自选股) | 2025-10-14 12:40:11 EDT
+查询 34 只股票 | RSI8 | MACD(8,17,9) | 缓存10分钟
+🔄 市场状态变化，重新获取数据...
+
+========================================================================================================================
+ 股票  |   价格涨跌幅    |      量比      |   RSI (前-&gt;今)    |             MACD指标              |       信号       
+========================================================================================================================
+TSLA   | $431.90 [91m +1.20%[0m | 量比:[97m    88.1%[0m | RSI:  53.2 [92m↓[0m 51.2 | DIF:[91m  5.03[0m DEA:[91m 10.32[0m 斜率: [91m+0.53[0m | 
+MSFT   | $512.84 [91m +0.59%[0m | 量比:[92m    67.0%[0m | RSI:  45.8 [97m→[0m 44.1 | DIF:[91m  0.77[0m DEA:[91m  2.20[0m 斜率: [92m-0.35[0m | 
+RUN    |  $20.83 [91m +1.91%[0m | 量比:[97m    77.6%[0m | RSI:  70.6 [92m↓[0m 66.7 | DIF:[91m  0.97[0m DEA:[91m  0.81[0m 斜率: [97m 0.00[0m | 
+SEZL   |  $76.82 [91m +2.74%[0m | 量比:[91m   195.3%[0m | RSI:  28.9 [97m→[0m 28.5 | DIF:[92m -2.64[0m DEA:[92m -2.28[0m 斜率: [92m-0.06[0m | 
+ACN    | $243.22 [91m +0.48%[0m | 量比:[92m    73.1%[0m | RSI:  45.9 [97m→[0m 45.3 | DIF:[91m  0.17[0m DEA:[91m  0.33[0m 斜率: [92m-0.34[0m | 
+IOT    |  $37.43 [91m +1.82%[0m | 量比:[92m    51.1%[0m | RSI:  43.5 [97m→[0m 42.8 | DIF:[92m -0.12[0m DEA:[91m  0.16[0m 斜率: [92m-0.05[0m | Buy 0.0 vs [92m[1mSell 2.4[0m (20/30)
+CRCL   | $137.47 [92m -0.43%[0m | 量比:[92m    71.5%[0m | RSI:  41.3 [91m↑[0m 47.2 | DIF:[91m  2.15[0m DEA:[91m  2.78[0m 斜率: [92m-0.74[0m | 
+TQQQ   | $102.82 [91m +3.09%[0m | 量比:[91m   179.5%[0m | RSI:  50.0 [97m→[0m 49.2 | DIF:[91m  0.83[0m DEA:[91m  1.77[0m 斜率: [97m 0.00[0m | 
+OPEN   |   $7.55 [91m +7.70%[0m | 量比:[92m    72.7%[0m | RSI:  37.9 [91m↑[0m 42.3 | DIF:[92m -0.08[0m DEA:[91m  0.19[0m 斜率: [97m 0.00[0m | 
+QQQ    | $601.31 [91m +1.03%[0m | 量比:[97m   136.3%[0m | RSI:  51.9 [97m→[0m 51.1 | DIF:[91m  2.34[0m DEA:[91m  4.05[0m 斜率: [91m+0.02[0m | 
+GOOG   | $247.53 [91m +2.34%[0m | 量比:[97m    88.7%[0m | RSI:  50.6 [91m↑[0m 56.1 | DIF:[91m  0.57[0m DEA:[91m  1.80[0m 斜率: [91m+0.65[0m | 
+TEM    |  $92.87 [91m +0.88%[0m | 量比:[97m    99.9%[0m | RSI:  58.3 [92m↓[0m 54.1 | DIF:[91m  3.38[0m DEA:[91m  3.31[0m 斜率: [92m-0.61[0m | 
+HOOD   | $139.63 [91m +2.17%[0m | 量比:[97m   108.5%[0m | RSI:  53.0 [97m→[0m 51.3 | DIF:[91m  4.53[0m DEA:[91m  6.25[0m 斜率: [92m-0.55[0m | 
+META   | $711.80 [91m +0.54%[0m | 量比:[92m    64.6%[0m | RSI:  42.0 [92m↓[0m 40.0 | DIF:[92m -9.66[0m DEA:[92m -8.99[0m 斜率: [91m+0.34[0m | 
+NBIS   | $132.96 [91m +0.89%[0m | 量比:[97m    79.6%[0m | RSI:  73.8 [92m↓[0m 68.8 | DIF:[91m  8.83[0m DEA:[91m  8.85[0m 斜率: [92m-0.26[0m | 
+ADBE   | $337.35 [91m +0.64%[0m | 量比:[97m    75.8%[0m | RSI:  34.1 [92m↓[0m 31.9 | DIF:[92m -4.23[0m DEA:[92m -2.50[0m 斜率: [92m-0.04[0m | 
+CHA    |  $16.55 [91m +4.61%[0m | 量比:[97m   106.1%[0m | RSI:  38.4 [91m↑[0m 47.9 | DIF:[92m -0.33[0m DEA:[92m -0.41[0m 斜率: [91m+0.04[0m | 
+TRMB   |  $78.18 [91m +3.34%[0m | 量比:[92m    61.7%[0m | RSI:  36.9 [91m↑[0m 43.6 | DIF:[92m -0.92[0m DEA:[92m -0.55[0m 斜率: [91m+0.14[0m | 
+GILD   | $118.49 [91m +0.83%[0m | 量比:[92m    57.6%[0m | RSI:  68.0 [97m→[0m 69.0 | DIF:[91m  1.40[0m DEA:[91m  0.68[0m 斜率: [92m-0.05[0m | 
+NVDA   | $183.85 [92m -0.50%[0m | 量比:[97m   139.0%[0m | RSI:  57.0 [92m↓[0m 48.3 | DIF:[91m  1.84[0m DEA:[91m  2.38[0m 斜率: [92m-0.46[0m | 
+LLY    | $814.17 [92m -0.96%[0m | 量比:[92m    51.2%[0m | RSI:  56.0 [92m↓[0m 53.0 | DIF:[91m 18.55[0m DEA:[91m 20.72[0m 斜率: [92m-3.27[0m | 
+RBLX   | $136.79 [91m +5.63%[0m | 量比:[91m   150.3%[0m | RSI:  46.1 [91m↑[0m 65.0 | DIF:[92m -0.46[0m DEA:[92m -0.80[0m 斜率: [91m+1.06[0m | 
+SYM    |  $74.37 [91m +8.38%[0m | 量比:[97m   144.9%[0m | RSI:  71.0 [91m↑[0m 75.8 | DIF:[91m  4.62[0m DEA:[91m  3.70[0m 斜率: [91m+0.29[0m | 
+RXRX   |   $5.46 [91m +2.82%[0m | 量比:[97m   142.0%[0m | RSI:  55.1 [97m→[0m 53.2 | DIF:[91m  0.16[0m DEA:[91m  0.16[0m 斜率: [92m-0.03[0m | 
+OKLO   | $179.43 [91m +6.77%[0m | 量比:[97m   118.0%[0m | RSI:  83.0 [91m↑[0m 85.1 | DIF:[91m 15.62[0m DEA:[91m 11.23[0m 斜率: [91m+1.57[0m | 
+AAPL   | $247.55 [91m +0.38%[0m | 量比:[92m    62.7%[0m | RSI:  40.6 [97m→[0m 40.4 | DIF:[91m  0.56[0m DEA:[91m  2.93[0m 斜率: [92m-0.04[0m | 
+U      |  $37.12 [91m +2.68%[0m | 量比:[92m    55.4%[0m | RSI:  39.2 [97m→[0m 39.1 | DIF:[92m -1.42[0m DEA:[92m -1.20[0m 斜率: [91m+0.14[0m | 
+DUOL   | $334.20 [91m +3.21%[0m | 量比:[92m    67.3%[0m | RSI:  56.6 [91m↑[0m 59.1 | DIF:[91m  7.08[0m DEA:[91m  6.10[0m 斜率: [92m-0.22[0m | 
+COIN   | $348.65 [91m +2.29%[0m | 量比:[97m   100.7%[0m | RSI:  49.8 [92m↓[0m 44.5 | DIF:[91m  7.61[0m DEA:[91m 10.96[0m 斜率: [92m-2.25[0m | 
+TSM    | $300.02 [91m +1.48%[0m | 量比:[97m   133.1%[0m | RSI:  62.0 [92m↓[0m 59.4 | DIF:[91m  7.94[0m DEA:[91m  8.64[0m 斜率: [97m 0.00[0m | 
+ORCL   | $303.46 [97m -0.04%[0m | 量比:[97m    91.2%[0m | RSI:  65.0 [92m↓[0m 59.9 | DIF:[91m  4.31[0m DEA:[91m  3.66[0m 斜率: [91m+0.41[0m | 
+UNH    | $361.33 [91m +1.80%[0m | 量比:[92m    66.8%[0m | RSI:  56.5 [91m↑[0m 59.6 | DIF:[91m  5.92[0m DEA:[91m  7.22[0m 斜率: [92m-0.10[0m | 
+AMD    | $223.30 [91m +1.83%[0m | 量比:[97m    82.5%[0m | RSI:  68.6 [91m↑[0m 71.8 | DIF:[91m 16.09[0m DEA:[91m 11.81[0m 斜率: [92m-1.10[0m | 
+AMZN   | $218.56 [91m +1.47%[0m | 量比:[97m   107.3%[0m | RSI:  44.9 [92m↓[0m 42.2 | DIF:[92m -1.50[0m DEA:[92m -1.48[0m 斜率: [92m-0.18[0m | 
+========================================================================================================================
+⚠️  本轮查询: 成功 34 | 失败 0
+
+🔔 本次扫描发现 0 个新信号！
+
+📋 黑名单摘要: 2115 只股票 | 最近7天新增: 36 | 今日已检查: 0 | 平均成交金额: $1,677,638 | 移除阈值: $8,000,000 (2.0x)`;
+        const html = ansi_up.ansi_to_html(terminalOutput);
+        document.getElementById('output').innerHTML = html;
+    </script>
 </body>
 </html>
