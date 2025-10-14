@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any
 import hashlib
-
+import os
 
 def calculate_content_hash(data: dict) -> str:
     """计算数据内容的哈希值，用于检测内容是否变化"""
@@ -32,7 +32,6 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     Returns:
         bool: 是否生成新内容（内容有变化）
     """
-    import os
     
     # 检查文件是否存在
     file_exists = os.path.exists(output_file)
@@ -426,8 +425,6 @@ def save_meta_info(report_data: dict, content_hash: str, html_file: str):
         content_hash: 内容哈希值
         html_file: HTML文件路径
     """
-    import os
-    from datetime import datetime
     
     # 确定meta文件路径（与HTML同目录）
     html_dir = os.path.dirname(html_file) if os.path.dirname(html_file) else '.'

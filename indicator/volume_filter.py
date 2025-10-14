@@ -83,6 +83,7 @@ class VolumeFilter:
             self.blacklist.add(symbol)
             self.blacklist_metadata[symbol] = {
                 'added_date': datetime.now().isoformat(),
+                'last_checked_date': datetime.now().date().isoformat(),  # 添加上次检查日期
                 'avg_volume': avg_volume,
                 'avg_price': avg_price,
                 'volume_usd': volume_usd,
@@ -175,6 +176,8 @@ class VolumeFilter:
         total_symbols = len(self.blacklist)
         recent_added = 0
         total_volume_usd = 0
+        today = datetime.now().date().isoformat()
+        checked_today = 0
         
         for symbol, metadata in self.blacklist_metadata.items():
             if metadata.get('volume_usd'):
@@ -189,11 +192,16 @@ class VolumeFilter:
                         recent_added += 1
                 except:
                     pass
+            
+            # 统计今日已检查数量
+            if metadata.get('last_checked_date', '') == today:
+                checked_today += 1
         
         avg_volume_usd = total_volume_usd / total_symbols if total_symbols > 0 else 0
         
         return (f"📋 黑名单摘要: {total_symbols} 只股票 | "
                 f"最近7天新增: {recent_added} | "
+                f"今日已检查: {checked_today} | "
                 f"平均成交金额: ${avg_volume_usd:,.0f}")
     
     def clear_blacklist(self):
@@ -201,6 +209,34 @@ class VolumeFilter:
         self.blacklist.clear()
         self.blacklist_metadata.clear()
         print("🗑️  黑名单已清空")
+    
+    def get_daily_check_progress(self) -> dict:
+        """
+        获取今日检查进度
+        
+        Returns:
+            dict: 包含今日检查进度的字典
+        """
+        today = datetime.now().date().isoformat()
+        checked_today = 0
+        unchecked_today = 0
+        
+        for symbol, metadata in self.blacklist_metadata.items():
+            if metadata.get('last_checked_date', '') == today:
+                checked_today += 1
+            else:
+                unchecked_today += 1
+        
+        total = len(self.blacklist)
+        progress_pct = (checked_today / total * 100) if total > 0 else 0
+        
+        return {
+            'total': total,
+            'checked_today': checked_today,
+            'unchecked_today': unchecked_today,
+            'progress_pct': progress_pct,
+            'date': today
+        }
     
     def calculate_daily_update_quota(self) -> int:
         """
@@ -251,6 +287,7 @@ class VolumeFilter:
     def get_candidates_for_update(self) -> List[str]:
         """
         获取需要重新验证的股票候选列表（按添加时间排序，先进先出）
+        只返回今天还没检查过的股票
         
         Returns:
             List[str]: 需要重新验证的股票代码列表
@@ -258,9 +295,18 @@ class VolumeFilter:
         if not self.blacklist:
             return []
         
+        today = datetime.now().date().isoformat()
+        
+        # 过滤出今天还没检查过的股票
+        unchecked_today = []
+        for symbol, metadata in self.blacklist_metadata.items():
+            last_checked = metadata.get('last_checked_date', '1970-01-01')
+            if last_checked != today:
+                unchecked_today.append((symbol, metadata))
+        
         # 按添加时间排序，最早添加的优先更新
         sorted_candidates = sorted(
-            self.blacklist_metadata.items(),
+            unchecked_today,
             key=lambda x: x[1].get('added_date', '1970-01-01')
         )
         
@@ -269,6 +315,7 @@ class VolumeFilter:
     def daily_update_blacklist(self, stock_data_func=None):
         """
         每日更新黑名单：重新验证部分股票，移除满足条件的股票
+        每只股票每天只检查一次
         
         Args:
             stock_data_func: 获取股票数据的函数，如果为None则跳过更新
@@ -276,17 +323,24 @@ class VolumeFilter:
         if not self.blacklist:
             return
         
+        # 获取今天还没检查过的股票
+        candidates = self.get_candidates_for_update()
+        
+        if not candidates:
+            print(f"✅ 黑名单中所有股票今天都已检查过")
+            return
+        
         daily_quota = self.calculate_daily_update_quota()
         if daily_quota <= 0:
             return
         
-        candidates = self.get_candidates_for_update()
         update_count = min(daily_quota, len(candidates))
         
-        print(f"🔄 开始每日黑名单更新: 计划更新 {update_count}/{len(self.blacklist)} 只股票")
+        print(f"🔄 开始每日黑名单更新: 计划更新 {update_count}/{len(self.blacklist)} 只股票 (今日待检查: {len(candidates)})")
         
         updated_count = 0
         removed_count = 0
+        today = datetime.now().date().isoformat()
         
         for i, symbol in enumerate(candidates[:update_count]):
             if stock_data_func is None:
@@ -307,16 +361,22 @@ class VolumeFilter:
                     removed_count += 1
                     print(f"✅ {symbol} 已从黑名单移除: 成交量已改善")
                 else:
-                    # 股票仍然不满足条件，更新元数据
+                    # 股票仍然不满足条件，更新元数据和检查日期
                     if stock_data:
                         self.blacklist_metadata[symbol] = {
                             'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
-                            'last_checked': datetime.now().isoformat(),
+                            'last_checked_date': today,  # 更新上次检查日期
+                            'last_checked': datetime.now().isoformat(),  # 详细时间戳
                             'avg_volume': stock_data.get('avg_volume', 0),
                             'avg_price': stock_data.get('close', 0),
                             'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
                             'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
                         }
+                    else:
+                        # 即使获取数据失败，也标记为已检查（避免重复失败）
+                        if symbol in self.blacklist_metadata:
+                            self.blacklist_metadata[symbol]['last_checked_date'] = today
+                            self.blacklist_metadata[symbol]['last_checked'] = datetime.now().isoformat()
                 
                 updated_count += 1
                 
@@ -324,7 +384,13 @@ class VolumeFilter:
                 print(f"⚠️  更新 {symbol} 时出错: {e}")
                 continue
         
-        print(f"📊 每日更新完成: 检查 {updated_count} 只，移除 {removed_count} 只")
+        # 统计今天已检查的总数
+        checked_today = sum(1 for meta in self.blacklist_metadata.values() 
+                           if meta.get('last_checked_date', '') == today)
+        remaining_today = len(self.blacklist) - checked_today
+        
+        print(f"📊 每日更新完成: 本轮检查 {updated_count} 只，移除 {removed_count} 只")
+        print(f"📈 今日进度: 已检查 {checked_today}/{len(self.blacklist)} 只，剩余 {remaining_today} 只")
         
         if updated_count > 0 or removed_count > 0:
             self.save_blacklist()
