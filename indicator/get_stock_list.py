@@ -128,15 +128,15 @@ def is_valid_common_stock(symbol: str) -> bool:
     # U - 单位 (Units)
     # R - 权利 (Rights)  
     # P - 优先股 (Preferred)
-    # V - 临时代码
+    # 注意：纳斯达克规则是只有5个字符的股票代码，第5个字符才是特殊后缀
+    # 例如：AAPLW(5字符)是权证，但AAPL(4字符)、APP(3字符)、SERV(4字符)都是正常股票
     special_suffixes = ['W', 'U', 'R', 'P', 'V']
     
-    # 检查是否以特殊后缀结尾
-    for suffix in special_suffixes:
-        if symbol.endswith(suffix) and len(symbol) > 1:
-            # 确保不是普通股票（如单字母或正常结尾）
-            # 例如：AAPL正常，AAPLW是权证
-            return False
+    # 只检查5字符代码的最后一个字符
+    if len(symbol) == 5:
+        for suffix in special_suffixes:
+            if symbol.endswith(suffix):
+                return False
     
     # 排除过长的代码（通常普通股是1-5个字母）
     if len(symbol) > 5:
