@@ -251,7 +251,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             'total_scanned': len(stock_symbols),
                             'success_count': success_count,
                             'signal_count': alert_count,
-                            'blacklist_filtered': volume_filter.get_blacklist_count()
+                            'blacklist_filtered': len(volume_filter.blacklist)
                         },
                         blacklist_info={
                             'summary': blacklist_summary
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     USE_CACHE = True         # 是否使用缓存
     CACHE_MINUTES = 10       # 缓存有效期（分钟）
     OFFLINE_MODE = False     # 是否离线模式
-    INTRADAY_USE_ALL_STOCKS = True  # 盘中时段是否使用全股票列表
+    INTRADAY_USE_ALL_STOCKS = False  # 盘中时段是否使用全股票列表
     
     # GitHub Pages 配置
     ENABLE_GITHUB_PAGES = True   # 是否启用GitHub Pages自动推送

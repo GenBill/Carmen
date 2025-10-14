@@ -75,6 +75,30 @@ python indicator/test_github_pages.py
 - HTML生成功能
 - Git推送器配置
 - 内容变化检测
+- Meta信息文件生成
+
+## 📝 查看Meta信息
+
+程序会在 `docs/meta.json` 中保存调试信息，包括：
+- 最后更新时间
+- 内容哈希值
+- 统计数据
+- 更新历史（最近10条）
+
+**快速查看**：
+```bash
+./show_meta.sh
+```
+
+**完整内容**：
+```bash
+cat docs/meta.json | python -m json.tool
+```
+
+**监控更新**：
+```bash
+watch -n 10 ./show_meta.sh
+```
 
 ## 📊 工作原理
 

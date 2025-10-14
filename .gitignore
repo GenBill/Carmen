@@ -3,3 +3,5 @@
 indicator/main.py
 low_volume_blacklist.json
 *.log
+docs/index.html
+docs/meta.json

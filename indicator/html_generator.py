@@ -32,16 +32,26 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     Returns:
         bool: 是否生成新内容（内容有变化）
     """
+    import os
+    
+    # 检查文件是否存在
+    file_exists = os.path.exists(output_file)
+    
+    if not file_exists:
+        print(f"💡 HTML文件不存在，将强制生成: {output_file}")
     
     # 检查是否有内容变化
     new_hash = calculate_content_hash(report_data)
-    try:
-        with open(output_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-            if f'data-hash="{new_hash}"' in content:
-                return False  # 内容未变化，无需重新生成
-    except FileNotFoundError:
-        pass  # 文件不存在，需要生成
+    
+    if file_exists:
+        try:
+            with open(output_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if f'data-hash="{new_hash}"' in content:
+                    return False  # 内容未变化，无需重新生成
+        except Exception as e:
+            print(f"⚠️ 读取旧HTML文件时出错: {e}")
+            pass  # 读取失败，重新生成
     
     # 生成HTML内容
     html_content = f"""<!DOCTYPE html>
@@ -396,13 +406,90 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
 """
     
     # 保存HTML文件
-    import os
     os.makedirs(os.path.dirname(output_file) if os.path.dirname(output_file) else '.', exist_ok=True)
     
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
+    # 生成meta信息文件用于追溯和debug
+    save_meta_info(report_data, new_hash, output_file)
+    
     return True  # 内容已更新
+
+
+def save_meta_info(report_data: dict, content_hash: str, html_file: str):
+    """
+    保存meta信息文件用于追溯和debug
+    
+    Args:
+        report_data: 报告数据
+        content_hash: 内容哈希值
+        html_file: HTML文件路径
+    """
+    import os
+    from datetime import datetime
+    
+    # 确定meta文件路径（与HTML同目录）
+    html_dir = os.path.dirname(html_file) if os.path.dirname(html_file) else '.'
+    meta_file = os.path.join(html_dir, 'meta.json')
+    
+    # 构建meta信息
+    meta_info = {
+        'last_update': datetime.now().isoformat(),
+        'last_update_readable': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'content_hash': content_hash,
+        'html_file': html_file,
+        'html_file_size': os.path.getsize(html_file) if os.path.exists(html_file) else 0,
+        'market_status': report_data.get('market_info', {}).get('status', 'Unknown'),
+        'update_time': report_data.get('market_info', {}).get('update_time', 'N/A'),
+        'mode': report_data.get('market_info', {}).get('mode', 'N/A'),
+        'stats': {
+            'total_scanned': report_data.get('stats', {}).get('total_scanned', 0),
+            'success_count': report_data.get('stats', {}).get('success_count', 0),
+            'signal_count': report_data.get('stats', {}).get('signal_count', 0),
+            'blacklist_count': report_data.get('stats', {}).get('blacklist_filtered', 0),
+            'stocks_displayed': len(report_data.get('stocks', []))
+        },
+        'config': {
+            'rsi_period': report_data.get('market_info', {}).get('rsi_period', 8),
+            'macd_params': report_data.get('market_info', {}).get('macd_params', '8,17,9')
+        }
+    }
+    
+    # 如果meta文件已存在，读取历史记录
+    history = []
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                old_meta = json.load(f)
+                history = old_meta.get('update_history', [])
+        except Exception as e:
+            print(f"⚠️ 读取旧meta文件失败: {e}")
+    
+    # 添加当前更新到历史记录（保留最近10条）
+    history.append({
+        'timestamp': meta_info['last_update'],
+        'timestamp_readable': meta_info['last_update_readable'],
+        'content_hash': content_hash,
+        'market_status': meta_info['market_status'],
+        'stocks_count': meta_info['stats']['stocks_displayed'],
+        'signals': meta_info['stats']['signal_count']
+    })
+    
+    # 只保留最近10条记录
+    if len(history) > 10:
+        history = history[-10:]
+    
+    meta_info['update_history'] = history
+    meta_info['total_updates'] = len(history)
+    
+    # 保存meta文件
+    try:
+        with open(meta_file, 'w', encoding='utf-8') as f:
+            json.dump(meta_info, f, ensure_ascii=False, indent=2)
+        print(f"📝 Meta信息已保存: {meta_file}")
+    except Exception as e:
+        print(f"⚠️ 保存meta文件失败: {e}")
 
 
 def format_price_change(price: float, change_pct: float) -> str:

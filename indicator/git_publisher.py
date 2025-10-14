@@ -196,12 +196,37 @@ class GitPublisher:
             shutil.copy2(temp_html, target_file)
             os.remove(temp_html)
             
+            # 同时复制meta.json文件（如果存在）
+            html_dir = os.path.dirname(self.html_file)
+            meta_file = os.path.join(html_dir, 'meta.json') if html_dir else 'meta.json'
+            source_meta = os.path.join(self.repo_path, meta_file)
+            
+            # 切回原分支获取meta.json
+            self._run_command(['git', 'checkout', current_branch])
+            if os.path.exists(source_meta):
+                temp_meta = f'/tmp/carmen_meta_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+                shutil.copy2(source_meta, temp_meta)
+                
+                # 切回gh-pages
+                self._run_command(['git', 'checkout', self.branch])
+                target_meta = os.path.join(self.repo_path, meta_file)
+                shutil.copy2(temp_meta, target_meta)
+                os.remove(temp_meta)
+                print(f"📝 已复制meta信息文件")
+            else:
+                # 切回gh-pages
+                self._run_command(['git', 'checkout', self.branch])
+            
             # 添加文件
             print(f"📝 添加文件到暂存区...")
             success, output = self._run_command(['git', 'add', self.html_file])
             if not success:
                 print(f"❌ 添加文件失败: {output}")
                 return False
+            
+            # 如果meta.json存在，也添加它
+            if os.path.exists(os.path.join(self.repo_path, meta_file)):
+                self._run_command(['git', 'add', meta_file])
             
             # 检查是否有变更
             success, diff = self._run_command(['git', 'diff', '--cached', '--quiet'])
