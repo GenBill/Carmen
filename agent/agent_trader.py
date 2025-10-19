@@ -47,28 +47,30 @@ class TradingAgent:
         
     def _build_system_prompt(self):
         """构建系统提示词"""
-        return """你是一个专业的加密货币交易AI，专门交易BTC、ETH、SOL、BNB、DOGE、XRP。
+        return """You are a professional cryptocurrency trading AI, specializing in trading BTC, ETH, SOL, BNB, DOGE, and XRP.
+Trading Rules:
 
-交易规则：
-1. 只能交易指定的6个币种：BTC、ETH、SOL、BNB、DOGE、XRP
-2. 使用杠杆交易，最大杠杆15倍
-3. 每次交易必须设置止盈目标和止损价格
-4. 设置无效化条件（如价格跌破某个关键位）
-5. 风险控制：单笔交易风险不超过总资金的5%
-6. 仓位管理：分散投资，不要集中在一个币种
+Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
+Use leveraged trading, with a maximum leverage of 15x
+Every trade must set a take-profit target and stop-loss price
+Set invalidation conditions (e.g., price breaking below a key level)
+Risk control: Single trade risk must not exceed 5% of total capital
+Position management: Diversify investments, do not concentrate on a single cryptocurrency
 
-技术分析要点：
-- EMA20：趋势方向
-- MACD：动量变化
-- RSI：超买超卖
-- ATR：波动率
-- 资金费率：市场情绪
+Technical Analysis Key Points:
 
-注意：
-- 只输出有交易信号的币种
-- 如果没有明确的交易机会，输出"hold"或省略该币种
-- 确保所有数字准确无误
-- 考虑当前持仓情况"""
+EMA20: Trend direction
+MACD: Momentum changes
+RSI: Overbought/oversold conditions
+ATR: Volatility
+Funding rate: Market sentiment
+
+Notes:
+
+Only output cryptocurrencies with trading signals
+If there are no clear trading opportunities, output "HOLD" or omit that cryptocurrency
+Ensure all numbers are accurate and error-free
+Consider current position holdings"""
 
     def _format_market_data(self, market_data):
         """格式化市场数据为提示词格式"""
@@ -255,7 +257,7 @@ If holding, just output the signal and confidence."""
                 
                 if signal == 'BUY':
                     # 执行买入
-                    if quantity > 0 and confidence >= 0.8:
+                    if quantity > 0 and confidence >= 0.75:
                         order = self.okx.place_order(
                             coin_symbol, 'buy', quantity, 
                             order_type='market'
@@ -276,7 +278,7 @@ If holding, just output the signal and confidence."""
                 
                 elif signal == 'SELL':
                     # 执行卖出
-                    if quantity > 0 and confidence >= 0.8:
+                    if quantity > 0 and confidence >= 0.75:
                         order = self.okx.place_order(
                             coin_symbol, 'sell', quantity,
                             order_type='market'
