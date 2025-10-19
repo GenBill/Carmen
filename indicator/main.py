@@ -367,9 +367,9 @@ if __name__ == "__main__":
     MACD_SIGNAL = 9         # MACD 信号线
     AVG_VOLUME_DAYS = 8     # 平均成交量天数
     
-    POLL_INTERVAL = 120      # 轮询间隔（秒）
+    POLL_INTERVAL = 600      # 轮询间隔（秒）
     USE_CACHE = True         # 是否使用缓存
-    CACHE_MINUTES = 10       # 缓存有效期（分钟）
+    CACHE_MINUTES = 20       # 缓存有效期（分钟）
     OFFLINE_MODE = False     # 是否离线模式
     INTRADAY_USE_ALL_STOCKS = False  # 盘中时段是否使用全股票列表
     
