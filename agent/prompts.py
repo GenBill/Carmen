@@ -10,10 +10,8 @@ Trading Rules:
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
 - Use PERPETUAL FUTURES contracts (not spot trading)
 - Use leveraged trading with FIXED 10x leverage for ALL trades
-- ALL trades must use exactly 10x leverage - do not specify any other leverage
 - Every BUY/SELL trade must specify both TAKE_PROFIT and STOP_LOSS prices in the output format
 - Set invalidation conditions (e.g., price breaking below a key level)
-- Risk control: Single trade risk must not exceed max(5% of total capital, 10 USDT); monitor total exposure to not exceed 200% of account value
 - For small accounts (<1000 USDT), prioritize low-risk trades and consider minimum order sizes.
 - Position management: You can hold MULTIPLE positions across different coins. For each coin, decide independently: BUY (open long), SELL (open short), HOLD (keep if exists), or CLOSE (close if exists).
 - Always check current positions before making trading decisions. Consider the current PnL, leverage, and risk of existing positions.
@@ -35,7 +33,6 @@ Notes:
 - Ensure all numbers are accurate and error-free
 - Consider current position holdings and funding rates
 - Remember this is PERPETUAL FUTURES trading in CROSS MARGIN mode
-- CRITICAL: Only trades with confidence >= 75% will be executed. Be conservative and honest about your confidence levels.
 - Use CLOSE to explicitly close an existing position without opening a new one."""
 
 
@@ -55,8 +52,8 @@ Timeframes note: Unless stated otherwise in a section title, intraday series are
 {_format_market_data(market_data)}
 {_format_account_info(state_manager, account_info, positions)}
 
-▶
-CHAIN_OF_THOUGHT
+
+CHAIN OF THOUGHT: 
 Please analyze the market data and provide your trading decisions. Consider:
 1. Current market conditions and technical indicators
 2. Your existing positions and their performance:
@@ -67,15 +64,9 @@ Please analyze the market data and provide your trading decisions. Consider:
 4. Market sentiment and funding rates
 5. Portfolio leverage and total exposure
 
-IMPORTANT: If you have existing positions, you must decide whether to:
-- Close the existing position and open a new one
-- Hold the existing position and not open new positions
-- Close the existing position and not open new positions
-
 After your analysis, provide your trading decisions in the following format:
 
-▶
-TRADING_DECISIONS
+▶TRADING_DECISIONS
 For each coin you want to trade, output:
 COIN
 SIGNAL (BUY/SELL/HOLD/CLOSE)
@@ -86,8 +77,7 @@ STOP_LOSS: price (for BUY/SELL only)
 
 Example: 
 ```
-▶
-TRADING_DECISIONS
+▶TRADING_DECISIONS
 BTC
 BUY
 CONFIDENCE: 85%
@@ -104,10 +94,21 @@ If holding or closing, just output the signal and confidence.
 All trades automatically use 10x leverage - do not specify leverage.
 For BUY/SELL trades, you MUST specify both TAKE_PROFIT and STOP_LOSS prices.
 
+IMPORTANT: Your output will be parsed by Python and then executed through OKX Futures API:
+- BUY signals will call okx.place_order(symbol, "buy", quantity, "market", leverage=10)
+- SELL signals will call okx.place_order(symbol, "sell", quantity, "market", leverage=10)  
+- CLOSE signals will call okx.close_position(symbol)
+- TAKE_PROFIT and STOP_LOSS values will be monitored every 30 seconds and automatically trigger okx.close_position() when price targets are hit
+- Only trades with confidence >= GATE will be executed. If your confidence is below GATE, the trade will be ignored for safety reasons. Be honest about your confidence level.
 
+OKX Futures API Details:
+- Trading pairs: BTC/USDT:USDT, ETH/USDT:USDT, SOL/USDT:USDT, BNB/USDT:USDT, DOGE/USDT:USDT, XRP/USDT:USDT
+- Order types: market orders for immediate execution
+- Leverage: Fixed 10x for all positions
+- Margin mode: Cross margin (full account sharing)
+- Position management: Multiple positions allowed across different coins
 
-IMPORTANT: Only trades with confidence >= 75% will be executed. If your confidence is below 75%, the trade will be ignored for safety reasons. Be honest about your confidence level."""
-
+"""
     return prompt
 
 

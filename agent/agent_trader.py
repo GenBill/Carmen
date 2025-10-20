@@ -123,13 +123,13 @@ class TradingAgent:
                 original_line = line  # 保留原始用于日志
                 line = line.strip().upper()  # 添加：规范化大小写和去除空格
 
-                if line == "TRADING_DECISIONS":
+                if line == "▶TRADING_DECISIONS":
                     in_decisions = True
                     continue
 
                 if in_decisions:
-                    # 跳过空行和分隔符
-                    if not line or line.startswith("▶"):
+                    # 跳过空行
+                    if not line:
                         continue
 
                     # 检查是否是币种名称 - 添加 upper() 和简单正则以处理变体
@@ -254,7 +254,7 @@ class TradingAgent:
             self.logger.error(f"AI响应: {response}")
             return {}
 
-    def execute_trading_decisions(self, decisions, open_gate=0.75, action_gate=0.55):
+    def execute_trading_decisions(self, decisions, open_gate=0.7, action_gate=0.5):
         """执行交易决策"""
         executed_trades = []
 
