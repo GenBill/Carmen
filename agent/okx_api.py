@@ -67,9 +67,36 @@ class OKXTrader:
     def _setup_futures_config(self):
         """设置合约交易配置"""
         try:
-            # 设置持仓模式为单向持仓
-            self.exchange.set_position_mode(False)  # False表示单向持仓
-            print("设置持仓模式为单向持仓")
+            # 若存在未完成订单或持仓，跳过初始化阶段的模式设置，避免59000错误
+            try:
+                open_orders = []
+                try:
+                    open_orders = self.exchange.fetch_open_orders()
+                except Exception:
+                    open_orders = []
+                positions = []
+                try:
+                    positions = self.exchange.fetch_positions()
+                except Exception:
+                    positions = []
+
+                if (open_orders and len(open_orders) > 0) or any(p.get('contracts', 0) for p in positions):
+                    print("检测到未完成订单或持仓，跳过初始化的持仓/保证金模式设置")
+                    return
+            except Exception:
+                # 查询失败时不中断，继续尝试设置
+                pass
+
+            # 设置持仓模式为单向持仓（容错59000）
+            try:
+                self.exchange.set_position_mode(False)  # False表示单向持仓
+                print("设置持仓模式为单向持仓")
+            except Exception as e:
+                msg = str(e)
+                if '59000' in msg:
+                    print("设置持仓模式失败(59000)：存在挂单/持仓/机器人，略过")
+                else:
+                    raise
             
             # 为所有交易对设置杠杆
             for symbol in self.symbols:
@@ -83,12 +110,22 @@ class OKXTrader:
                         try:
                             self.exchange.set_leverage(10, symbol, {'marginMode': 'cross'})
                         except Exception as ee:
-                            print(f"回退设置杠杆失败: {symbol} - {ee}")
+                            # 对59000容错：有挂单/持仓时会被拒绝
+                            if '59000' in str(ee):
+                                print(f"{symbol} 杠杆/保证金设置被拒绝(59000)，可能存在挂单/持仓，略过")
+                            else:
+                                print(f"回退设置杠杆失败: {symbol} - {ee}")
                     print(f"设置 {symbol} 保证金模式为全仓")
 
                     # 再设置杠杆，确保最终生效
-                    self.exchange.set_leverage(10, symbol, {'marginMode': 'cross'})  # 设置10倍杠杆
-                    print(f"设置 {symbol} 杠杆为10倍")
+                    try:
+                        self.exchange.set_leverage(10, symbol, {'marginMode': 'cross'})  # 设置10倍杠杆
+                        print(f"设置 {symbol} 杠杆为10倍")
+                    except Exception as e3:
+                        if '59000' in str(e3):
+                            print(f"{symbol} 设置杠杆被拒绝(59000)，可能存在挂单/持仓，略过")
+                        else:
+                            raise
                 except Exception as e:
                     print(f"设置 {symbol} 杠杆失败: {e}")
                     
@@ -234,33 +271,38 @@ class OKXTrader:
             print(f"获取账户信息失败: {e}")
             return None
     
-    def place_order(self, symbol, side, amount, price=None, order_type='market', leverage=10):
+    def place_order(self, symbol, side, coins_amount, price=None, order_type='market', leverage=10):
         """下单（永续合约）"""
         try:
             # 杠杆已在初始化时设置，这里不需要重复设置
             # 验证参数
-            if amount <= 0:
-                raise ValueError(f"交易数量必须大于0: {amount}")
+            if coins_amount <= 0:
+                raise ValueError(f"交易数量必须大于0: {coins_amount}")
 
             # 下单前确保该symbol的保证金模式与杠杆生效（幂等）
             self._ensure_symbol_settings(symbol, leverage)
-            
+
+            # 将币数量转换为OKX要求的张数
+            contract_size = self.exchange.market(symbol)['contractSize']
+            contracts_amount = coins_amount / contract_size
+            contracts_amount = float(self.exchange.amount_to_precision(symbol, contracts_amount))
+
             if order_type == 'market':
-                order = self.exchange.create_market_order(symbol, side, amount)
+                order = self.exchange.create_market_order(symbol, side, contracts_amount)
             else:
                 if price is None or price <= 0:
                     raise ValueError(f"限价单必须指定有效价格: {price}")
-                order = self.exchange.create_limit_order(symbol, side, amount, price)
+                order = self.exchange.create_limit_order(symbol, side, contracts_amount, price)
             
             if order and 'id' in order:
-                print(f"订单创建成功: {symbol} {side} {amount} - 订单ID: {order['id']}")
+                print(f"订单创建成功: {symbol} {side} {coins_amount} - 订单ID: {order['id']}")
                 return order
             else:
                 print(f"订单创建失败: 返回数据无效")
                 return None
                 
         except Exception as e:
-            print(f"下单失败 {symbol} {side} {amount}: {e}")
+            print(f"下单失败 {symbol} {side} {coins_amount}: {e}")
             return None
     
     def get_positions(self):
@@ -332,12 +374,14 @@ class OKXTrader:
                 close_side = 'buy'
             
             # 平仓数量
-            close_amount = abs(target_position['contracts'])
+            contracts_amount = abs(target_position['contracts'])
+            contract_size = self.exchange.market(symbol)['contractSize']
+            coins_amount = contracts_amount * contract_size
             
-            print(f"平仓 {symbol}: {close_side} {close_amount}")
-            
+            print(f"平仓 {symbol}: {close_side} {coins_amount}")
+
             # 执行平仓订单
-            order = self.place_order(symbol, close_side, close_amount)
+            order = self.place_order(symbol, close_side, coins_amount)
             return order
             
         except Exception as e:
