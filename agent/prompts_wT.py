@@ -143,7 +143,7 @@ def _format_market_data(market_data):
         prompt += f"current_rsi (7 period) = {data['rsi_7']:.3f}\n"
 
         prompt += f"\nIn addition, here is the latest {coin} open interest and funding rate for perps (the instrument you are trading):\n\n"
-        prompt += f"Open Interest: Latest: {data['open_interest']} Average: {data['open_interest']}\n\n"
+        prompt += f"Open Interest: Latest: {data['open_interest']}\n\n"
         prompt += f"Funding Rate: {data['funding_rate']}\n\n"
 
         prompt += "Intraday series (by minute, oldest → latest):\n\n"

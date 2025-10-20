@@ -10,7 +10,7 @@ def main():
     agent = TradingAgent()
 
     # 开始交易（间隔3分钟）
-    agent.start_trading(interval_minutes=3)
+    agent.start_trading(interval_minutes=2)
 
 
 if __name__ == "__main__":
