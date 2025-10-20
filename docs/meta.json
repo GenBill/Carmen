@@ -1,11 +1,11 @@
 {
-  "last_update": "2025-10-18T12:02:23.931333",
-  "last_update_readable": "2025-10-18 12:02:23",
-  "content_hash": "b90b74f8d49fef023c3cc889df3f82b5",
+  "last_update": "2025-10-20T12:14:40.518416",
+  "last_update_readable": "2025-10-20 12:14:40",
+  "content_hash": "60674d57a799718784172e85c802b0ae",
   "html_file": "docs/index.html",
-  "html_file_size": 9875,
-  "market_status": "⏸️  周末休市",
-  "update_time": "2025-10-18 00:02:09 EDT",
+  "html_file_size": 9874,
+  "market_status": "⏰ 盘前时段",
+  "update_time": "2025-10-20 00:07:58 EDT",
   "mode": "盘前/盘后模式",
   "stats": {
     "total_scanned": 1170,
@@ -19,14 +19,6 @@
     "macd_params": "8,17,9"
   },
   "update_history": [
-    {
-      "timestamp": "2025-10-15T00:48:54.857219",
-      "timestamp_readable": "2025-10-15 00:48:54",
-      "content_hash": "884b77da9331f12e44473e8d985c7c34",
-      "market_status": "🟢 美股盘中",
-      "stocks_count": 34,
-      "signals": 0
-    },
     {
       "timestamp": "2025-10-15T01:10:56.230044",
       "timestamp_readable": "2025-10-15 01:10:56",
@@ -96,6 +88,14 @@
       "timestamp_readable": "2025-10-18 12:02:23",
       "content_hash": "b90b74f8d49fef023c3cc889df3f82b5",
       "market_status": "⏸️  周末休市",
+      "stocks_count": 1144,
+      "signals": 0
+    },
+    {
+      "timestamp": "2025-10-20T12:14:40.518416",
+      "timestamp_readable": "2025-10-20 12:14:40",
+      "content_hash": "60674d57a799718784172e85c802b0ae",
+      "market_status": "⏰ 盘前时段",
       "stocks_count": 1144,
       "signals": 0
     }
