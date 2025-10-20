@@ -101,6 +101,21 @@ IMPORTANT: Your output will be parsed by Python and then executed through OKX Fu
 - TAKE_PROFIT and STOP_LOSS values will be monitored every 30 seconds and automatically trigger okx.close_position() when price targets are hit
 - Only trades with confidence >= GATE will be executed. If your confidence is below GATE, the trade will be ignored for safety reasons. Be honest about your confidence level.
 
+RISK CONSTRAINTS (READ CAREFULLY):
+- Trading uses CROSS MARGIN with fixed 10x leverage. Fees and maintenance margin reduce effective buying power.
+- You MUST size quantity so that initial margin for the new order <= 80% of available USDT after accounting for existing margin usage and a 10% fee/risk buffer.
+- Never suggest quantities that the available USDT cannot support under 10x leverage plus buffer.
+- Each symbol has EXCHANGE-IMPOSED MINIMUMS (amount precision and sometimes minimum notional). You MUST ensure:
+    quantity >= coin_min_amount(symbol)
+  If rounding up to the minimum would violate the margin/buffer constraints, DO NOT PLACE THE TRADE (output HOLD instead).
+  Below are the minimum amounts for each coin:
+  BTC 0.01
+  ETH 0.001
+  SOL 0.01
+  BNB 1
+  DOGE 10
+  XRP 1
+
 OKX Futures API Details:
 - Trading pairs: BTC/USDT:USDT, ETH/USDT:USDT, SOL/USDT:USDT, BNB/USDT:USDT, DOGE/USDT:USDT, XRP/USDT:USDT
 - Order types: market orders for immediate execution

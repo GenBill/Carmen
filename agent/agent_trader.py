@@ -24,12 +24,6 @@ class TradingAgent:
     ):
         """初始化交易agent"""
         self.okx = OKXTrader(okx_token_path)
-        # 新：设置全仓模式
-        try:
-            self.okx.exchange.set_margin_mode("cross", "USDT")
-            self.logger.info("设置margin mode为cross（全仓）")
-        except Exception as e:
-            self.logger.error(f"设置margin mode失败: {e}")
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
@@ -386,12 +380,39 @@ class TradingAgent:
                     current_price = self.okx.get_current_price(coin_symbol)
                     if not current_price:
                         continue
-                    new_margin = (quantity * current_price) / 10  # 10x
-                    projected_used = total_margin_used + new_margin
-                    if projected_used > account_info["total_usdt"] * 0.8:
+
+                    # 基于可用资金与缓冲自适应缩量，避免超额下单
+                    safety_buffer = 0.1  # 10% 手续费/维持保证金缓冲
+                    max_alloc_ratio = 0.8  # 单次下单后总保证金不超过80%总资金
+                    max_available_margin = max(
+                        0.0,
+                        account_info["free_usdt"] * (1 - safety_buffer)
+                    )
+                    remaining_capacity = max(
+                        0.0,
+                        account_info["total_usdt"] * max_alloc_ratio - total_margin_used
+                    )
+                    margin_cap = min(max_available_margin, remaining_capacity)
+                    if margin_cap <= 0:
                         self.logger.warning(
-                            f"{coin} 开仓后总保证金使用过高 ({projected_used:.2f} > {account_info['total_usdt'] * 0.8:.2f})，跳过"
+                            f"{coin} 无可用保证金空间，跳过"
                         )
+                        continue
+
+                    # 10x 杠杆对应初始保证金 = 名义价值 / 10
+                    desired_margin = (quantity * current_price) / 10
+                    if desired_margin > margin_cap:
+                        # 缩量：按上限重算数量
+                        quantity = max(0.0, (margin_cap * 10) / current_price)
+                        self.logger.info(
+                            f"{coin} 按保证金上限缩量至 {quantity:.6f}"
+                        )
+
+                    # 重新计算用于风控日志
+                    new_margin = (quantity * current_price) / 10
+                    projected_used = total_margin_used + new_margin
+                    if quantity <= 0:
+                        self.logger.warning(f"{coin} 缩量后数量为0，跳过")
                         continue
 
                     # 执行开仓
