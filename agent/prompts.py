@@ -11,7 +11,7 @@ Trading Rules:
 - Use PERPETUAL FUTURES contracts (not spot trading)
 - Use leveraged trading with FIXED 10x leverage for ALL trades
 - ALL trades must use exactly 10x leverage - do not specify any other leverage
-- Every trade must set a take-profit target and stop-loss price (but implement in code if needed)
+- Every BUY/SELL trade must specify both TAKE_PROFIT and STOP_LOSS prices in the output format
 - Set invalidation conditions (e.g., price breaking below a key level)
 - Risk control: Single trade risk must not exceed max(5% of total capital, 10 USDT); monitor total exposure to not exceed 200% of account value
 - For small accounts (<1000 USDT), prioritize low-risk trades and consider minimum order sizes.
@@ -78,12 +78,33 @@ After your analysis, provide your trading decisions in the following format:
 TRADING_DECISIONS
 For each coin you want to trade, output:
 COIN
-SIGNAL (BUY/SELL/HOLD)
+SIGNAL (BUY/SELL/HOLD/CLOSE)
 CONFIDENCE%
 QUANTITY: amount
+TAKE_PROFIT: price (for BUY/SELL only)
+STOP_LOSS: price (for BUY/SELL only)
 
-If holding, just output the signal and confidence.
+Example: 
+```
+▶
+TRADING_DECISIONS
+BTC
+BUY
+CONFIDENCE: 85%
+QUANTITY: 0.1
+TAKE_PROFIT: 50000
+STOP_LOSS: 45000
+
+ETH
+HOLD
+CONFIDENCE: 70%
+```
+
+If holding or closing, just output the signal and confidence.
 All trades automatically use 10x leverage - do not specify leverage.
+For BUY/SELL trades, you MUST specify both TAKE_PROFIT and STOP_LOSS prices.
+
+
 
 IMPORTANT: Only trades with confidence >= 75% will be executed. If your confidence is below 75%, the trade will be ignored for safety reasons. Be honest about your confidence level."""
 

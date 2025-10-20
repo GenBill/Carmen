@@ -4,6 +4,7 @@ from datetime import datetime
 from deepseek import DeepSeekAPI
 from okx_api import OKXTrader
 from state_manager import StateManager
+from position_manager import PositionManager
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -91,7 +92,9 @@ class TradingAgent:
             self.prompt_logger.addHandler(console_handler)
 
         # 状态管理器
-        self.state_manager = StateManager()
+        self.state_manager = StateManager(okx_trader=self.okx)
+        # 仓位管理器
+        self.positions_manager = PositionManager(self.okx, self.logger)
 
         # 交易统计（从状态管理器获取）
         self.start_time = self.state_manager.get_start_time()
@@ -196,6 +199,48 @@ class TradingAgent:
                         except Exception as e:
                             self.logger.warning(
                                 f"解析数量失败: {original_line}, 错误: {e}"
+                            )
+                        continue
+
+                    # 解析止盈点 - 处理 "TAKE_PROFIT: 50000" 格式
+                    if current_coin and re.search(r"take_profit", line, re.IGNORECASE):
+                        try:
+                            tp_match = re.search(
+                                r"(?:take_profit)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
+                                line,
+                                re.IGNORECASE,
+                            )
+                            if tp_match:
+                                take_profit = float(tp_match.group(1))
+                                if take_profit > 0:
+                                    decisions[current_coin]["take_profit"] = take_profit
+                                    self.logger.debug(
+                                        f"解析到 {current_coin} 止盈点: {take_profit}"
+                                    )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"解析止盈点失败: {original_line}, 错误: {e}"
+                            )
+                        continue
+
+                    # 解析止损点 - 处理 "STOP_LOSS: 45000" 格式
+                    if current_coin and re.search(r"stop_loss", line, re.IGNORECASE):
+                        try:
+                            sl_match = re.search(
+                                r"(?:stop_loss)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
+                                line,
+                                re.IGNORECASE,
+                            )
+                            if sl_match:
+                                stop_loss = float(sl_match.group(1))
+                                if stop_loss > 0:
+                                    decisions[current_coin]["stop_loss"] = stop_loss
+                                    self.logger.debug(
+                                        f"解析到 {current_coin} 止损点: {stop_loss}"
+                                    )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"解析止损点失败: {original_line}, 错误: {e}"
                             )
                         continue
 
@@ -369,6 +414,24 @@ class TradingAgent:
                         }
                         executed_trades.append(trade_record)
                         self.state_manager.add_trade_record(trade_record)
+
+                        # 更新仓位管理器中的止盈止损点
+                        take_profit = decision.get("take_profit", 0.0)
+                        stop_loss = decision.get("stop_loss", 0.0)
+                        if take_profit > 0 or stop_loss > 0:
+                            # 获取当前仓位信息并添加止盈止损点
+                            current_positions = self.okx.get_positions()
+                            if coin in current_positions:
+                                position_data = current_positions[coin].copy()
+                                position_data["take_profit"] = take_profit
+                                position_data["stop_loss"] = stop_loss
+                                self.positions_manager.update_position(
+                                    coin, position_data
+                                )
+                                self.logger.info(
+                                    f"设置 {coin} 止盈止损: TP={take_profit}, SL={stop_loss}"
+                                )
+
                         self.logger.info(
                             f"{signal} {coin} {quantity} (置信度: {confidence:.1%}) - 订单ID: {order['id']}"
                         )
