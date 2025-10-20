@@ -10,6 +10,7 @@ Trading Rules:
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
 - Use PERPETUAL FUTURES contracts (not spot trading)
 - Use leveraged trading with FIXED 10x leverage for ALL trades
+- Every BUY/SELL trade must specify both TAKE_PROFIT and STOP_LOSS prices in the output format
 - Set invalidation conditions (e.g., price breaking below a key level)
 - For small accounts (<1000 USDT), prioritize low-risk trades and consider minimum order sizes.
 - Position management: You can hold MULTIPLE positions across different coins. For each coin, decide independently: BUY (open long), SELL (open short), HOLD (keep if exists), or CLOSE (close if exists).
@@ -72,6 +73,8 @@ SIGNAL (BUY/SELL/HOLD/CLOSE)
 CONFIDENCE%
 QUANTITY: coins_amount
 ENTRY_PRICE: price (for BUY/SELL only; orders will be LIMIT at this price)
+TAKE_PROFIT: price (for BUY/SELL only)
+STOP_LOSS: price (for BUY/SELL only)
 
 Example: 
 ```
@@ -81,19 +84,24 @@ BUY
 CONFIDENCE: 85%
 QUANTITY: 0.1
 ENTRY_PRICE: 48888
+TAKE_PROFIT: 50000
+STOP_LOSS: 45000
 
 ETH
-HOLD
+CLOSE
 CONFIDENCE: 70%
 ```
 
-If HOLD or CLOSE, just output the signal and confidence.
+If holding, also provide updated TAKE_PROFIT and STOP_LOSS to adjust existing position.
+If closing, just output the signal and confidence.
 All trades automatically use 10x leverage - do not specify leverage.
+For BUY/SELL trades, you MUST specify ENTRY_PRICE (for limit order), TAKE_PROFIT and STOP_LOSS prices.
 
 IMPORTANT: Your output will be parsed by Python and then executed through OKX Futures API:
 - BUY signals will call okx.place_order(symbol, "buy", QUANTITY, price=ENTRY_PRICE, order_type="limit", leverage=10)
 - SELL signals will call okx.place_order(symbol, "sell", QUANTITY, price=ENTRY_PRICE, order_type="limit", leverage=10)  
 - CLOSE signals will call okx.close_position(symbol)
+- TAKE_PROFIT and STOP_LOSS values will be monitored every 30 seconds and automatically trigger okx.close_position() when price targets are hit
 - Only trades with confidence >= GATE will be executed. If your confidence is below GATE, the trade will be ignored for safety reasons. Be honest about your confidence level.
 
 RISK CONSTRAINTS (READ CAREFULLY):
