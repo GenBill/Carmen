@@ -57,11 +57,27 @@ class TradingAgent:
         )
         logger.addHandler(file_handler)
 
-        # 添加控制台处理器作为回退
+        # 添加控制台处理器作为回退（带颜色）
+        class _ColorFormatter(logging.Formatter):
+            COLORS = {
+                'DEBUG': '\x1b[37m',      # 白
+                'INFO': '\x1b[36m',       # 青
+                'WARNING': '\x1b[33m',    # 黄
+                'ERROR': '\x1b[31m',      # 红
+                'CRITICAL': '\x1b[41m',   # 红底
+            }
+            RESET = '\x1b[0m'
+
+            def format(self, record):
+                color = self.COLORS.get(record.levelname, '')
+                message = super().format(record)
+                return f"{color}{message}{self.RESET}"
+
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            _ColorFormatter("%(asctime)s - %(levelname)s - %(message)s")
         )
+        console_handler.setLevel(logging.WARNING)
         logger.addHandler(console_handler)
 
         self.logger = logger
@@ -82,8 +98,7 @@ class TradingAgent:
             prompt_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
             self.prompt_logger.addHandler(prompt_handler)
 
-            # 添加控制台处理器作为回退
-            self.prompt_logger.addHandler(console_handler)
+            # 不向控制台输出prompt，仅写入文件日志
 
         # 状态管理器
         self.state_manager = StateManager(okx_trader=self.okx)
@@ -217,6 +232,27 @@ class TradingAgent:
                             )
                         continue
 
+                    # 解析入场价 ENTRY_PRICE - 处理 "ENTRY_PRICE: 50000" 格式
+                    if current_coin and re.search(r"entry_price", line, re.IGNORECASE):
+                        try:
+                            ep_match = re.search(
+                                r"(?:entry_price)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
+                                line,
+                                re.IGNORECASE,
+                            )
+                            if ep_match:
+                                entry_price = float(ep_match.group(1))
+                                if entry_price > 0:
+                                    decisions[current_coin]["entry_price"] = entry_price
+                                    self.logger.debug(
+                                        f"解析到 {current_coin} 入场价: {entry_price}"
+                                    )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"解析入场价失败: {original_line}, 错误: {e}"
+                            )
+                        continue
+
                     # 解析止损点 - 处理 "STOP_LOSS: 45000" 格式
                     if current_coin and re.search(r"stop_loss", line, re.IGNORECASE):
                         try:
@@ -301,7 +337,7 @@ class TradingAgent:
                     }
                     executed_trades.append(trade_record)
                     self.state_manager.add_trade_record(trade_record)
-                    self.logger.info(f"成功平仓 {coin} - 订单ID: {order['id']}")
+                    self.logger.warning(f"成功平仓 {coin} - 订单ID: {order['id']}")
 
                     # 更新total_margin_used（减去该仓的margin）
                     closed_margin = (
@@ -369,7 +405,7 @@ class TradingAgent:
                             }
                             executed_trades.append(trade_record)
                             self.state_manager.add_trade_record(trade_record)
-                            self.logger.info(
+                            self.logger.warning(
                                 f"成功关闭冲突仓位 {coin} - 订单ID: {order['id']}"
                             )
                         else:
@@ -416,11 +452,20 @@ class TradingAgent:
                         continue
 
                     # 执行开仓
+                    # BUY/SELL 使用限价单（由AI提供ENTRY_PRICE）；CLOSE使用市价单
+                    order_type = "limit"
+                    entry_price = decision.get("entry_price")
+                    if entry_price is None or entry_price <= 0:
+                        # 若AI未提供，使用市价单
+                        order_type = "market"
+                        entry_price = None
+
                     order = self.okx.place_order(
                         coin_symbol,
                         signal.lower(),
                         quantity,
-                        order_type="market",
+                        price=entry_price,
+                        order_type=order_type,
                         leverage=10,
                     )
                     if order and "id" in order:
@@ -453,7 +498,7 @@ class TradingAgent:
                                     f"设置 {coin} 止盈止损: TP={take_profit}, SL={stop_loss}"
                                 )
 
-                        self.logger.info(
+                        self.logger.warning(
                             f"{signal} {coin} {quantity} (置信度: {confidence:.1%}) - 订单ID: {order['id']}"
                         )
                     else:
@@ -592,7 +637,7 @@ class TradingAgent:
                 trades = self.run_trading_cycle()
 
                 # 每10次交易显示一次性能摘要
-                if self.invocation_count % 10 == 0:
+                if (self.invocation_count+1) % 10 == 0:
                     self.show_performance_summary()
 
                 # 等待下次执行
