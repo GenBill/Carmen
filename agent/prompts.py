@@ -71,7 +71,7 @@ For each coin you want to trade, output:
 COIN
 SIGNAL (BUY/SELL/HOLD/CLOSE)
 CONFIDENCE%
-QUANTITY: amount
+QUANTITY: coins_amount
 ENTRY_PRICE: price (for BUY/SELL only; orders will be LIMIT at this price)
 TAKE_PROFIT: price (for BUY/SELL only)
 STOP_LOSS: price (for BUY/SELL only)
@@ -88,11 +88,12 @@ TAKE_PROFIT: 50000
 STOP_LOSS: 45000
 
 ETH
-HOLD
+CLOSE
 CONFIDENCE: 70%
 ```
 
-If holding or closing, just output the signal and confidence.
+If holding, also provide updated TAKE_PROFIT and STOP_LOSS to adjust existing position.
+If closing, just output the signal and confidence.
 All trades automatically use 10x leverage - do not specify leverage.
 For BUY/SELL trades, you MUST specify ENTRY_PRICE (for limit order), TAKE_PROFIT and STOP_LOSS prices.
 

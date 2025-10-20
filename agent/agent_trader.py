@@ -380,6 +380,17 @@ class TradingAgent:
 
                 if signal == "HOLD" and confidence >= action_gate:
                     if has_position:
+                        # 若AI提供了新的TP/SL，则更新当前持仓
+                        take_profit = decision.get("take_profit", 0.0)
+                        stop_loss = decision.get("stop_loss", 0.0)
+                        if take_profit > 0 or stop_loss > 0:
+                            position_data = current_positions[coin].copy()
+                            position_data["take_profit"] = take_profit or position_data.get("take_profit", 0.0)
+                            position_data["stop_loss"] = stop_loss or position_data.get("stop_loss", 0.0)
+                            self.positions_manager.update_position(coin, position_data)
+                            self.logger.info(
+                                f"HOLD {coin} 更新止盈止损: TP={take_profit}, SL={stop_loss}"
+                            )
                         self.logger.info(f"持有 {coin}")
                         executed_trades.append(
                             {"coin": coin, "action": "hold", "confidence": confidence}
@@ -417,7 +428,7 @@ class TradingAgent:
                     if not current_price:
                         continue
 
-                    # 基于可用资金与缓冲自适应缩量，避免超额下单
+                    # 资金与保证金检查（禁用自动缩量，超限直接跳过）
                     safety_buffer = 0.1  # 10% 手续费/维持保证金缓冲
                     max_alloc_ratio = 0.8  # 单次下单后总保证金不超过80%总资金
                     max_available_margin = max(
@@ -430,26 +441,20 @@ class TradingAgent:
                     )
                     margin_cap = min(max_available_margin, remaining_capacity)
                     if margin_cap <= 0:
-                        self.logger.warning(
-                            f"{coin} 无可用保证金空间，跳过"
-                        )
+                        self.logger.warning(f"{coin} 无可用保证金空间，跳过")
                         continue
 
                     # 10x 杠杆对应初始保证金 = 名义价值 / 10
                     desired_margin = (quantity * current_price) / 10
                     if desired_margin > margin_cap:
-                        # 缩量：按上限重算数量
-                        quantity = max(0.0, (margin_cap * 10) / current_price)
-                        self.logger.info(
-                            f"{coin} 按保证金上限缩量至 {quantity:.6f}"
+                        self.logger.warning(
+                            f"{coin} 所需保证金 {desired_margin:.4f} 超过上限 {margin_cap:.4f}，跳过下单"
                         )
-
-                    # 重新计算用于风控日志
-                    new_margin = (quantity * current_price) / 10
-                    projected_used = total_margin_used + new_margin
-                    if quantity <= 0:
-                        self.logger.warning(f"{coin} 缩量后数量为0，跳过")
                         continue
+
+                    # 计算用于风控日志
+                    new_margin = desired_margin
+                    projected_used = total_margin_used + new_margin
 
                     # 执行开仓
                     # BUY/SELL 使用限价单（由AI提供ENTRY_PRICE）；CLOSE使用市价单
@@ -573,6 +578,29 @@ class TradingAgent:
 
             # 获取当前持仓
             positions = self.okx.get_positions()
+
+            # 决策前：取消所有未成交挂单，避免旧挂单影响
+            try:
+                open_orders = []
+                try:
+                    open_orders = self.okx.exchange.fetch_open_orders()
+                except Exception:
+                    open_orders = []
+                if open_orders:
+                    cancelled = 0
+                    for od in open_orders:
+                        try:
+                            oid = od.get("id")
+                            sym = od.get("symbol")
+                            if oid:
+                                self.okx.exchange.cancel_order(oid, sym)
+                                cancelled += 1
+                        except Exception as e:
+                            self.logger.error(f"取消挂单失败: {od.get('id')} {od.get('symbol')} - {e}")
+                    if cancelled > 0:
+                        self.logger.warning(f"已取消未成交挂单 {cancelled} 个")
+            except Exception as e:
+                self.logger.error(f"检查/取消未成交挂单失败: {e}")
 
             # 构建提示词
             prompt = build_trading_prompt(
