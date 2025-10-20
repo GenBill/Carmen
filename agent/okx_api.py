@@ -24,24 +24,49 @@ class OKXTrader:
             'sandbox': False,  # 生产环境设为False
             # 'sandbox': True,  # 使用沙盒环境进行测试
             'enableRateLimit': True, 
+            'options': {
+                'defaultType': 'swap'  # 永续合约
+                # 'defaultType': 'future'  # 交割合约
+            }
         })
         
-        # 初始化合约交易配置
-        self._setup_futures_config()
+        # 预加载市场，确保symbol有效
+        self.exchange.load_markets()
         
         # 支持的永续合约交易对
         self.symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'BNB/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
         
+        # 初始化合约交易配置
+        self._setup_futures_config()
+        
         # 仓位信息
         self.positions = {}
     
+    def _ensure_symbol_settings(self, symbol: str, leverage: int = 10):
+        """幂等地确保指定合约为全仓与目标杠杆。"""
+        try:
+            # 持仓模式（单向）
+            try:
+                self.exchange.set_position_mode(False)
+            except Exception:
+                pass
+
+            # 先尝试在设置保证金模式时携带杠杆
+            try:
+                self.exchange.set_margin_mode('cross', symbol, {'lever': leverage})
+            except Exception:
+                # 回退：显式设置杠杆并指定marginMode
+                try:
+                    self.exchange.set_leverage(leverage, symbol, {'marginMode': 'cross'})
+                except Exception:
+                    pass
+        except Exception:
+            # 忽略设置失败以避免打断下单流程，由交易所校验最终参数
+            pass
+
     def _setup_futures_config(self):
         """设置合约交易配置"""
         try:
-            # 设置保证金模式为全仓模式
-            self.exchange.set_margin_mode('cross', 'USDT')  # 全仓模式
-            print("设置保证金模式为全仓模式")
-            
             # 设置持仓模式为单向持仓
             self.exchange.set_position_mode(False)  # False表示单向持仓
             print("设置持仓模式为单向持仓")
@@ -49,7 +74,20 @@ class OKXTrader:
             # 为所有交易对设置杠杆
             for symbol in self.symbols:
                 try:
-                    self.exchange.set_leverage(10, symbol)  # 设置10倍杠杆
+                    # 为每个合约设置保证金模式为全仓，并传入默认杠杆
+                    try:
+                        self.exchange.set_margin_mode('cross', symbol, {'lever': 10})
+                    except Exception as e:
+                        print(f"直接设置保证金模式失败，尝试回退方式: {symbol} - {e}")
+                        # 某些版本需先明确设置杠杆并携带marginMode
+                        try:
+                            self.exchange.set_leverage(10, symbol, {'marginMode': 'cross'})
+                        except Exception as ee:
+                            print(f"回退设置杠杆失败: {symbol} - {ee}")
+                    print(f"设置 {symbol} 保证金模式为全仓")
+
+                    # 再设置杠杆，确保最终生效
+                    self.exchange.set_leverage(10, symbol, {'marginMode': 'cross'})  # 设置10倍杠杆
                     print(f"设置 {symbol} 杠杆为10倍")
                 except Exception as e:
                     print(f"设置 {symbol} 杠杆失败: {e}")
@@ -182,7 +220,11 @@ class OKXTrader:
     def get_account_info(self):
         """获取账户信息"""
         try:
-            balance = self.exchange.fetch_balance()
+            # 优先读取合约账户余额
+            try:
+                balance = self.exchange.fetch_balance({'type': 'swap'})
+            except Exception:
+                balance = self.exchange.fetch_balance()
             return {
                 'total_usdt': balance.get('USDT', {}).get('total', 0),
                 'free_usdt': balance.get('USDT', {}).get('free', 0),
@@ -199,6 +241,9 @@ class OKXTrader:
             # 验证参数
             if amount <= 0:
                 raise ValueError(f"交易数量必须大于0: {amount}")
+
+            # 下单前确保该symbol的保证金模式与杠杆生效（幂等）
+            self._ensure_symbol_settings(symbol, leverage)
             
             if order_type == 'market':
                 order = self.exchange.create_market_order(symbol, side, amount)

@@ -230,3 +230,12 @@ class StateManager:
         except Exception as e:
             print(f"导出交易历史失败: {e}")
             return False
+
+    def get_pnl_history(self, limit: int = 100) -> list:
+        """返回最近的PnL列表（按交易记录顺序）。
+
+        仅用于简化的Sharpe计算场景；当记录不足时返回可能为空的列表。
+        """
+        history = self.state.get("trading_history", [])
+        recent = history[-limit:] if limit and limit > 0 else history
+        return [record.get("pnl", 0.0) for record in recent]
