@@ -213,18 +213,29 @@ class OKXTrader:
             if not current_price:
                 continue
             
-            # 获取K线数据
-            df = self.get_ohlcv_data(symbol)
-            if df is None:
+            # 获取3分钟K线数据（短期）
+            df_3m = self.get_ohlcv_data(symbol, timeframe='3m', limit=100)
+            if df_3m is None:
                 continue
             
-            # 计算指标
-            df = self.calculate_indicators(df)
-            if df.empty:
+            # 获取15分钟K线数据
+            df_15m = self.get_ohlcv_data(symbol, timeframe='15m', limit=100)
+            if df_15m is None:
+                continue
+            
+            # 计算3分钟指标
+            df_3m = self.calculate_indicators(df_3m)
+            if df_3m.empty:
+                continue
+            
+            # 计算15分钟指标
+            df_15m = self.calculate_indicators(df_15m)
+            if df_15m.empty:
                 continue
             
             # 获取最新数据
-            latest = df.iloc[-1]
+            latest_3m = df_3m.iloc[-1]
+            latest_15m = df_15m.iloc[-1]
             
             # 获取资金费率和持仓量
             try:
@@ -236,20 +247,35 @@ class OKXTrader:
             
             market_data[coin] = {
                 'current_price': current_price,
-                'ema20': latest['ema20'],
-                'macd': latest['macd'],
-                'rsi_7': latest['rsi_7'],
-                'rsi_14': latest['rsi_14'],
-                'atr_14': latest['atr_14'],
-                'atr_3': latest['atr_3'],
+                # 3分钟数据
+                'ema20_3m': latest_3m['ema20'],
+                'macd_3m': latest_3m['macd'],
+                'rsi_7_3m': latest_3m['rsi_7'],
+                'rsi_14_3m': latest_3m['rsi_14'],
+                'atr_14_3m': latest_3m['atr_14'],
+                'atr_3_3m': latest_3m['atr_3'],
+                'volume_3m': latest_3m['volume'],
+                'price_series_3m': df_3m['close'].tail(10).tolist(),
+                'ema_series_3m': df_3m['ema20'].tail(10).tolist(),
+                'macd_series_3m': df_3m['macd'].tail(10).tolist(),
+                'rsi_series_3m': df_3m['rsi_7'].tail(10).tolist(),
+                'rsi_14_series_3m': df_3m['rsi_14'].tail(10).tolist(),
+                # 15分钟数据
+                'ema20_15m': latest_15m['ema20'],
+                'macd_15m': latest_15m['macd'],
+                'rsi_7_15m': latest_15m['rsi_7'],
+                'rsi_14_15m': latest_15m['rsi_14'],
+                'atr_14_15m': latest_15m['atr_14'],
+                'atr_3_15m': latest_15m['atr_3'],
+                'volume_15m': latest_15m['volume'],
+                'price_series_15m': df_15m['close'].tail(10).tolist(),
+                'ema_series_15m': df_15m['ema20'].tail(10).tolist(),
+                'macd_series_15m': df_15m['macd'].tail(10).tolist(),
+                'rsi_series_15m': df_15m['rsi_7'].tail(10).tolist(),
+                'rsi_14_series_15m': df_15m['rsi_14'].tail(10).tolist(),
+                # 市场数据
                 'funding_rate': funding_rate.get('fundingRate', 0),
                 'open_interest': open_interest.get('openInterestAmount', 0),
-                'volume': latest['volume'],
-                'price_series': df['close'].tail(10).tolist(),
-                'ema_series': df['ema20'].tail(10).tolist(),
-                'macd_series': df['macd'].tail(10).tolist(),
-                'rsi_series': df['rsi_7'].tail(10).tolist(),
-                'rsi_14_series': df['rsi_14'].tail(10).tolist()
             }
         
         return market_data

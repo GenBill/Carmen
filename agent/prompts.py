@@ -18,11 +18,22 @@ Trading Rules:
 
 Technical Analysis Key Points:
 
-- EMA20: Trend direction
-- MACD: Momentum changes
-- RSI: Overbought/oversold conditions
-- ATR: Volatility
+Multi-Timeframe Analysis:
+- 3-minute data: For precise entry/exit timing and short-term signals
+- 15-minute data: For trend confirmation and medium-term direction
+
+Key Indicators:
+- EMA20: Trend direction (compare 3m vs 15m for trend alignment)
+- MACD: Momentum changes (cross-timeframe confirmation)
+- RSI: Overbought/oversold conditions (both 7 and 14 periods)
+- ATR: Volatility (compare 3m vs 15m for volatility trends)
 - Funding rate: Market sentiment (important for perpetual futures)
+
+Trading Strategy:
+- Use 15-minute data to confirm trend direction
+- Use 3-minute data for precise entry/exit timing
+- Look for alignment between timeframes for higher confidence trades
+- Consider divergence between 3m and 15m indicators as warning signals
 
 Notes:
 
@@ -46,7 +57,11 @@ def build_trading_prompt(
 
 ALL OF THE PRICE OR SIGNAL DATA BELOW IS ORDERED: OLDEST → NEWEST
 
-Timeframes note: Unless stated otherwise in a section title, intraday series are provided at 3‑minute intervals. If a coin uses a different interval, it is explicitly stated in that coin's section.
+Timeframes note: The system provides data at two timeframes:
+- 3-minute intervals: For short-term trading signals and precise entry/exit timing
+- 15-minute intervals: For medium-term trend analysis and trend confirmation
+
+Unless stated otherwise, intraday series are provided at 3‑minute intervals. 15-minute data is explicitly labeled with "_15m" suffix.
 
 {_format_market_data(market_data)}
 {_format_account_info(state_manager, account_info, positions)}
@@ -129,28 +144,52 @@ def _format_market_data(market_data):
 
     for coin, data in market_data.items():
         prompt += f"\nALL {coin} DATA\n"
-        prompt += f"current_price = {data['current_price']}, "
-        prompt += f"current_ema20 = {data['ema20']:.3f}, "
-        prompt += f"current_macd = {data['macd']:.3f}, "
-        prompt += f"current_rsi (7 period) = {data['rsi_7']:.3f}\n"
-
+        prompt += f"current_price = {data['current_price']}\n"
+        
         prompt += f"\nIn addition, here is the latest {coin} open interest and funding rate for perps (the instrument you are trading):\n\n"
-        prompt += f"Open Interest: Latest: {data['open_interest']} Average: {data['open_interest']}\n\n"
+        prompt += f"Open Interest: Latest: {data['open_interest']}\n\n"
         prompt += f"Funding Rate: {data['funding_rate']}\n\n"
 
-        prompt += "Intraday series (by minute, oldest → latest):\n\n"
-        prompt += f"Mid prices: {data['price_series']}\n\n"
-        prompt += f"EMA indicators (20‑period): {data['ema_series']}\n\n"
-        prompt += f"MACD indicators: {data['macd_series']}\n\n"
-        prompt += f"RSI indicators (7‑Period): {data['rsi_series']}\n\n"
-        prompt += f"RSI indicators (14‑Period): {data['rsi_14_series']}\n\n"
+        # 3分钟数据
+        prompt += f"\n3-MINUTE TIMEFRAME DATA:\n"
+        prompt += f"current_ema20_3m = {data['ema20_3m']:.3f}, "
+        prompt += f"current_macd_3m = {data['macd_3m']:.3f}, "
+        prompt += f"current_rsi_7_3m = {data['rsi_7_3m']:.3f}, "
+        prompt += f"current_rsi_14_3m = {data['rsi_14_3m']:.3f}\n"
 
-        prompt += "Longer‑term context (4‑hour timeframe):\n\n"
-        prompt += f"20‑Period EMA: {data['ema20']:.3f} vs. 50‑Period EMA: {data['ema20']:.3f}\n\n"
-        prompt += f"3‑Period ATR: {data['atr_3']:.3f} vs. 14‑Period ATR: {data['atr_14']:.3f}\n\n"
-        prompt += f"Current Volume: {data['volume']:.3f} vs. Average Volume: {data['volume']:.3f}\n\n"
-        prompt += f"MACD indicators: {data['macd_series']}\n\n"
-        prompt += f"RSI indicators (14‑Period): {data['rsi_14_series']}\n\n"
+        # 3分钟序列数据
+        prompt += "3-MINUTE SERIES (oldest → latest):\n\n"
+        prompt += f"Mid prices (3m): {data['price_series_3m']}\n\n"
+        prompt += f"EMA indicators (20‑period, 3m): {data['ema_series_3m']}\n\n"
+        prompt += f"MACD indicators (3m): {data['macd_series_3m']}\n\n"
+        prompt += f"RSI indicators (7‑Period, 3m): {data['rsi_series_3m']}\n\n"
+        prompt += f"RSI indicators (14‑Period, 3m): {data['rsi_14_series_3m']}\n\n"
+
+        # 15分钟数据
+        prompt += f"\n15-MINUTE TIMEFRAME DATA:\n"
+        prompt += f"current_ema20_15m = {data['ema20_15m']:.3f}, "
+        prompt += f"current_macd_15m = {data['macd_15m']:.3f}, "
+        prompt += f"current_rsi_7_15m = {data['rsi_7_15m']:.3f}, "
+        prompt += f"current_rsi_14_15m = {data['rsi_14_15m']:.3f}\n"
+
+        # 15分钟序列数据
+        prompt += "15-MINUTE SERIES (oldest → latest):\n\n"
+        prompt += f"Mid prices (15m): {data['price_series_15m']}\n\n"
+        prompt += f"EMA indicators (20‑period, 15m): {data['ema_series_15m']}\n\n"
+        prompt += f"MACD indicators (15m): {data['macd_series_15m']}\n\n"
+        prompt += f"RSI indicators (7‑Period, 15m): {data['rsi_series_15m']}\n\n"
+        prompt += f"RSI indicators (14‑Period, 15m): {data['rsi_14_series_15m']}\n\n"
+
+        # 技术指标对比分析
+        prompt += "TIMEFRAME COMPARISON ANALYSIS:\n\n"
+        prompt += f"3m vs 15m EMA20: {data['ema20_3m']:.3f} vs {data['ema20_15m']:.3f}\n\n"
+        prompt += f"3m vs 15m MACD: {data['macd_3m']:.3f} vs {data['macd_15m']:.3f}\n\n"
+        prompt += f"3m vs 15m RSI(7): {data['rsi_7_3m']:.3f} vs {data['rsi_7_15m']:.3f}\n\n"
+        prompt += f"3m vs 15m RSI(14): {data['rsi_14_3m']:.3f} vs {data['rsi_14_15m']:.3f}\n\n"
+        
+        prompt += f"3‑Period ATR (3m): {data['atr_3_3m']:.3f} vs 14‑Period ATR (3m): {data['atr_14_3m']:.3f}\n\n"
+        prompt += f"3‑Period ATR (15m): {data['atr_3_15m']:.3f} vs 14‑Period ATR (15m): {data['atr_14_15m']:.3f}\n\n"
+        prompt += f"Current Volume (3m): {data['volume_3m']:.3f} vs Current Volume (15m): {data['volume_15m']:.3f}\n\n"
 
     return prompt
 

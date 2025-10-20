@@ -27,7 +27,7 @@ class TradingAgent:
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
-        self.deepseek = DeepSeekAPI(deepseek_token_path, self.system_prompt, "deepseek-reasoner")
+        self.deepseek = DeepSeekAPI(deepseek_token_path, self.system_prompt, "deepseek-chat")
 
         # 设置日志
         # 转换为绝对路径
