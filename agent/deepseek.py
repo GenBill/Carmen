@@ -6,7 +6,8 @@ class DeepSeekAPI:
     def __init__(
         self, 
         token_path="agent/deepseek.token", 
-        system_prompt="You are a helpful assistant"
+        system_prompt="You are a helpful assistant", 
+        model_type="deepseek-chat"
     ):
         # Load DeepSeek API key from file
         with open(token_path, "r") as file:
@@ -18,7 +19,8 @@ class DeepSeekAPI:
         self.system_prompt = system_prompt
         self.dialog = []
         self.dialog.append({"role": "system", "content": system_prompt})
-        self.model_type = "deepseek-chat"
+        self.model_type = model_type
+        # self.model_type = "deepseek-chat"
         # self.model_type = "deepseek-reasoner"
     
     def recursive_call(self, user_prompt):

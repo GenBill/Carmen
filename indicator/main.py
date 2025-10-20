@@ -260,6 +260,36 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                     # 获取终端输出缓冲区
                     terminal_output = get_output_buffer()
                     
+                    # 筛选买入评分>=2.4的股票并运行AI分析
+                    buy_signal_stocks = [stock for stock in stocks_data_for_html if stock.get('score_buy', 0) >= 2.4]
+                    ai_analysis_results = []
+                    
+                    if buy_signal_stocks:
+                        print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，开始AI分析...")
+                        from analysis import analyze_stock_with_ai
+                        
+                        for stock in buy_signal_stocks:
+                            symbol = stock['symbol']
+                            print(f"🤖 正在分析 {symbol}...")
+                            try:
+                                # 运行AI分析
+                                analysis_result = analyze_stock_with_ai(symbol)
+                                ai_analysis_results.append({
+                                    'symbol': symbol,
+                                    'analysis': analysis_result,
+                                    'score_buy': stock.get('score_buy', 0),
+                                    'price': stock.get('price', 0)
+                                })
+                                print(f"✅ {symbol} 分析完成")
+                            except Exception as e:
+                                print(f"⚠️ {symbol} 分析失败: {e}")
+                                ai_analysis_results.append({
+                                    'symbol': symbol,
+                                    'analysis': f"分析失败: {str(e)}",
+                                    'score_buy': stock.get('score_buy', 0),
+                                    'price': stock.get('price', 0)
+                                })
+                    
                     # 准备报告数据
                     report_data = prepare_report_data(
                         stocks_data=stocks_data_for_html,
@@ -283,7 +313,8 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             'macd_slow': macd_slow,
                             'macd_signal': macd_signal
                         },
-                        terminal_output=terminal_output
+                        terminal_output=terminal_output,
+                        ai_analysis_results=ai_analysis_results
                     )
                     
                     # 生成HTML（会自动检测内容是否变化）
