@@ -5,3 +5,10 @@ low_volume_blacklist.json
 *.log
 docs/index.html
 docs/meta.json
+
+agent/okx.token
+agent/deepseek.token
+agent/log.txt
+
+trading_state.json
+*log.txt
