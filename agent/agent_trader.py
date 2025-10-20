@@ -27,7 +27,7 @@ class TradingAgent:
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
-        self.deepseek = DeepSeekAPI(deepseek_token_path, self.system_prompt)
+        self.deepseek = DeepSeekAPI(deepseek_token_path, self.system_prompt, "deepseek-reasoner")
 
         # 设置日志
         # 转换为绝对路径
@@ -284,7 +284,7 @@ class TradingAgent:
             self.logger.error(f"AI响应: {response}")
             return {}
 
-    def execute_trading_decisions(self, decisions, open_gate=0.7, action_gate=0.5):
+    def execute_trading_decisions(self, decisions, open_gate=0.8, action_gate=0.7):
         """执行交易决策"""
         executed_trades = []
 
@@ -324,6 +324,18 @@ class TradingAgent:
                 and decision.get("confidence", 0.0) >= action_gate
             ):
                 coin_symbol = f"{coin}/USDT:USDT"
+                
+                # 在执行平仓前重新获取最新持仓信息
+                self.logger.info(f"准备平仓 {coin}，重新获取最新持仓信息...")
+                latest_positions = self.okx.get_positions()
+                
+                if coin not in latest_positions:
+                    self.logger.warning(f"{coin} 在最新持仓中未找到，可能已经平仓")
+                    continue
+                
+                latest_position = latest_positions[coin]
+                self.logger.info(f"{coin} 最新持仓: {latest_position.get('side', 'unknown')} {latest_position.get('size', 0)} @ {latest_position.get('entry_price', 0)}")
+                
                 order = self.okx.close_position(coin_symbol)
                 if order:
                     trade_record = {
@@ -341,7 +353,7 @@ class TradingAgent:
 
                     # 更新total_margin_used（减去该仓的margin）
                     closed_margin = (
-                        current_positions[coin].get("position_value", 0) / 10
+                        latest_position.get("position_value", 0) / 10
                     )
                     total_margin_used -= closed_margin
                     self.logger.info(

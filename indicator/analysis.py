@@ -369,4 +369,11 @@ def main(symbol):
 
 if __name__ == "__main__":
     
-    main('SERV')
+    import argparse
+    
+    # 获取命令行参数
+    parser = argparse.ArgumentParser(description='股票分析')
+    parser.add_argument('symbol', type=str, help='股票代码')
+    args = parser.parse_args()
+    symbol = args.symbol
+    main(symbol)
