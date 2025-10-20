@@ -353,13 +353,13 @@ class OKXTrader:
     def close_position(self, symbol):
         """平仓"""
         try:
-            # 获取当前持仓
+            # 获取当前持仓 - 实时获取最新持仓信息
             positions = self.exchange.fetch_positions()
             
             # 查找指定交易对的持仓
             target_position = None
             for pos in positions:
-                if pos['symbol'] == symbol and pos['contracts'] > 0:
+                if pos['symbol'] == symbol and abs(pos['contracts']) > 0:
                     target_position = pos
                     break
             
@@ -373,15 +373,52 @@ class OKXTrader:
             else:
                 close_side = 'buy'
             
-            # 平仓数量
+            # 获取合约信息
+            market_info = self.exchange.market(symbol)
+            contract_size = market_info['contractSize']
+            
+            # 计算精确的平仓数量
             contracts_amount = abs(target_position['contracts'])
-            contract_size = self.exchange.market(symbol)['contractSize']
+            
+            # 使用交易所的精度要求
+            contracts_amount = float(self.exchange.amount_to_precision(symbol, contracts_amount))
+            
+            # 检查最小交易量
+            min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
+            if contracts_amount < min_amount:
+                print(f"平仓数量 {contracts_amount} 小于最小交易量 {min_amount}，使用最小交易量")
+                contracts_amount = min_amount
+            
+            # 转换为币数量
             coins_amount = contracts_amount * contract_size
             
-            print(f"平仓 {symbol}: {close_side} {coins_amount}")
+            print(f"平仓 {symbol}: {close_side} {coins_amount} (合约数: {contracts_amount})")
+            print(f"原始持仓: {target_position['contracts']}, 当前价格: {target_position.get('markPrice', 'N/A')}")
 
-            # 执行平仓订单
-            order = self.place_order(symbol, close_side, coins_amount)
+            # 执行平仓订单 - 使用市价单确保完全平仓
+            order = self.place_order(symbol, close_side, coins_amount, order_type='market')
+            
+            # 验证平仓结果
+            if order:
+                print(f"平仓订单已提交: {order.get('id', 'N/A')}")
+                # 等待一小段时间后验证持仓是否已清零
+                time.sleep(0.2)
+                try:
+                    updated_positions = self.exchange.fetch_positions()
+                    remaining_position = None
+                    for pos in updated_positions:
+                        if pos['symbol'] == symbol and abs(pos['contracts']) > 0:
+                            remaining_position = pos
+                            break
+                    
+                    if remaining_position:
+                        print(f"⚠️ 警告: 平仓后仍有残留仓位 {symbol}: {remaining_position['contracts']}")
+                        # 可以在这里添加重试逻辑
+                    else:
+                        print(f"✅ 确认: {symbol} 已完全平仓")
+                except Exception as verify_e:
+                    print(f"验证平仓结果时出错: {verify_e}")
+            
             return order
             
         except Exception as e:
