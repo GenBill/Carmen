@@ -335,17 +335,3 @@ class OKXTrader:
         except Exception as e:
             print(f"平仓所有持仓失败: {e}")
             return []
-
-
-if __name__ == "__main__":
-
-    trader = OKXTrader()
-    trader.get_all_prices()
-
-    trader.get_account_info()
-    trader.get_positions()
-
-    trader.place_order('ETH/USDT:USDT', 'buy', 0.001, order_type='market')
-    trader.close_position('ETH/USDT:USDT')
-    # trader.close_all_positions()
-
