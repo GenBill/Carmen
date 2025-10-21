@@ -27,7 +27,9 @@ class TradingAgent:
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
-        self.deepseek = DeepSeekAPI(deepseek_token_path, self.system_prompt, "deepseek-chat")
+        self.deepseek = DeepSeekAPI(
+            deepseek_token_path, self.system_prompt, "deepseek-chat"
+        )
 
         # 设置日志
         # 转换为绝对路径
@@ -60,16 +62,16 @@ class TradingAgent:
         # 添加控制台处理器作为回退（带颜色）
         class _ColorFormatter(logging.Formatter):
             COLORS = {
-                'DEBUG': '\x1b[37m',      # 白
-                'INFO': '\x1b[36m',       # 青
-                'WARNING': '\x1b[33m',    # 黄
-                'ERROR': '\x1b[31m',      # 红
-                'CRITICAL': '\x1b[41m',   # 红底
+                "DEBUG": "\x1b[37m",  # 白
+                "INFO": "\x1b[36m",  # 青
+                "WARNING": "\x1b[33m",  # 黄
+                "ERROR": "\x1b[31m",  # 红
+                "CRITICAL": "\x1b[41m",  # 红底
             }
-            RESET = '\x1b[0m'
+            RESET = "\x1b[0m"
 
             def format(self, record):
-                color = self.COLORS.get(record.levelname, '')
+                color = self.COLORS.get(record.levelname, "")
                 message = super().format(record)
                 return f"{color}{message}{self.RESET}"
 
@@ -188,26 +190,32 @@ class TradingAgent:
                             )
                         continue
 
-                    # 解析数量 - 改进正则以处理更多变体（如 "Quantity = 0.1")
-                    if current_coin and re.search(r"quantity", line, re.IGNORECASE):
+                    # 解析仓位大小 - 改进正则以处理更多变体（如 "POSITION_SIZE: 10%")
+                    if current_coin and re.search(
+                        r"position_size", line, re.IGNORECASE
+                    ):
                         try:
-                            quantity_match = re.search(
-                                r"(?:quantity)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
+                            position_size_match = re.search(
+                                r"(?:position_size)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%?",
                                 line,
                                 re.IGNORECASE,
                             )
-                            if quantity_match:
-                                quantity = float(quantity_match.group(1))
-                                if quantity > 0:
-                                    decisions[current_coin]["quantity"] = quantity
+                            if position_size_match:
+                                position_size = float(position_size_match.group(1))
+                                if position_size > 0:
+                                    decisions[current_coin]["position_size"] = (
+                                        position_size
+                                    )
                                     self.logger.debug(
-                                        f"解析到 {current_coin} 数量: {quantity}"
+                                        f"解析到 {current_coin} 仓位大小: {position_size}%"
                                     )
                                 else:
-                                    self.logger.warning(f"数量超出合理范围: {quantity}")
+                                    self.logger.warning(
+                                        f"仓位大小超出合理范围: {position_size}"
+                                    )
                         except Exception as e:
                             self.logger.warning(
-                                f"解析数量失败: {original_line}, 错误: {e}"
+                                f"解析仓位大小失败: {original_line}, 错误: {e}"
                             )
                         continue
 
@@ -252,27 +260,6 @@ class TradingAgent:
                                 f"解析入场价失败: {original_line}, 错误: {e}"
                             )
                         continue
-
-                    # 解析止损点 - 已禁用自动止盈止损功能
-                    # if current_coin and re.search(r"stop_loss", line, re.IGNORECASE):
-                    #     try:
-                    #         sl_match = re.search(
-                    #             r"(?:stop_loss)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
-                    #             line,
-                    #             re.IGNORECASE,
-                    #         )
-                    #         if sl_match:
-                    #             stop_loss = float(sl_match.group(1))
-                    #             if stop_loss > 0:
-                    #                 decisions[current_coin]["stop_loss"] = stop_loss
-                    #                 self.logger.debug(
-                    #                     f"解析到 {current_coin} 止损点: {stop_loss}"
-                    #                 )
-                    #     except Exception as e:
-                    #         self.logger.warning(
-                    #             f"解析止损点失败: {original_line}, 错误: {e}"
-                    #         )
-                    #     continue
 
                     # 杠杆固定为10倍，不需要解析
                     # 所有交易都使用10倍杠杆
@@ -324,18 +311,20 @@ class TradingAgent:
                 and decision.get("confidence", 0.0) >= action_gate
             ):
                 coin_symbol = f"{coin}/USDT:USDT"
-                
+
                 # 在执行平仓前重新获取最新持仓信息
                 self.logger.info(f"准备平仓 {coin}，重新获取最新持仓信息...")
                 latest_positions = self.okx.get_positions()
-                
+
                 if coin not in latest_positions:
                     self.logger.warning(f"{coin} 在最新持仓中未找到，可能已经平仓")
                     continue
-                
+
                 latest_position = latest_positions[coin]
-                self.logger.info(f"{coin} 最新持仓: {latest_position.get('side', 'unknown')} {latest_position.get('size', 0)} @ {latest_position.get('entry_price', 0)}")
-                
+                self.logger.info(
+                    f"{coin} 最新持仓: {latest_position.get('side', 'unknown')} {latest_position.get('size', 0)} @ {latest_position.get('entry_price', 0)}"
+                )
+
                 order = self.okx.close_position(coin_symbol)
                 if order:
                     trade_record = {
@@ -352,9 +341,7 @@ class TradingAgent:
                     self.logger.warning(f"成功平仓 {coin} - 订单ID: {order['id']}")
 
                     # 更新total_margin_used（减去该仓的margin）
-                    closed_margin = (
-                        latest_position.get("position_value", 0) / 10
-                    )
+                    closed_margin = latest_position.get("position_value", 0) / 10
                     total_margin_used -= closed_margin
                     self.logger.info(
                         f"CLOSE {coin} 后，总margin used降至 {total_margin_used:.2f}"
@@ -367,8 +354,37 @@ class TradingAgent:
             try:
                 signal = decision.get("signal")
                 confidence = decision.get("confidence", 0.0)
-                quantity = decision.get("quantity", 0)
+                position_size = decision.get("position_size", 0)
+                entry_price = decision.get("entry_price", 0)
                 coin_symbol = f"{coin}/USDT:USDT"
+
+                # 处理entry_price逻辑
+                order_type = "limit"
+                if entry_price <= 0:
+                    # 如果AI没有提供entry_price或为0，使用市价单
+                    order_type = "market"
+                    current_price = self.okx.get_current_price(coin_symbol)
+                    if current_price and current_price > 0:
+                        entry_price = current_price
+                        self.logger.debug(
+                            f"AI未提供entry_price，使用当前价格: {entry_price}"
+                        )
+                    else:
+                        self.logger.error(f"无法获取 {coin} 当前价格，跳过交易")
+                        continue
+
+                # 计算quantity（从POSITION_SIZE和ENTRY_PRICE）
+                quantity = 0
+                if signal in ["BUY", "SELL"] and position_size > 0 and entry_price > 0:
+                    # QUANTITY = (POSITION_SIZE / 100) * TOTAL_EQUITY * LEVERAGE / ENTRY_PRICE
+                    total_equity = account_info["total_usdt"]
+                    leverage = 10
+                    quantity = (
+                        (position_size / 100) * total_equity * leverage / entry_price
+                    )
+                    self.logger.debug(
+                        f"计算 {coin} quantity: {position_size}% * {total_equity} * {leverage} / {entry_price} = {quantity}"
+                    )
 
                 # 验证（添加'CLOSE'支持，但CLOSE已处理）
                 if not signal or signal not in ["BUY", "SELL", "HOLD", "CLOSE"]:
@@ -444,12 +460,12 @@ class TradingAgent:
                     safety_buffer = 0.1  # 10% 手续费/维持保证金缓冲
                     max_alloc_ratio = 0.8  # 单次下单后总保证金不超过80%总资金
                     max_available_margin = max(
-                        0.0,
-                        account_info["free_usdt"] * (1 - safety_buffer)
+                        0.0, account_info["free_usdt"] * (1 - safety_buffer)
                     )
                     remaining_capacity = max(
                         0.0,
-                        account_info["total_usdt"] * max_alloc_ratio - total_margin_used
+                        account_info["total_usdt"] * max_alloc_ratio
+                        - total_margin_used,
                     )
                     margin_cap = min(max_available_margin, remaining_capacity)
                     if margin_cap <= 0:
@@ -469,14 +485,6 @@ class TradingAgent:
                     projected_used = total_margin_used + new_margin
 
                     # 执行开仓
-                    # BUY/SELL 使用限价单（由AI提供ENTRY_PRICE）；CLOSE使用市价单
-                    order_type = "limit"
-                    entry_price = decision.get("entry_price")
-                    if entry_price is None or entry_price <= 0:
-                        # 若AI未提供，使用市价单
-                        order_type = "market"
-                        entry_price = None
-
                     order = self.okx.place_order(
                         coin_symbol,
                         signal.lower(),
@@ -608,7 +616,9 @@ class TradingAgent:
                                 self.okx.exchange.cancel_order(oid, sym)
                                 cancelled += 1
                         except Exception as e:
-                            self.logger.error(f"取消挂单失败: {od.get('id')} {od.get('symbol')} - {e}")
+                            self.logger.error(
+                                f"取消挂单失败: {od.get('id')} {od.get('symbol')} - {e}"
+                            )
                     if cancelled > 0:
                         self.logger.warning(f"已取消未成交挂单 {cancelled} 个")
             except Exception as e:
@@ -677,7 +687,7 @@ class TradingAgent:
                 trades = self.run_trading_cycle()
 
                 # 每10次交易显示一次性能摘要
-                if (self.invocation_count+1) % 10 == 0:
+                if (self.invocation_count + 1) % 10 == 0:
                     self.show_performance_summary()
 
                 # 等待下次执行

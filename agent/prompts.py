@@ -8,13 +8,12 @@ def build_system_prompt():
 Trading Rules:
 
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
-- Use PERPETUAL FUTURES contracts (not spot trading)
-- Use leveraged trading with FIXED 10x leverage for ALL trades
-- Set invalidation conditions (e.g., price breaking below a key level)
-- For small accounts (<1000 USDT), prioritize low-risk trades and consider minimum order sizes.
+- Use 10x leverage PERPETUAL FUTURES contracts for ALL trades.
+- For small accounts (<1000 USDT), consider minimum order sizes.
 - Position management: You can hold MULTIPLE positions across different coins. For each coin, decide independently: BUY (open long), SELL (open short), HOLD (keep if exists), or CLOSE (close if exists).
+- When opening positions (BUY or SELL), specify the position size using a percentage of the account balance (e.g., 5% of total equity), rather than fixed coins or numerical amounts.
 - Always check current positions before making trading decisions. Consider the current PnL, leverage, and risk of existing positions.
-- Trading threshold: Only trades with confidence >= 75% will be executed. Lower confidence trades will be ignored for safety.
+- Trading threshold: Only trades with confidence >= GATE will be executed. Lower confidence trades will be ignored for safety.
 
 Technical Analysis Key Points:
 
@@ -66,7 +65,6 @@ Unless stated otherwise, intraday series are provided at 3‑minute intervals. 1
 {_format_market_data(market_data)}
 {_format_account_info(state_manager, account_info, positions)}
 
-
 CHAIN OF THOUGHT: 
 Please analyze the market data and provide your trading decisions. Consider:
 1. Current market conditions and technical indicators
@@ -76,25 +74,27 @@ Please analyze the market data and provide your trading decisions. Consider:
    - Consider whether to close existing positions or hold them
 3. Risk management and position sizing
 4. Market sentiment and funding rates
-5. Portfolio leverage and total exposure
-
-After your analysis, provide your trading decisions in the following format:
+After your analysis, provide your trading decisions in the following exact format. Output only the decisions under the header—nothing else.
 
 ▶TRADING_DECISIONS
-For each coin you want to trade, output:
-COIN
-SIGNAL (BUY/SELL/HOLD/CLOSE)
-CONFIDENCE%
-QUANTITY: coins_amount
-ENTRY_PRICE: price (for BUY/SELL only; orders will be LIMIT at this price)
+[For each coin: COIN_SYMBOL on a new line]
+SIGNAL (BUY / SELL / HOLD / CLOSE)
+CONFIDENCE: XX%  [Always include; e.g., CONFIDENCE: 85%]
+POSITION_SIZE: XX%  [For BUY/SELL only: percentage of total equity used as margin, e.g., POSITION_SIZE: 10%]
+ENTRY_PRICE: XXXXX  [For BUY/SELL only: exact price for LIMIT order, e.g., ENTRY_PRICE: 48888]
 
-Example: 
+- Omit POSITION_SIZE and ENTRY_PRICE for HOLD or CLOSE.
+- Only include coins with decisions (HOLD if no action but monitoring).
+- All trades use fixed 10x leverage—do not mention it.
+
+Example:
+Example:
 ```
 ▶TRADING_DECISIONS
 BTC
 BUY
 CONFIDENCE: 85%
-QUANTITY: 0.1
+POSITION_SIZE: 10%
 ENTRY_PRICE: 48888
 
 ETH
@@ -102,37 +102,23 @@ HOLD
 CONFIDENCE: 70%
 ```
 
-If HOLD or CLOSE, just output the signal and confidence.
-All trades automatically use 10x leverage - do not specify leverage.
+QUANTITY Calculation (for Python parsing):
+QUANTITY = (POSITION_SIZE / 100) * TOTAL_EQUITY * LEVERAGE / ENTRY_PRICE
+- POSITION_SIZE: Decimal percentage (e.g., 10 for 10%).
+- TOTAL_EQUITY: Current account equity in USDT.
+- LEVERAGE: Fixed at 10.
+- ENTRY_PRICE: Coin price in USDT.
 
-IMPORTANT: Your output will be parsed by Python and then executed through OKX Futures API:
-- BUY signals will call okx.place_order(symbol, "buy", QUANTITY, price=ENTRY_PRICE, order_type="limit", leverage=10)
-- SELL signals will call okx.place_order(symbol, "sell", QUANTITY, price=ENTRY_PRICE, order_type="limit", leverage=10)  
-- CLOSE signals will call okx.close_position(symbol)
-- Only trades with confidence >= GATE will be executed. If your confidence is below GATE, the trade will be ignored for safety reasons. Be honest about your confidence level.
+IMPORTANT: This output will be parsed by Python and executed via OKX Futures API in CROSS MARGIN mode:
+- BUY: okx.place_order(symbol="COIN-USDT-SWAP", side="buy", sz=QUANTITY, px=ENTRY_PRICE, ordType="limit", lever=10)
+- SELL: okx.place_order(symbol="COIN-USDT-SWAP", side="sell", sz=QUANTITY, px=ENTRY_PRICE, ordType="limit", lever=10)
+- CLOSE: okx.close_position(symbol="COIN-USDT-SWAP")
+- Only signals with CONFIDENCE >= 75% will execute. Output honestly but expect ignore for safety—do not force trades.
 
 RISK CONSTRAINTS (READ CAREFULLY):
-- Trading uses CROSS MARGIN with fixed 10x leverage. Fees and maintenance margin reduce effective buying power.
-- You MUST size QUANTITY so that initial margin for the new order <= 80% of available USDT after accounting for existing margin usage and a 10% fee/risk buffer.
-- Never suggest quantities that the available USDT cannot support under 10x leverage plus buffer.
-- Each symbol has EXCHANGE-IMPOSED MINIMUMS (amount precision and sometimes minimum notional). You MUST ensure:
-    QUANTITY >= coin_min_amount(symbol)
-  If rounding up to the minimum would violate the margin/buffer constraints, DO NOT PLACE THE TRADE (output HOLD instead).
-  Below are the minimum amounts for each coin:
-    BTC 0.01
-    ETH 0.001
-    SOL 0.01
-    BNB 1
-    DOGE 10
-    XRP 1
-- When position size and notional are very small, you MUST consider fee impact; modestly increase QUANTITY only if it still respects margin buffers and minimums.
-
-OKX Futures API Details:
-- Trading pairs: BTC/USDT:USDT, ETH/USDT:USDT, SOL/USDT:USDT, BNB/USDT:USDT, DOGE/USDT:USDT, XRP/USDT:USDT
-- Order types: market orders for immediate execution
-- Leverage: Fixed 10x for all positions
-- Margin mode: Cross margin (full account sharing)
-- Position management: Multiple positions allowed across different coins
+- When deciding POSITION_SIZE (%), ensure: POSITION_SIZE + CURRENT_TOTAL_POSITION_SIZE + 5% <= 80% of total equity (TOTAL_EQUITY).
+  - CURRENT_TOTAL_POSITION_SIZE: Sum of all existing positions' margin percentages.
+  - If violated, reduce POSITION_SIZE or output HOLD.
 
 """
     return prompt
@@ -145,7 +131,7 @@ def _format_market_data(market_data):
     for coin, data in market_data.items():
         prompt += f"\nALL {coin} DATA\n"
         prompt += f"current_price = {data['current_price']}\n"
-        
+
         prompt += f"\nIn addition, here is the latest {coin} open interest and funding rate for perps (the instrument you are trading):\n\n"
         prompt += f"Open Interest: Latest: {data['open_interest']}\n\n"
         prompt += f"Funding Rate: {data['funding_rate']}\n\n"
@@ -182,11 +168,15 @@ def _format_market_data(market_data):
 
         # 技术指标对比分析
         prompt += "TIMEFRAME COMPARISON ANALYSIS:\n\n"
-        prompt += f"3m vs 15m EMA20: {data['ema20_3m']:.3f} vs {data['ema20_15m']:.3f}\n\n"
+        prompt += (
+            f"3m vs 15m EMA20: {data['ema20_3m']:.3f} vs {data['ema20_15m']:.3f}\n\n"
+        )
         prompt += f"3m vs 15m MACD: {data['macd_3m']:.3f} vs {data['macd_15m']:.3f}\n\n"
-        prompt += f"3m vs 15m RSI(7): {data['rsi_7_3m']:.3f} vs {data['rsi_7_15m']:.3f}\n\n"
+        prompt += (
+            f"3m vs 15m RSI(7): {data['rsi_7_3m']:.3f} vs {data['rsi_7_15m']:.3f}\n\n"
+        )
         prompt += f"3m vs 15m RSI(14): {data['rsi_14_3m']:.3f} vs {data['rsi_14_15m']:.3f}\n\n"
-        
+
         prompt += f"3‑Period ATR (3m): {data['atr_3_3m']:.3f} vs 14‑Period ATR (3m): {data['atr_14_3m']:.3f}\n\n"
         prompt += f"3‑Period ATR (15m): {data['atr_3_15m']:.3f} vs 14‑Period ATR (15m): {data['atr_14_15m']:.3f}\n\n"
         prompt += f"Current Volume (3m): {data['volume_3m']:.3f} vs Current Volume (15m): {data['volume_15m']:.3f}\n\n"
