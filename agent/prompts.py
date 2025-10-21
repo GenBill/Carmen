@@ -88,7 +88,6 @@ ENTRY_PRICE: XXXXX  [For BUY/SELL only: exact price for LIMIT order, e.g., ENTRY
 - All trades use fixed 10x leverage—do not mention it.
 
 Example:
-Example:
 ```
 ▶TRADING_DECISIONS
 BTC
