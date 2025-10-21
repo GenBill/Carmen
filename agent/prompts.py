@@ -82,6 +82,8 @@ SIGNAL (BUY / SELL / HOLD / CLOSE)
 CONFIDENCE: XX%  [Always include; e.g., CONFIDENCE: 85%]
 POSITION_SIZE: XX%  [For BUY/SELL only: percentage of total equity used as margin, e.g., POSITION_SIZE: 10%]
 ENTRY_PRICE: XXXXX  [For BUY/SELL only: exact price for LIMIT order, e.g., ENTRY_PRICE: 48888]
+TAKE_PROFIT: XXXXX  [For BUY/SELL only: exact price for TAKE PROFIT, e.g., TAKE_PROFIT: 50000]
+STOP_LOSS: XXXXX  [For BUY/SELL only: exact price for STOP LOSS, e.g., STOP_LOSS: 45000]
 
 - Omit POSITION_SIZE and ENTRY_PRICE for HOLD or CLOSE.
 - Only include coins with decisions (HOLD if no action but monitoring).
@@ -95,6 +97,8 @@ BUY
 CONFIDENCE: 85%
 POSITION_SIZE: 10%
 ENTRY_PRICE: 48888
+TAKE_PROFIT: 50000
+STOP_LOSS: 45000
 
 ETH
 HOLD
@@ -112,6 +116,7 @@ IMPORTANT: This output will be parsed by Python and executed via OKX Futures API
 - BUY: okx.place_order(symbol="COIN-USDT-SWAP", side="buy", sz=QUANTITY, px=ENTRY_PRICE, ordType="limit", lever=10)
 - SELL: okx.place_order(symbol="COIN-USDT-SWAP", side="sell", sz=QUANTITY, px=ENTRY_PRICE, ordType="limit", lever=10)
 - CLOSE: okx.close_position(symbol="COIN-USDT-SWAP")
+- TAKE_PROFIT values (but no STOP_LOSS) will be monitored every 30 seconds and automatically trigger okx.close_position() when price targets are hit
 - Only signals with CONFIDENCE >= 75% will execute. Output honestly but expect ignore for safety—do not force trades.
 
 RISK CONSTRAINTS (READ CAREFULLY):

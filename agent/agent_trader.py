@@ -217,26 +217,26 @@ class TradingAgent:
                             )
                         continue
 
-                    # 解析止盈点 - 已禁用自动止盈止损功能
-                    # if current_coin and re.search(r"take_profit", line, re.IGNORECASE):
-                    #     try:
-                    #         tp_match = re.search(
-                    #             r"(?:take_profit)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
-                    #             line,
-                    #             re.IGNORECASE,
-                    #         )
-                    #         if tp_match:
-                    #             take_profit = float(tp_match.group(1))
-                    #             if take_profit > 0:
-                    #                 decisions[current_coin]["take_profit"] = take_profit
-                    #                 self.logger.debug(
-                    #                     f"解析到 {current_coin} 止盈点: {take_profit}"
-                    #                 )
-                    #     except Exception as e:
-                    #         self.logger.warning(
-                    #             f"解析止盈点失败: {original_line}, 错误: {e}"
-                    #         )
-                    #     continue
+                    # 解析止盈点 - 重新启用自动止盈功能
+                    if current_coin and re.search(r"take_profit", line, re.IGNORECASE):
+                        try:
+                            tp_match = re.search(
+                                r"(?:take_profit)?\s*[:=]?\s*(\d+(?:\.\d+)?)",
+                                line,
+                                re.IGNORECASE,
+                            )
+                            if tp_match:
+                                take_profit = float(tp_match.group(1))
+                                if take_profit > 0:
+                                    decisions[current_coin]["take_profit"] = take_profit
+                                    self.logger.debug(
+                                        f"解析到 {current_coin} 止盈点: {take_profit}"
+                                    )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"解析止盈点失败: {original_line}, 错误: {e}"
+                            )
+                        continue
 
                     # 解析入场价 ENTRY_PRICE - 处理 "ENTRY_PRICE: 50000" 格式
                     if current_coin and re.search(r"entry_price", line, re.IGNORECASE):
@@ -410,17 +410,16 @@ class TradingAgent:
 
                 if signal == "HOLD" and confidence >= action_gate:
                     if has_position:
-                        # 已禁用自动止盈止损功能，不再更新TP/SL
-                        # take_profit = decision.get("take_profit", 0.0)
-                        # stop_loss = decision.get("stop_loss", 0.0)
-                        # if take_profit > 0 or stop_loss > 0:
-                        #     position_data = current_positions[coin].copy()
-                        #     position_data["take_profit"] = take_profit or position_data.get("take_profit", 0.0)
-                        #     position_data["stop_loss"] = stop_loss or position_data.get("stop_loss", 0.0)
-                        #     self.positions_manager.update_position(coin, position_data)
-                        #     self.logger.info(
-                        #         f"HOLD {coin} 更新止盈止损: TP={take_profit}, SL={stop_loss}"
-                        #     )
+                        # 重新启用自动止盈功能，只更新止盈点
+                        take_profit = decision.get("take_profit", 0.0)
+                        if take_profit > 0:
+                            position_data = current_positions[coin].copy()
+                            position_data["take_profit"] = take_profit
+                            # 不更新止损点，让AI扛单
+                            self.positions_manager.update_position(coin, position_data)
+                            self.logger.info(
+                                f"HOLD {coin} 更新止盈点: TP={take_profit}"
+                            )
                         self.logger.info(f"持有 {coin}")
                         executed_trades.append(
                             {"coin": coin, "action": "hold", "confidence": confidence}
@@ -508,22 +507,21 @@ class TradingAgent:
                         executed_trades.append(trade_record)
                         self.state_manager.add_trade_record(trade_record)
 
-                        # 已禁用自动止盈止损功能，不再设置TP/SL
-                        # take_profit = decision.get("take_profit", 0.0)
-                        # stop_loss = decision.get("stop_loss", 0.0)
-                        # if take_profit > 0 or stop_loss > 0:
-                        #     # 获取当前仓位信息并添加止盈止损点
-                        #     current_positions = self.okx.get_positions()
-                        #     if coin in current_positions:
-                        #         position_data = current_positions[coin].copy()
-                        #         position_data["take_profit"] = take_profit
-                        #         position_data["stop_loss"] = stop_loss
-                        #         self.positions_manager.update_position(
-                        #             coin, position_data
-                        #         )
-                        #         self.logger.info(
-                        #             f"设置 {coin} 止盈止损: TP={take_profit}, SL={stop_loss}"
-                        #         )
+                        # 重新启用自动止盈功能，只设置止盈点
+                        take_profit = decision.get("take_profit", 0.0)
+                        if take_profit > 0:
+                            # 获取当前仓位信息并添加止盈点
+                            current_positions = self.okx.get_positions()
+                            if coin in current_positions:
+                                position_data = current_positions[coin].copy()
+                                position_data["take_profit"] = take_profit
+                                # 不设置止损点，让AI扛单
+                                self.positions_manager.update_position(
+                                    coin, position_data
+                                )
+                                self.logger.info(
+                                    f"设置 {coin} 止盈点: TP={take_profit}"
+                                )
 
                         self.logger.warning(
                             f"{signal} {coin} {quantity} (置信度: {confidence:.1%}) - 订单ID: {order['id']}"
