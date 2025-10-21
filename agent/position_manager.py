@@ -131,17 +131,33 @@ class PositionManager:
 
                 take_profit = pos_data.get("take_profit", 0.0)
                 stop_loss = pos_data.get("stop_loss", 0.0)
+                side = pos_data.get("side", "long")  # 获取仓位方向
 
-                if take_profit > 0 and current_price >= take_profit:
-                    self.logger.info(
-                        f"{coin} 触发止盈: {current_price} >= {take_profit}"
-                    )
-                    self.okx.close_position(f"{coin}/USDT:USDT")
-                    self.remove_position(coin)
-                elif stop_loss > 0 and current_price <= stop_loss:
-                    self.logger.info(f"{coin} 触发止损: {current_price} <= {stop_loss}")
-                    self.okx.close_position(f"{coin}/USDT:USDT")
-                    self.remove_position(coin)
+                # 根据仓位方向判断止盈止损触发条件
+                if side == "long":
+                    # 做多：价格上涨触发止盈，价格下跌触发止损
+                    if take_profit > 0 and current_price >= take_profit:
+                        self.logger.info(
+                            f"{coin} 触发止盈: {current_price} >= {take_profit} (做多)"
+                        )
+                        self.okx.close_position(f"{coin}/USDT:USDT")
+                        self.remove_position(coin)
+                    elif stop_loss > 0 and current_price <= stop_loss:
+                        self.logger.info(f"{coin} 触发止损: {current_price} <= {stop_loss} (做多)")
+                        self.okx.close_position(f"{coin}/USDT:USDT")
+                        self.remove_position(coin)
+                elif side == "short":
+                    # 做空：价格下跌触发止盈，价格上涨触发止损
+                    if take_profit > 0 and current_price <= take_profit:
+                        self.logger.info(
+                            f"{coin} 触发止盈: {current_price} <= {take_profit} (做空)"
+                        )
+                        self.okx.close_position(f"{coin}/USDT:USDT")
+                        self.remove_position(coin)
+                    elif stop_loss > 0 and current_price >= stop_loss:
+                        self.logger.info(f"{coin} 触发止损: {current_price} >= {stop_loss} (做空)")
+                        self.okx.close_position(f"{coin}/USDT:USDT")
+                        self.remove_position(coin)
 
             except Exception as e:
                 self.logger.error(f"检查 {coin} 止盈止损失败: {e}")

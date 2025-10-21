@@ -397,7 +397,9 @@ class OKXTrader:
                     coin = symbol.replace('/USDT:USDT', '').replace('/USDT', '')
                     
                     # 计算更多仓位信息
+                    # position_value 应该是名义价值（用于显示）
                     position_value = abs(pos['contracts']) * pos['markPrice']
+                    # margin_used 是实际占用的保证金（名义价值 / 杠杆）
                     margin_used = position_value / pos['leverage'] if pos['leverage'] > 0 else 0
                     
                     active_positions[coin] = {
@@ -454,36 +456,22 @@ class OKXTrader:
             else:
                 close_side = 'buy'
             
-            # 获取合约信息
-            market_info = self.exchange.market(symbol)
-            contract_size = market_info['contractSize']
+            # 直接使用持仓张数，避免浮点数转换风险
+            contracts_count = abs(target_position['contracts'])
             
-            # 计算精确的平仓数量
-            contracts_amount = abs(target_position['contracts'])
-            
-            # 使用交易所的精度要求
-            contracts_amount = float(self.exchange.amount_to_precision(symbol, contracts_amount))
-            
-            # 检查最小交易量
-            min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 0)
-            if contracts_amount < min_amount:
-                print(f"平仓数量 {contracts_amount} 小于最小交易量 {min_amount}，使用最小交易量")
-                contracts_amount = min_amount
-            
-            # 转换为币数量
-            coins_amount = contracts_amount * contract_size
-            
-            print(f"平仓 {symbol}: {close_side} {coins_amount} (合约数: {contracts_amount})")
-            print(f"原始持仓: {target_position['contracts']}, 当前价格: {target_position.get('markPrice', 'N/A')}")
+            print(f"平仓 {symbol}: {close_side} {contracts_count} 张")
+            print(f"当前价格: {target_position.get('markPrice', 'N/A')}, 入场价: {target_position.get('entryPrice', 'N/A')}")
 
-            # 执行平仓订单 - 使用市价单确保完全平仓
-            order = self.place_order(symbol, close_side, coins_amount, order_type='market')
+            # 直接调用 exchange API，使用 reduceOnly 避免开新仓，且无需单位转换
+            # 这样可以确保完全平仓，不会因为浮点数精度问题导致残留
+            params = {'reduceOnly': True}
+            order = self.exchange.create_market_order(symbol, close_side, contracts_count, params)
             
             # 验证平仓结果
-            if order:
-                print(f"平仓订单已提交: {order.get('id', 'N/A')}")
+            if order and 'id' in order:
+                print(f"✅ 平仓订单创建成功: {symbol} {close_side} {contracts_count} 张 - 订单ID: {order['id']}")
                 # 等待一小段时间后验证持仓是否已清零
-                time.sleep(0.2)
+                time.sleep(0.1)
                 try:
                     updated_positions = self.exchange.fetch_positions()
                     remaining_position = None

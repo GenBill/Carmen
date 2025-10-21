@@ -9,7 +9,7 @@ def main():
     # 初始化交易agent
     agent = TradingAgent()
 
-    # 开始交易（间隔3分钟）
+    # 开始交易（间隔2分钟）
     agent.start_trading(interval_minutes=2)
 
 
