@@ -89,6 +89,8 @@ class TradingAgent:
         if self.enable_prompt_log:
             self.prompt_logger = logging.getLogger("prompt_logger")
             self.prompt_logger.setLevel(getattr(logging, log_level.upper()))
+            # 阻止prompt日志传播到根日志器，避免输出到控制台
+            self.prompt_logger.propagate = False
 
             # 创建专门的prompt日志旋转处理器
             prompt_handler = RotatingFileHandler(
@@ -297,7 +299,7 @@ class TradingAgent:
 
         # 全局总margin used（现有）
         total_margin_used = sum(
-            pos.get("position_value", 0) / pos.get("leverage", 10)
+            pos.get("margin_used", 0)
             for pos in current_positions.values()
         )
 
@@ -340,11 +342,14 @@ class TradingAgent:
                     self.logger.warning(f"成功平仓 {coin} - 订单ID: {order['id']}")
 
                     # 更新total_margin_used（减去该仓的margin）
-                    closed_margin = latest_position.get("position_value", 0) / 10
+                    closed_margin = latest_position.get("margin_used", 0)
                     total_margin_used -= closed_margin
                     self.logger.info(
                         f"CLOSE {coin} 后，总margin used降至 {total_margin_used:.2f}"
                     )
+                    
+                    # 重新获取账户信息（平仓后used_usdt会变化）
+                    account_info = self.okx.get_account_info()
                 else:
                     self.logger.error(f"平仓 {coin} 失败")
 
@@ -382,7 +387,7 @@ class TradingAgent:
                     quantity = (
                         (position_size / 100) * total_equity * leverage / entry_price
                     )
-                    self.logger.info(
+                    self.logger.debug(
                         f"计算 {coin} quantity: {position_size}% * {total_equity} * {leverage} / {entry_price} = {quantity}"
                     )
 
@@ -458,32 +463,16 @@ class TradingAgent:
                     if not current_price:
                         continue
 
-                    # 资金与保证金检查（禁用自动缩量，超限直接跳过）
-                    safety_buffer = 0.1  # 10% 手续费/维持保证金缓冲
-                    max_alloc_ratio = 0.8  # 单次下单后总保证金不超过80%总资金
-                    max_available_margin = max(
-                        0.0, account_info["free_usdt"] * (1 - safety_buffer)
-                    )
-                    remaining_capacity = max(
-                        0.0,
-                        account_info["total_usdt"] * max_alloc_ratio
-                        - total_margin_used,
-                    )
-                    margin_cap = min(max_available_margin, remaining_capacity)
-                    if margin_cap <= 0:
-                        self.logger.warning(f"{coin} 无可用保证金空间，跳过")
+                    # 简单的仓位占比检查：当前仓位占比 + 新仓位占比 < 90%
+                    current_position_ratio = (account_info["used_usdt"] / account_info["total_usdt"]) * 100
+                    total_ratio = current_position_ratio + position_size
+                    
+                    if total_ratio > 90:
+                        self.logger.warning(f"{coin} 仓位占比超限: 当前{current_position_ratio:.1f}% + 新增{position_size}% = {total_ratio:.1f}% > 90%，跳过")
                         continue
 
-                    # 10x 杠杆对应初始保证金 = 名义价值 / 10
-                    desired_margin = (quantity * current_price) / 10
-                    if desired_margin > margin_cap:
-                        self.logger.warning(
-                            f"{coin} 所需保证金 {desired_margin:.4f} 超过上限 {margin_cap:.4f}，跳过下单"
-                        )
-                        continue
-
-                    # 计算用于风控日志
-                    new_margin = desired_margin
+                    # 计算新仓位的保证金（用于日志记录）
+                    new_margin = (quantity * current_price) / 10
                     projected_used = total_margin_used + new_margin
 
                     # 执行开仓
