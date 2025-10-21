@@ -7,11 +7,116 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import os
+import json
+import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agent.deepseek import DeepSeekAPI
+
+# 缓存配置
+CACHE_DIR = os.path.join(os.path.dirname(__file__), 'analysis_cache')
+CACHE_EXPIRE_HOURS = 24  # 缓存过期时间（小时）
+
+def ensure_cache_dir():
+    """确保缓存目录存在"""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+def get_cache_file_path(symbol: str) -> str:
+    """获取缓存文件路径"""
+    return os.path.join(CACHE_DIR, f"{symbol}_analysis.json")
+
+def calculate_data_hash(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.DataFrame) -> str:
+    """计算数据哈希值，用于检测数据是否变化"""
+    # 使用最新的价格和指标数据计算哈希
+    latest_daily = {
+        'price': float(daily_data['Close'].iloc[-1].item()) if not daily_data.empty else 0,
+        'volume': int(daily_data['Volume'].iloc[-1].item()) if not daily_data.empty else 0,
+    }
+    
+    latest_hourly = {}
+    if hourly_data is not None and not hourly_data.empty:
+        latest_hourly = {
+            'price': float(hourly_data['Close'].iloc[-1].item()),
+            'date': hourly_data.index[-1].strftime('%Y-%m-%d %H:%M')
+        }
+    
+    data_str = f"{symbol}_{json.dumps(latest_daily, sort_keys=True)}_{json.dumps(latest_hourly, sort_keys=True)}"
+    return hashlib.md5(data_str.encode()).hexdigest()
+
+def load_analysis_cache(symbol: str) -> Optional[Dict]:
+    """加载分析缓存"""
+    try:
+        cache_file = get_cache_file_path(symbol)
+        if not os.path.exists(cache_file):
+            return None
+        
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+        
+        # 检查缓存是否过期
+        cache_time = datetime.fromisoformat(cache_data['timestamp'])
+        if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
+            print(f"📅 {symbol} 分析缓存已过期")
+            return None
+        
+        print(f"✅ {symbol} 命中分析缓存 (缓存时间: {cache_time.strftime('%Y-%m-%d %H:%M')})")
+        return cache_data
+    
+    except Exception as e:
+        print(f"⚠️ 加载 {symbol} 分析缓存失败: {e}")
+        return None
+
+def save_analysis_cache(symbol: str, data_hash: str, analysis_result: str):
+    """保存分析缓存"""
+    try:
+        ensure_cache_dir()
+        cache_data = {
+            'symbol': symbol,
+            'data_hash': data_hash,
+            'analysis': analysis_result,
+            'timestamp': datetime.now().isoformat(),
+            'cache_expire_hours': CACHE_EXPIRE_HOURS
+        }
+        
+        cache_file = get_cache_file_path(symbol)
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"💾 {symbol} 分析结果已缓存")
+    
+    except Exception as e:
+        print(f"⚠️ 保存 {symbol} 分析缓存失败: {e}")
+
+def clean_expired_cache():
+    """清理过期的缓存文件"""
+    try:
+        ensure_cache_dir()
+        current_time = datetime.now()
+        cleaned_count = 0
+        
+        for filename in os.listdir(CACHE_DIR):
+            if filename.endswith('_analysis.json'):
+                file_path = os.path.join(CACHE_DIR, filename)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    
+                    cache_time = datetime.fromisoformat(cache_data['timestamp'])
+                    if current_time - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
+                        os.remove(file_path)
+                        cleaned_count += 1
+                        print(f"🗑️ 清理过期缓存: {filename}")
+                
+                except Exception as e:
+                    print(f"⚠️ 清理缓存文件失败 {filename}: {e}")
+        
+        if cleaned_count > 0:
+            print(f"✅ 已清理 {cleaned_count} 个过期缓存文件")
+    
+    except Exception as e:
+        print(f"⚠️ 清理缓存目录失败: {e}")
 
 def calculate_technical_indicators(data: pd.DataFrame) -> Dict:
     """
@@ -283,6 +388,15 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
     
     print(f"✅ 成功获取 {symbol} 数据: 日线{len(daily_data)}条, 小时线{len(hourly_data) if hourly_data is not None else 0}条")
     
+    # 2. 计算数据哈希值
+    data_hash = calculate_data_hash(symbol, daily_data, hourly_data)
+    
+    # 3. 检查缓存
+    cache_data = load_analysis_cache(symbol)
+    if cache_data and cache_data.get('data_hash') == data_hash:
+        print(f"🚀 {symbol} 使用缓存结果，跳过AI分析")
+        return cache_data['analysis']
+    
     # 2. 计算技术指标
     print("📊 计算技术指标...")
     daily_indicators = calculate_technical_indicators(daily_data)
@@ -327,28 +441,28 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
    - 风险等级评估
 
 3. **买卖点建议**：
-   - 具体买入价格区间
-   - 具体卖出价格区间
+   - 具体买入价格区间和时间
+   - 具体卖出价格区间和时间
    - 止损位建议
    - 止盈位建议
+   - 给出短线胜率的预估
 
-4. **时间因素考虑**：
-   - 当前时间对美股交易的影响
-   - 周几对市场情绪和流动性的影响
-   - 是否接近周末或重要时间节点的建议
-
-5. **风险提示**：
+4. **风险提示**：
    - 主要风险因素
    - 注意事项
 
 请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性，并充分考虑当前时间因素对美股交易的影响。
+接口允许的话，你也可以适当检索一些新闻、政策、事件并分析其对美股交易的影响。
 """
     
     # 5. 调用DeepSeek API
     print(f"🤖 调用DeepSeek AI进行分析...")
-    ai_response = call_deepseek_api(prompt)
+    ai_checkpoint = call_deepseek_api(prompt)
     
-    return ai_response
+    # 6. 保存缓存
+    save_analysis_cache(symbol, data_hash, ai_checkpoint)
+    
+    return ai_checkpoint
 
 
 def main(symbol):
