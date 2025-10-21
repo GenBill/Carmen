@@ -303,8 +303,9 @@ class TradingAgent:
 
         # 先处理所有CLOSE以降低风险
         for coin, decision in decisions.items():
+            signal = decision.get("signal")
             if (
-                decision.get("signal") == "CLOSE"
+                signal in ["CLOSE", "CLOSE&SELL", "CLOSE&BUY"]
                 and coin in current_positions
                 and decision.get("confidence", 0.0) >= action_gate
             ):
@@ -385,17 +386,17 @@ class TradingAgent:
                         f"计算 {coin} quantity: {position_size}% * {total_equity} * {leverage} / {entry_price} = {quantity}"
                     )
 
-                # 验证（添加'CLOSE'支持，但CLOSE已处理）
-                if not signal or signal not in ["BUY", "SELL", "HOLD", "CLOSE"]:
+                # 验证（添加'CLOSE&SELL'和'CLOSE&BUY'支持）
+                if not signal or signal not in ["BUY", "SELL", "HOLD", "CLOSE", "CLOSE&SELL", "CLOSE&BUY"]:
                     self.logger.error(f"无效的交易信号: {signal}")
                     continue
 
-                if signal in ["BUY", "SELL"] and (quantity <= 0):
+                if signal in ["BUY", "SELL", "CLOSE&SELL", "CLOSE&BUY"] and (quantity <= 0):
                     self.logger.info(f"跳过 {signal} {coin}: 无效参数")
 
                     continue
                 
-                if signal in ["BUY", "SELL"] and (confidence < open_gate):
+                if signal in ["BUY", "SELL", "CLOSE&SELL", "CLOSE&BUY"] and (confidence < open_gate):
                     self.logger.info(f"跳过 {signal} {coin}: 置信度不足")
                     continue
 
@@ -426,8 +427,8 @@ class TradingAgent:
                         )
                     continue
 
-                if signal in ["BUY", "SELL"]:
-                    new_side = "long" if signal == "BUY" else "short"
+                if signal in ["BUY", "CLOSE&BUY", "SELL", "CLOSE&SELL"]:
+                    new_side = "long" if signal in ["BUY", "CLOSE&BUY"] else "short"
                     if has_position and position_side != new_side:
                         self.logger.warning(
                             f"{coin} 方向冲突 ({position_side} vs {new_side})，执行 CLOSE 以最小化风险"
