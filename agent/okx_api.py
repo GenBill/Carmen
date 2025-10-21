@@ -331,13 +331,14 @@ class OKXTrader:
             print(f"下单失败 {symbol} {side} {coins_amount}: {e}")
             return None
     
-    def get_positions(self):
+    def get_positions(self, verbose=True):
         """获取当前持仓"""
         try:
             positions = self.exchange.fetch_positions()
             active_positions = {}
             
-            print(f"获取到 {len(positions)} 个合约仓位信息")
+            if verbose:
+                print(f"获取到 {len(positions)} 个合约仓位信息")
             
             for pos in positions:
                 # 只处理有持仓的合约
@@ -365,15 +366,19 @@ class OKXTrader:
                         'timestamp': pos.get('timestamp', 0)
                     }
                     
-                    print(f"持仓: {coin} - {pos['side']} {abs(pos['contracts'])} @ {pos['entryPrice']} "
-                          f"(当前: {pos['markPrice']}, PnL: {pos['unrealizedPnl']:.2f})")
+                    if verbose:
+                        print(f"持仓: {coin} - {pos['side']} {abs(pos['contracts'])} @ {pos['entryPrice']} "
+                            f"(当前: {pos['markPrice']}, PnL: {pos['unrealizedPnl']:.2f})")
             
             if not active_positions:
-                print("当前没有活跃持仓")
+                if verbose:
+                    print("当前没有活跃持仓")
             
             return active_positions
+        
         except Exception as e:
-            print(f"获取持仓失败: {e}")
+            if verbose:
+                print(f"获取持仓失败: {e}")
             return {}
     
     def close_position(self, symbol):

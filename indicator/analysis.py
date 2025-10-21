@@ -217,7 +217,10 @@ def call_deepseek_api(prompt: str) -> str:
         str: API响应内容
     """
     deepseek = DeepSeekAPI(
-        system_prompt = "你是一位专业的股票技术分析师.", 
+        system_prompt = """你是一位专业的股票技术分析师。
+        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。用户一般会在信号触发后第2天买入，第2-4天卖出。
+        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入、卖出、止损、止盈的价格区间和时间。
+        """, 
         model_type = "deepseek-reasoner"
     )
     return deepseek(prompt)
@@ -445,7 +448,7 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
    - 具体卖出价格区间和时间
    - 止损位建议
    - 止盈位建议
-   - 给出短线胜率的预估
+   - 给出预估的短线胜率
 
 4. **风险提示**：
    - 主要风险因素

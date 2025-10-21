@@ -170,7 +170,7 @@ class TradingAgent:
                         continue
 
                     # 解析置信度 - 改进正则以处理更多变体（如 "Confidence: 85 %")
-                    if current_coin and "%" in line:
+                    if current_coin and "%" in line and re.search(r"confidence", line, re.IGNORECASE):
                         try:
                             confidence_match = re.search(
                                 r"(?:confidence)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%",
@@ -191,12 +191,10 @@ class TradingAgent:
                         continue
 
                     # 解析仓位大小 - 改进正则以处理更多变体（如 "POSITION_SIZE: 10%")
-                    if current_coin and re.search(
-                        r"position_size", line, re.IGNORECASE
-                    ):
+                    if current_coin and "%" in line and re.search(r"position_size", line, re.IGNORECASE):
                         try:
                             position_size_match = re.search(
-                                r"(?:position_size)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%?",
+                                r"(?:position_size)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%",
                                 line,
                                 re.IGNORECASE,
                             )
@@ -271,7 +269,7 @@ class TradingAgent:
             self.logger.error(f"AI响应: {response}")
             return {}
 
-    def execute_trading_decisions(self, decisions, open_gate=0.8, action_gate=0.7):
+    def execute_trading_decisions(self, decisions, open_gate=0.75, action_gate=0.75):
         """执行交易决策"""
         executed_trades = []
 
@@ -314,7 +312,7 @@ class TradingAgent:
 
                 # 在执行平仓前重新获取最新持仓信息
                 self.logger.info(f"准备平仓 {coin}，重新获取最新持仓信息...")
-                latest_positions = self.okx.get_positions()
+                latest_positions = self.okx.get_positions(verbose=False)
 
                 if coin not in latest_positions:
                     self.logger.warning(f"{coin} 在最新持仓中未找到，可能已经平仓")
@@ -375,14 +373,15 @@ class TradingAgent:
 
                 # 计算quantity（从POSITION_SIZE和ENTRY_PRICE）
                 quantity = 0
+                leverage = 10
+                total_equity = account_info["total_usdt"]
+                
                 if signal in ["BUY", "SELL"] and position_size > 0 and entry_price > 0:
                     # QUANTITY = (POSITION_SIZE / 100) * TOTAL_EQUITY * LEVERAGE / ENTRY_PRICE
-                    total_equity = account_info["total_usdt"]
-                    leverage = 10
                     quantity = (
                         (position_size / 100) * total_equity * leverage / entry_price
                     )
-                    self.logger.debug(
+                    self.logger.info(
                         f"计算 {coin} quantity: {position_size}% * {total_equity} * {leverage} / {entry_price} = {quantity}"
                     )
 
@@ -391,10 +390,13 @@ class TradingAgent:
                     self.logger.error(f"无效的交易信号: {signal}")
                     continue
 
-                if signal in ["BUY", "SELL"] and (
-                    quantity <= 0 or confidence < open_gate
-                ):
-                    self.logger.info(f"跳过 {signal} {coin}: 无效参数或置信度不足")
+                if signal in ["BUY", "SELL"] and (quantity <= 0):
+                    self.logger.info(f"跳过 {signal} {coin}: 无效参数")
+
+                    continue
+                
+                if signal in ["BUY", "SELL"] and (confidence < open_gate):
+                    self.logger.info(f"跳过 {signal} {coin}: 置信度不足")
                     continue
 
                 # per-coin处理
