@@ -2,7 +2,7 @@
 AI股票分析模块 - 使用DeepSeek进行股票技术分析
 基于agent/log.txt中的指标分析模式，提供短线分析、建仓建议和买卖点
 """
-
+import pytz
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -294,22 +294,15 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
     analysis_data = format_analysis_data(symbol, daily_data, hourly_data, daily_indicators, hourly_indicators)
     print("✅ 数据格式化完成")
     
-    # 4. 获取当前时间信息
+    # 4. 获取当前美股时间信息
     now_utc = datetime.utcnow()
-    # 转换为美东时间（美股交易时间）
-    from datetime import timezone, timedelta
-    et_tz = timezone(timedelta(hours=-5))  # 美东标准时间 (EST)
-    now_et = now_utc.astimezone(et_tz)
-    
-    # 格式化时间信息
-    weekday_names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-    weekday_cn = weekday_names[now_et.weekday()]
+    # 转换为美东时间（美股交易时间）- 正确处理夏令时
+    et_tz = pytz.timezone('US/Eastern')
+    now_et = now_utc.replace(tzinfo=pytz.UTC).astimezone(et_tz)
     
     time_info = f"""
-=== 当前市场时间信息 ===
-UTC时间: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC
-美东时间: {now_et.strftime('%Y-%m-%d %H:%M:%S')} ET
-当前时间: {weekday_cn} ({now_et.strftime('%A')})
+=== 当前美股交易时间 ===
+{now_et.strftime('%Y-%m-%d %H:%M:%S')} {now_et.tzname()} {now_et.strftime('%A')}
 """
 
     # 5. 构建AI分析提示词
