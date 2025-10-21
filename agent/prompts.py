@@ -78,14 +78,16 @@ After your analysis, provide your trading decisions in the following exact forma
 
 ▶TRADING_DECISIONS
 [For each coin: COIN_SYMBOL on a new line]
-SIGNAL (BUY / SELL / HOLD / CLOSE)
+SIGNAL (BUY / SELL / HOLD / CLOSE / CLOSE&SELL / CLOSE&BUY)
 CONFIDENCE: XX%  [Always include; e.g., CONFIDENCE: 85%]
-POSITION_SIZE: XX%  [For BUY/SELL only: percentage of total equity used as margin, e.g., POSITION_SIZE: 10%]
-ENTRY_PRICE: XXXXX  [For BUY/SELL only: exact price for LIMIT order, e.g., ENTRY_PRICE: 48888]
-TAKE_PROFIT: XXXXX  [For BUY/SELL only: exact price for TAKE PROFIT, e.g., TAKE_PROFIT: 50000]
-STOP_LOSS: XXXXX  [For BUY/SELL only: exact price for STOP LOSS, e.g., STOP_LOSS: 45000]
+POSITION_SIZE: XX%  [For BUY/SELL/CLOSE&SELL/CLOSE&BUY only: percentage of total equity used as margin, e.g., POSITION_SIZE: 10%]
+ENTRY_PRICE: XXXXX  [For BUY/SELL/CLOSE&SELL/CLOSE&BUY only: exact price for LIMIT order, e.g., ENTRY_PRICE: 48888]
+TAKE_PROFIT: XXXXX  [For BUY/SELL/CLOSE&SELL/CLOSE&BUY only: exact price for TAKE PROFIT, e.g., TAKE_PROFIT: 50000]
+STOP_LOSS: XXXXX  [For BUY/SELL/CLOSE&SELL/CLOSE&BUY only: exact price for STOP LOSS, e.g., STOP_LOSS: 45000]
 
 - Omit POSITION_SIZE and ENTRY_PRICE for HOLD or CLOSE.
+- CLOSE&SELL: Close current long position and open new short position immediately
+- CLOSE&BUY: Close current short position and open new long position immediately
 - Only include coins with decisions (HOLD if no action but monitoring).
 - All trades use fixed 10x leverage—do not mention it.
 
@@ -93,12 +95,12 @@ Example:
 ```
 ▶TRADING_DECISIONS
 BTC
-BUY
+CLOSE&SELL
 CONFIDENCE: 85%
 POSITION_SIZE: 10%
-ENTRY_PRICE: 48888
-TAKE_PROFIT: 50000
-STOP_LOSS: 45000
+ENTRY_PRICE: 47500
+TAKE_PROFIT: 45000
+STOP_LOSS: 50000
 
 ETH
 HOLD
@@ -169,6 +171,36 @@ def _format_market_data(market_data):
         prompt += f"MACD indicators (15m): {data['macd_series_15m']}\n\n"
         prompt += f"RSI indicators (7‑Period, 15m): {data['rsi_series_15m']}\n\n"
         prompt += f"RSI indicators (14‑Period, 15m): {data['rsi_14_series_15m']}\n\n"
+
+        # 6小时数据
+        prompt += f"\n6-HOUR TIMEFRAME DATA:\n"
+        prompt += f"current_ema20_6h = {data['ema20_6h']:.3f}, "
+        prompt += f"current_macd_6h = {data['macd_6h']:.3f}, "
+        prompt += f"current_rsi_7_6h = {data['rsi_7_6h']:.3f}, "
+        prompt += f"current_rsi_14_6h = {data['rsi_14_6h']:.3f}\n"
+
+        # 6小时序列数据
+        prompt += "6-HOUR SERIES (oldest → latest):\n\n"
+        prompt += f"Mid prices (6h): {data['price_series_6h']}\n\n"
+        prompt += f"EMA indicators (20‑period, 6h): {data['ema_series_6h']}\n\n"
+        prompt += f"MACD indicators (6h): {data['macd_series_6h']}\n\n"
+        prompt += f"RSI indicators (7‑Period, 6h): {data['rsi_series_6h']}\n\n"
+        prompt += f"RSI indicators (14‑Period, 6h): {data['rsi_14_series_6h']}\n\n"
+
+        # 周线数据
+        prompt += f"\nWEEKLY TIMEFRAME DATA:\n"
+        prompt += f"current_ema20_wk = {data['ema20_wk']:.3f}, "
+        prompt += f"current_macd_wk = {data['macd_wk']:.3f}, "
+        prompt += f"current_rsi_7_wk = {data['rsi_7_wk']:.3f}, "
+        prompt += f"current_rsi_14_wk = {data['rsi_14_wk']:.3f}\n"
+
+        # 周线序列数据
+        prompt += "WEEKLY SERIES (oldest → latest):\n\n"
+        prompt += f"Mid prices (wk): {data['price_series_wk']}\n\n"
+        prompt += f"EMA indicators (20‑period, wk): {data['ema_series_wk']}\n\n"
+        prompt += f"MACD indicators (wk): {data['macd_series_wk']}\n\n"
+        prompt += f"RSI indicators (7‑Period, wk): {data['rsi_series_wk']}\n\n"
+        prompt += f"RSI indicators (14‑Period, wk): {data['rsi_14_series_wk']}\n\n"
 
         # 技术指标对比分析
         prompt += "TIMEFRAME COMPARISON ANALYSIS:\n\n"

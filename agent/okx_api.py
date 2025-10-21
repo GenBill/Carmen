@@ -223,6 +223,16 @@ class OKXTrader:
             if df_15m is None:
                 continue
             
+            # 获取6小时K线数据
+            df_6h = self.get_ohlcv_data(symbol, timeframe='6h', limit=100)
+            if df_6h is None:
+                continue
+            
+            # 获取周K线数据
+            df_wk = self.get_ohlcv_data(symbol, timeframe='1w', limit=100)
+            if df_wk is None:
+                continue
+
             # 计算3分钟指标
             df_3m = self.calculate_indicators(df_3m)
             if df_3m.empty:
@@ -233,10 +243,20 @@ class OKXTrader:
             if df_15m.empty:
                 continue
             
+            # 计算6小时指标
+            df_6h = self.calculate_indicators(df_6h)
+            if df_6h.empty:
+                continue
+            df_wk = self.calculate_indicators(df_wk)
+            if df_wk.empty:
+                continue
+
             # 获取最新数据
             latest_3m = df_3m.iloc[-1]
             latest_15m = df_15m.iloc[-1]
-            
+            latest_6h = df_6h.iloc[-1]
+            latest_wk = df_wk.iloc[-1]
+
             # 获取资金费率和持仓量
             try:
                 funding_rate = self.exchange.fetch_funding_rate(symbol)
@@ -260,6 +280,7 @@ class OKXTrader:
                 'macd_series_3m': df_3m['macd'].tail(10).tolist(),
                 'rsi_series_3m': df_3m['rsi_7'].tail(10).tolist(),
                 'rsi_14_series_3m': df_3m['rsi_14'].tail(10).tolist(),
+                
                 # 15分钟数据
                 'ema20_15m': latest_15m['ema20'],
                 'macd_15m': latest_15m['macd'],
@@ -273,6 +294,35 @@ class OKXTrader:
                 'macd_series_15m': df_15m['macd'].tail(10).tolist(),
                 'rsi_series_15m': df_15m['rsi_7'].tail(10).tolist(),
                 'rsi_14_series_15m': df_15m['rsi_14'].tail(10).tolist(),
+                
+                # 6小时数据
+                'ema20_6h': latest_6h['ema20'],
+                'macd_6h': latest_6h['macd'],
+                'rsi_7_6h': latest_6h['rsi_7'],
+                'rsi_14_6h': latest_6h['rsi_14'],
+                'atr_14_6h': latest_6h['atr_14'],
+                'atr_3_6h': latest_6h['atr_3'],
+                'volume_6h': latest_6h['volume'],
+                'price_series_6h': df_6h['close'].tail(20).tolist(),
+                'ema_series_6h': df_6h['ema20'].tail(20).tolist(),
+                'macd_series_6h': df_6h['macd'].tail(20).tolist(),
+                'rsi_series_6h': df_6h['rsi_7'].tail(20).tolist(),
+                'rsi_14_series_6h': df_6h['rsi_14'].tail(20).tolist(),
+                
+                # 周线数据
+                'ema20_wk': latest_wk['ema20'],
+                'macd_wk': latest_wk['macd'],
+                'rsi_7_wk': latest_wk['rsi_7'],
+                'rsi_14_wk': latest_wk['rsi_14'],
+                'atr_14_wk': latest_wk['atr_14'],
+                'atr_3_wk': latest_wk['atr_3'],
+                'volume_wk': latest_wk['volume'],
+                'price_series_wk': df_wk['close'].tail(20).tolist(),
+                'ema_series_wk': df_wk['ema20'].tail(20).tolist(),
+                'macd_series_wk': df_wk['macd'].tail(20).tolist(),
+                'rsi_series_wk': df_wk['rsi_7'].tail(20).tolist(),
+                'rsi_14_series_wk': df_wk['rsi_14'].tail(20).tolist(),
+                
                 # 市场数据
                 'funding_rate': funding_rate.get('fundingRate', 0),
                 'open_interest': open_interest.get('openInterestAmount', 0),
