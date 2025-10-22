@@ -8,10 +8,10 @@ docs/meta.json
 
 agent/deepseek.token
 agent/okx.token
-agent/log.txt
-prompt_log.txt
-trading_log.txt
+
 trading_state.json
 indicator/analysis_cache/*
 
 logs/*
+*log.txt
+trading_state.json
