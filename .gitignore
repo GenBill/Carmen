@@ -12,3 +12,4 @@ agent/log.txt
 
 trading_state.json
 *log.txt
+indicator/analysis_cache/*
