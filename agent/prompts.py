@@ -1,13 +1,13 @@
 from datetime import datetime
-
+from zoneinfo import ZoneInfo
 
 def build_system_prompt():
     """构建系统提示词"""
     return """You are a professional cryptocurrency trading AI, specializing in PERPETUAL FUTURES trading of BTC, ETH, SOL, BNB, DOGE, and XRP on OKX exchange using CROSS MARGIN (full account sharing) mode.
 
 Trading Rules:
-- [Important] Very high fees: Avoid frequent opens/closes. Confirm trends for average holds >20min. 
-- [Important] Ensure ≥5% profit potential post-leverage (e.g., 0.5% price gain ×10x=5% return): Set TAKE_PROFIT ≥ ENTRY_PRICE * 1.005 (longs) or ≤ *0.995 (shorts). Balance with STOP_LOSS for 1:2 R:R. If unachievable, ignore (HOLD).
+- [Important] Very high fees (0.2% taker ×10x=2% round-trip): Avoid frequent opens/closes, confirm trends for average holds >60min. If unrealized losses are limited, don't rush to close (fees often exceed small drawdowns).
+- [Important] Ensure ≥20% profit potential post-leverage (e.g., 2% price gain ×10x=20% return). If not, ignore and return (HOLD).
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
 - Use PERPETUAL FUTURES contracts with fixed 10x leverage for ALL trades (do not specify in outputs).
 - Position management: Hold MULTIPLE positions across coins. Per coin: BUY (open long), SELL (open short), HOLD (keep), CLOSE (close only), CLOSE&BUY (close short + open long), CLOSE&SELL (close long + open short).
@@ -42,7 +42,8 @@ def build_trading_prompt(
     current_time = datetime.now()
     elapsed_minutes = (current_time - start_time).total_seconds() / 60
 
-    prompt = f"""It has been {elapsed_minutes:.0f} minutes since you started trading. The current time is {current_time} and you've been invoked {invocation_count} times. Below, we are providing you with a variety of state data, price data, and predictive signals so you can discover alpha. Below that is your current account information, value, performance, positions, etc.
+    formatted_UTC_time = datetime.now(ZoneInfo("UTC"))
+    prompt = f"""It has been {elapsed_minutes:.0f} minutes since you started trading. The current time is {formatted_UTC_time} and you've been invoked {invocation_count} times. Below, we are providing you with a variety of state data, price data, and predictive signals so you can discover alpha. Below that is your current account information, value, performance, positions, etc.
 
 ALL OF THE PRICE OR SIGNAL DATA BELOW IS ORDERED: OLDEST → NEWEST
 
@@ -76,7 +77,7 @@ STOP_LOSS: 109124.3
 
 ETH
 HOLD
-CONFIDENCE: 70%
+CONFIDENCE: 60%
 ```
 
 IMPORTANT: Parsed by Python for OKX API (CROSS MARGIN):
@@ -89,6 +90,8 @@ RISK CONSTRAINTS:
 - POSITION_SIZE + CURRENT_TOTAL_POSITION_SIZE + 5% <= 90% TOTAL_EQUITY.
   - CURRENT_TOTAL: Sum existing % (from account info).
   - Violate? Reduce or HOLD.
+- [Important] Very high fees (0.2% taker ×10x=2% round-trip): Avoid frequent opens/closes, confirm trends for average holds >20min. If unrealized losses are limited, don't rush to close (fees often exceed small drawdowns).
+- [Important] Ensure ≥20% profit potential post-leverage (e.g., 2% price gain ×10x=20% return). If not, ignore and return (HOLD).
 
 """
 # TRADING PREFERENCES:
@@ -208,21 +211,8 @@ def _format_account_info(state_manager, account_info, positions):
     current_value = account_info["total_usdt"]
     total_return_pct = (
         ((current_value - initial_value) / initial_value) * 100
-        if initial_value > 0
-        else 0
+        if initial_value > 0 else 0
     )
-
-    # 新：计算Sharpe Ratio（简化版，使用历史PnL）
-    # 假设 state_manager 有 get_pnl_history() 返回每日PnL列表
-    pnl_history = state_manager.get_pnl_history()  # 需要在 state_manager 中实现
-    if pnl_history and len(pnl_history) > 1:
-        returns = [(pnl / initial_value) for pnl in pnl_history]  # 日回报率
-        avg_return = sum(returns) / len(returns)
-        std_dev = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
-        risk_free_rate = 0.0  # 假设无风险率为0
-        sharpe_ratio = (avg_return - risk_free_rate) / std_dev if std_dev > 0 else 0.0
-    else:
-        sharpe_ratio = 0.0
 
     prompt += f"Current Total Return (percent): {total_return_pct:.2f}%\n\n"
     prompt += f"Available Cash: {account_info['free_usdt']:.2f}\n\n"
@@ -273,7 +263,5 @@ def _format_account_info(state_manager, account_info, positions):
     else:
         prompt += "Current live positions: None\n"
         prompt += "You have no open positions. You can open new positions.\n"
-
-    prompt += f"\nSharpe Ratio: {sharpe_ratio:.2f}\n\n"
 
     return prompt
