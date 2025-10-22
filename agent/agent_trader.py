@@ -21,9 +21,13 @@ class TradingAgent:
         log_file="logs/trading_log.txt",
         prompt_log_file="logs/prompt_log.txt",
         log_level="INFO",
+        contra_mode=False,
     ):
         """初始化交易agent"""
         self.okx = OKXTrader(okx_token_path)
+        
+        # 超级反指模式：AI 永远是错的，反着做
+        self.contra_mode = contra_mode
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
@@ -121,6 +125,10 @@ class TradingAgent:
         self.logger.info(
             f"起始资金: ${self.state_manager.get_initial_account_value():,.2f}"
         )
+        
+        # 反指模式提醒
+        if self.contra_mode:
+            self.logger.warning("🔄 超级反指模式已启用！AI的所有决策将被反转执行！")
 
     def _parse_trading_decisions(self, response):
         """解析AI的交易决策"""
@@ -271,8 +279,70 @@ class TradingAgent:
             self.logger.error(f"AI响应: {response}")
             return {}
 
+    def _reverse_positions(self, positions):
+        """反转仓位信息（用于反指模式）"""
+        if not self.contra_mode or not positions:
+            return positions
+        
+        reversed_positions = {}
+        for coin, pos in positions.items():
+            reversed_pos = pos.copy()
+            # 反转持仓方向
+            if pos['side'] == 'long':
+                reversed_pos['side'] = 'short'
+            elif pos['side'] == 'short':
+                reversed_pos['side'] = 'long'
+            
+            # 反转盈亏（让 AI 以为亏的是赚的，赚的是亏的）
+            reversed_pos['unrealized_pnl'] = -pos['unrealized_pnl']
+            reversed_pos['percentage'] = -pos.get('percentage', 0)
+            
+            reversed_positions[coin] = reversed_pos
+            
+        self.logger.debug(f"反指模式：已反转 {len(reversed_positions)} 个仓位信息")
+        return reversed_positions
+
+    def _reverse_decisions(self, decisions):
+        """反转 AI 决策（用于反指模式）"""
+        if not self.contra_mode or not decisions:
+            return decisions
+        
+        reversed_decisions = {}
+        for coin, decision in decisions.items():
+            reversed_dec = decision.copy()
+            signal = decision.get('signal', '')
+            
+            # 反转交易信号
+            signal_map = {
+                'BUY': 'SELL',
+                'SELL': 'BUY',
+                'CLOSE&BUY': 'CLOSE&SELL',
+                'CLOSE&SELL': 'CLOSE&BUY',
+                'HOLD': 'HOLD',  # HOLD 保持不变
+                'CLOSE': 'CLOSE',  # CLOSE 保持不变
+            }
+            reversed_dec['signal'] = signal_map.get(signal, signal)
+            
+            # 互换止盈止损（AI 的止盈变我们的止损，AI 的止损变我们的止盈）
+            # 注意：这里只是互换概念，实际上反指模式下我们不设置止损点
+            if 'take_profit' in decision and 'stop_loss' in decision:
+                reversed_dec['take_profit'] = decision.get('stop_loss', 0)
+                reversed_dec['stop_loss'] = decision.get('take_profit', 0)
+            
+            reversed_decisions[coin] = reversed_dec
+            
+            if signal != 'HOLD':
+                self.logger.warning(
+                    f"🔄 反指模式：{coin} {signal} → {reversed_dec['signal']}"
+                )
+        
+        return reversed_decisions
+
     def execute_trading_decisions(self, decisions, open_gate=0.75, action_gate=0.75):
         """执行交易决策"""
+        # 反指模式：反转 AI 的决策
+        decisions = self._reverse_decisions(decisions)
+        
         executed_trades = []
 
         # 检查账户状态
@@ -588,6 +658,9 @@ class TradingAgent:
 
             # 获取当前持仓
             positions = self.okx.get_positions()
+            
+            # 反指模式：反转持仓信息后再传给 AI
+            positions_for_ai = self._reverse_positions(positions)
 
             # 决策前：取消所有未成交挂单，避免旧挂单影响
             try:
@@ -614,12 +687,12 @@ class TradingAgent:
             except Exception as e:
                 self.logger.error(f"检查/取消未成交挂单失败: {e}")
 
-            # 构建提示词
+            # 构建提示词（反指模式下使用反转后的仓位信息）
             prompt = build_trading_prompt(
                 market_data,
                 self.state_manager,
                 account_info,
-                positions,
+                positions_for_ai,
                 self.start_time,
                 self.invocation_count,
             )
