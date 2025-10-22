@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 import hashlib
 import os
+import html
 
 def calculate_content_hash(data: dict) -> str:
     """
@@ -85,6 +86,9 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     
     # 从report_data中获取缓存的终端输出
     terminal_output = report_data.get('terminal_output', '暂无输出')
+    
+    # 获取AI分析结果
+    ai_analysis_results = report_data.get('ai_analysis_results', [])
     
     # HTML转义，但保留ANSI代码
     import html
@@ -165,12 +169,81 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
         ::-webkit-scrollbar-thumb:hover {{
             background: #484f58;
         }}
+        
+        /* AI分析结果样式 */
+        .ai-analysis-section {{
+            margin-top: 30px;
+            border-top: 2px solid #30363d;
+            padding-top: 20px;
+        }}
+        
+        .ai-analysis-header {{
+            color: #58a6ff;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }}
+        
+        .ai-analysis-header::before {{
+            content: "🤖";
+            margin-right: 8px;
+        }}
+        
+        .ai-analysis-item {{
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }}
+        
+        .ai-analysis-header-item {{
+            background: #161b22;
+            padding: 12px 15px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        
+        .ai-analysis-symbol {{
+            color: #58a6ff;
+            font-weight: bold;
+            font-size: 1.1em;
+        }}
+        
+        .ai-analysis-score {{
+            background: #238636;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }}
+        
+        .ai-analysis-content {{
+            padding: 15px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+        }}
+        
+        .ai-analysis-price {{
+            color: #8b949e;
+            font-size: 0.9em;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">Carmen Stock Scanner - 实时输出</div>
         <pre id="output"></pre>
+        
+        <!-- AI分析结果部分 -->
+        {generate_ai_analysis_html(ai_analysis_results)}
+        
         <div class="upload-time">📤 上传时间: {upload_time}</div>
     </div>
     <script>
@@ -309,7 +382,8 @@ def format_signal(score_buy: float, score_sell: float, backtest_str: str = '') -
 
 
 def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict, 
-                        blacklist_info: dict, config: dict, terminal_output: str = '') -> dict:
+                        blacklist_info: dict, config: dict, terminal_output: str = '', 
+                        ai_analysis_results: List[dict] = None) -> dict:
     """
     准备报告数据
     
@@ -369,6 +443,49 @@ def prepare_report_data(stocks_data: List[dict], market_info: dict, stats: dict,
             'summary': blacklist_info['summary']
         },
         'generation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'terminal_output': terminal_output
+        'terminal_output': terminal_output,
+        'ai_analysis_results': ai_analysis_results or []
     }
+
+
+def generate_ai_analysis_html(ai_analysis_results: List[dict]) -> str:
+    """
+    生成AI分析结果的HTML
+    
+    Args:
+        ai_analysis_results: AI分析结果列表
+        
+    Returns:
+        str: HTML字符串
+    """
+    if not ai_analysis_results:
+        return ""
+    
+    html_parts = ['<div class="ai-analysis-section">']
+    html_parts.append('<div class="ai-analysis-header">AI深度分析报告</div>')
+    
+    for result in ai_analysis_results:
+        symbol = result.get('symbol', 'Unknown')
+        analysis = result.get('analysis', '无分析结果')
+        score_buy = result.get('score_buy', 0)
+        price = result.get('price', 0)
+        
+        # 转义HTML特殊字符
+        escaped_analysis = html.escape(analysis)
+        
+        html_parts.append(f'''
+        <div class="ai-analysis-item">
+            <div class="ai-analysis-header-item">
+                <div>
+                    <span class="ai-analysis-symbol">{symbol}</span>
+                    <span class="ai-analysis-price">当前价格: ${price:.2f}</span>
+                </div>
+                <span class="ai-analysis-score">买入评分: {score_buy:.1f}</span>
+            </div>
+            <div class="ai-analysis-content">{escaped_analysis}</div>
+        </div>
+        ''')
+    
+    html_parts.append('</div>')
+    return ''.join(html_parts)
 
