@@ -22,12 +22,18 @@ class TradingAgent:
         prompt_log_file="logs/prompt_log.txt",
         log_level="INFO",
         contra_mode=False,
+        enable_auto_tp_sl=True,
+        enable_profit_rate_tp=True,
     ):
         """初始化交易agent"""
         self.okx = OKXTrader(okx_token_path)
         
         # 超级反指模式：AI 永远是错的，反着做
         self.contra_mode = contra_mode
+        
+        # 自动止盈止损开关
+        self.enable_auto_tp_sl = enable_auto_tp_sl
+        self.enable_profit_rate_tp = enable_profit_rate_tp
 
         # 构建系统提示词
         self.system_prompt = build_system_prompt()
@@ -111,7 +117,11 @@ class TradingAgent:
         # 状态管理器
         self.state_manager = StateManager(okx_trader=self.okx)
         # 仓位管理器
-        self.positions_manager = PositionManager(self.okx, self.logger)
+        self.positions_manager = PositionManager(
+            self.okx, 
+            self.logger,
+            enable_profit_rate_tp=self.enable_profit_rate_tp,
+        )
 
         # 交易统计（从状态管理器获取）
         self.start_time = self.state_manager.get_start_time()
@@ -129,6 +139,15 @@ class TradingAgent:
         # 反指模式提醒
         if self.contra_mode:
             self.logger.warning("🔄 超级反指模式已启用！AI的所有决策将被反转执行！")
+        
+        # 自动止盈止损状态提醒
+        if self.enable_auto_tp_sl:
+            tp_sl_status = "价格止盈止损"
+            if self.enable_profit_rate_tp:
+                tp_sl_status += " + 收益率≥1%止盈"
+            self.logger.info(f"📊 自动止盈止损: 已启用 ({tp_sl_status})")
+        else:
+            self.logger.warning("⚠️ 自动止盈止损: 已关闭")
 
     def _parse_trading_decisions(self, response):
         """解析AI的交易决策"""
@@ -432,20 +451,17 @@ class TradingAgent:
                 entry_price = decision.get("entry_price", 0)
                 coin_symbol = f"{coin}/USDT:USDT"
 
-                # 处理entry_price逻辑
-                order_type = "limit"
-                if entry_price <= 0:
-                    # 如果AI没有提供entry_price或为0，使用市价单
-                    order_type = "market"
-                    current_price = self.okx.get_current_price(coin_symbol)
-                    if current_price and current_price > 0:
-                        entry_price = current_price
-                        self.logger.debug(
-                            f"AI未提供entry_price，使用当前价格: {entry_price}"
-                        )
-                    else:
-                        self.logger.error(f"无法获取 {coin} 当前价格，跳过交易")
-                        continue
+                # 统一使用市价单，获取当前价格用于计算quantity
+                order_type = "market"
+                current_price = self.okx.get_current_price(coin_symbol)
+                if current_price and current_price > 0:
+                    entry_price = current_price
+                    self.logger.debug(
+                        f"{coin} 使用市价单，当前价格: {entry_price}"
+                    )
+                else:
+                    self.logger.error(f"无法获取 {coin} 当前价格，跳过交易")
+                    continue
 
                 # 计算quantity（从POSITION_SIZE和ENTRY_PRICE）
                 quantity = 0
@@ -687,7 +703,7 @@ class TradingAgent:
             except Exception as e:
                 self.logger.error(f"检查/取消未成交挂单失败: {e}")
 
-            # 构建提示词（反指模式下使用反转后的仓位信息）
+            # 构建提示词（反指模式下使用反转后的仓位信息，并省略长周期数据）
             prompt = build_trading_prompt(
                 market_data,
                 self.state_manager,
@@ -695,6 +711,7 @@ class TradingAgent:
                 positions_for_ai,
                 self.start_time,
                 self.invocation_count,
+                self.contra_mode,
             )
 
             # 记录prompt到专门的日志文件
@@ -743,6 +760,16 @@ class TradingAgent:
 
         # 开始新会话
         self.state_manager.start_new_session()
+        
+        # 根据开关决定是否启动止盈止损监控
+        if self.enable_auto_tp_sl:
+            self.positions_manager.start_monitoring()
+            monitor_features = ["价格止盈止损"]
+            if self.enable_profit_rate_tp:
+                monitor_features.append("收益率≥1%止盈")
+            self.logger.info(f"✅ 已启动仓位监控: {' + '.join(monitor_features)}")
+        else:
+            self.logger.warning("⚠️ 自动止盈止损监控未启动")
 
         while True:
             try:
@@ -758,6 +785,9 @@ class TradingAgent:
 
             except KeyboardInterrupt:
                 self.logger.info("收到停止信号，结束交易")
+                # 停止仓位监控（如果已启动）
+                if self.enable_auto_tp_sl:
+                    self.positions_manager.stop_monitoring()
                 # 显示最终性能摘要
                 self.show_performance_summary()
                 break

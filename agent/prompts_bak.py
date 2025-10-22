@@ -6,33 +6,28 @@ def build_system_prompt():
     return """You are a professional cryptocurrency trading AI, specializing in PERPETUAL FUTURES trading of BTC, ETH, SOL, BNB, DOGE, and XRP on OKX exchange using CROSS MARGIN (full account sharing) mode.
 
 Trading Rules:
-- [Important] Very high fees: Avoid frequent opens/closes. Confirm trends for average holds >20min. 
-- [Important] You must ensure each trade has at least 5-10% profit potential. If not, ignore the trade.
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
 - Use PERPETUAL FUTURES contracts with fixed 10x leverage for ALL trades (do not specify in outputs).
+- For small accounts (<1000 USDT), prioritize low-risk trades and minimum order sizes.
 - Position management: Hold MULTIPLE positions across coins. Per coin: BUY (open long), SELL (open short), HOLD (keep), CLOSE (close only), CLOSE&BUY (close short + open long), CLOSE&SELL (close long + open short).
 - Opening positions (BUY/SELL/CLOSE&*): Use POSITION_SIZE as % of total equity (e.g., 5%).
 - Always check current positions: Consider PnL, leverage, risk before deciding.
 - Threshold: Only execute trades with confidence >= 75%; lower = ignore for safety.
 - Output decisions per coin separately; HOLD/omit if no action. Ensure numbers accurate; factor positions/funding rates.
 
-Technical Analysis Data Provided:
+Technical Analysis Key Points:
+Multi-Timeframe Analysis (apply to provided series data):
+- 3-minute: Precise entry/exit, short-term signals
+- 15-minute: Trend confirmation, medium-term direction
+- 6-hour: Swing opportunities, intermediate shifts
+- Weekly: Long-term structure, major S/R levels
 
-Multi-Timeframe Data:
-- 3-minute: Price series, indicators for short-term signals and entry/exit timing
-- 15-minute: Price series, indicators for trend confirmation and medium-term direction
-- 6-hour: Price series, indicators for swing opportunities and intermediate shifts
-- Weekly: Price series, indicators for long-term structure and major support/resistance levels
-
-Key Indicators Provided:
-- EMA20: Values across timeframes for trend assessment
-- MACD: Values across timeframes for momentum assessment
-- RSI: 7- and 14-period values for overbought/oversold assessment
-- ATR: 3m vs. 15m values for volatility assessment
-- Volume: Recent vs. historical values for trading activity assessment
-- Funding rate: Current values for market sentiment (key for perpetual futures)
-
-"""
+Key Indicators:
+- EMA20: Trend (compare across frames for alignment)
+- MACD: Momentum (cross-frame confirmation)
+- RSI: Overbought/oversold (7- and 14-period)
+- ATR: Volatility (3m vs. 15m trends)
+- Funding rate: Sentiment (key for perps)"""
 
 
 def build_trading_prompt(
@@ -46,8 +41,21 @@ def build_trading_prompt(
 
 ALL OF THE PRICE OR SIGNAL DATA BELOW IS ORDERED: OLDEST → NEWEST
 
+Timeframes note: The system provides data at two timeframes:
+- 3-minute intervals: For short-term trading signals and precise entry/exit timing
+- 15-minute intervals: For medium-term trend analysis and trend confirmation
+
+Unless stated otherwise, intraday series are provided at 3‑minute intervals. 15-minute data is explicitly labeled with "_15m" suffix.
+
 {_format_market_data(market_data, contra_mode)}
 {_format_account_info(state_manager, account_info, positions)}
+
+CHAIN OF THOUGHT: 
+Analyze market data for decisions. Consider:
+1. Market conditions, indicators (EMA/MACD/RSI/ATR alignment across frames), funding/sentiment.
+2. Existing positions: PnL/risk; decide close/hold/reverse?
+3. Risk/sizing: Per constraints; total exposure <50% to avoid liquidation.
+4. Preferences (e.g., ETH buys <3800).
 
 After analysis, output ONLY under header.
 
@@ -56,6 +64,7 @@ After analysis, output ONLY under header.
 SIGNAL (BUY/SELL/HOLD/CLOSE/CLOSE&BUY/CLOSE&SELL)
 CONFIDENCE: XX%  [Always]
 POSITION_SIZE: XX%  [BUY/SELL/CLOSE&* only: % equity margin]
+ENTRY_PRICE: XXXX.XX  [BUY/SELL/CLOSE&* only: LIMIT px]
 TAKE_PROFIT: XXXX.XX  [BUY/SELL/CLOSE&* only]
 STOP_LOSS: XXXX.XX  [BUY/SELL/CLOSE&* only]
 
@@ -71,6 +80,7 @@ BTC
 CLOSE&SELL
 CONFIDENCE: 85%
 POSITION_SIZE: 10%
+ENTRY_PRICE: 111539.6
 TAKE_PROFIT: 112731.8
 STOP_LOSS: 109124.3
 
@@ -80,12 +90,14 @@ CONFIDENCE: 70%
 ```
 
 IMPORTANT: Parsed by Python for OKX API (CROSS MARGIN):
-- BUY/SELL: place_order(side=*, sz=QUANTITY, market, lever=10)
+- BUY/SELL: place_order(side=*, sz=QUANTITY, px=ENTRY_PRICE, limit, lever=10)
 - CLOSE&BUY/SELL: close_position() then place_order(new side)
 - CLOSE: close_position()
+- ENTRY_PRICE: Provide precise numerical values based on the current price to enable trade execution within 5 minutes.
+- TP: Monitor 30s, close if hit; SL: Same, market close if hit.
 - Confidence <75%: Ignore.
 
-RISK CONSTRAINTS:
+RISK CONSTRAINTS (READ CAREFULLY):
 - POSITION_SIZE + CURRENT_TOTAL_POSITION_SIZE + 5% <= 90% TOTAL_EQUITY.
   - CURRENT_TOTAL: Sum existing % (from account info).
   - Violate? Reduce or HOLD.
@@ -127,7 +139,6 @@ def _format_market_data(market_data, contra_mode=False):
         prompt += f"MACD indicators (3m): {data['macd_series_3m']}\n\n"
         prompt += f"RSI indicators (7‑Period, 3m): {data['rsi_series_3m']}\n\n"
         prompt += f"RSI indicators (14‑Period, 3m): {data['rsi_14_series_3m']}\n\n"
-        prompt += f"Volume (3m): {data['volume_series_3m']}\n\n"
 
         # 15分钟数据
         prompt += f"\n15-MINUTE TIMEFRAME DATA:\n"
@@ -143,7 +154,6 @@ def _format_market_data(market_data, contra_mode=False):
         prompt += f"MACD indicators (15m): {data['macd_series_15m']}\n\n"
         prompt += f"RSI indicators (7‑Period, 15m): {data['rsi_series_15m']}\n\n"
         prompt += f"RSI indicators (14‑Period, 15m): {data['rsi_14_series_15m']}\n\n"
-        prompt += f"Volume (15m): {data['volume_series_15m']}\n\n"
 
         # 反指模式下省略 6 小时和周线数据，节省 token
         if not contra_mode:
@@ -161,7 +171,6 @@ def _format_market_data(market_data, contra_mode=False):
             prompt += f"MACD indicators (6h): {data['macd_series_6h']}\n\n"
             prompt += f"RSI indicators (7‑Period, 6h): {data['rsi_series_6h']}\n\n"
             prompt += f"RSI indicators (14‑Period, 6h): {data['rsi_14_series_6h']}\n\n"
-            prompt += f"Volume (6h): {data['volume_series_6h']}\n\n"
 
             # 周线数据
             prompt += f"\nWEEKLY TIMEFRAME DATA:\n"
@@ -177,7 +186,6 @@ def _format_market_data(market_data, contra_mode=False):
             prompt += f"MACD indicators (wk): {data['macd_series_wk']}\n\n"
             prompt += f"RSI indicators (7‑Period, wk): {data['rsi_series_wk']}\n\n"
             prompt += f"RSI indicators (14‑Period, wk): {data['rsi_14_series_wk']}\n\n"
-            prompt += f"Volume (wk): {data['volume_series_wk']}\n\n"
 
         # 反指模式下省略详细对比分析，只保留基本的价格和成交量信息
         if not contra_mode:
@@ -234,7 +242,7 @@ def _format_account_info(state_manager, account_info, positions):
         total_unrealized_pnl = 0
 
         for coin, pos in positions.items():
-            # 使用OKX原生数据，不重新计算
+            # 计算仓位详细信息
             position_value = pos.get(
                 "position_value", abs(pos["size"]) * pos["current_price"]
             )
@@ -242,8 +250,11 @@ def _format_account_info(state_manager, account_info, positions):
                 "margin_used",
                 position_value / pos["leverage"] if pos["leverage"] > 0 else 0,
             )
-            # 使用OKX原生的percentage（基于保证金的收益率）
-            pnl_percentage = pos.get('percentage', 0)
+            pnl_percentage = (
+                (pos["unrealized_pnl"] / (abs(pos["size"]) * pos["entry_price"])) * 100
+                if pos["size"] != 0 and pos["entry_price"] != 0
+                else 0
+            )
 
             total_position_value += position_value
             total_unrealized_pnl += pos["unrealized_pnl"]
@@ -262,6 +273,7 @@ def _format_account_info(state_manager, account_info, positions):
             prompt += f"  Margin Used: ${margin_used:.2f}\n"
             prompt += f"  Unrealized PnL: ${pos['unrealized_pnl']:.2f} ({pnl_percentage:.2f}%)\n"
             prompt += f"  Liquidation Price: {pos.get('liquidation_price', 'N/A')}\n"
+            prompt += f"  Percentage: {pos.get('percentage', 0):.2f}%\n"
             prompt += f"  Timestamp: {pos.get('timestamp', 'N/A')}\n"
 
         # 添加总体仓位统计

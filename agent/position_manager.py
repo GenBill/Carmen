@@ -6,12 +6,13 @@ from typing import Dict, Any, Optional
 class PositionManager:
     """仓位管理器 - 管理当前仓位信息和止盈止损"""
 
-    def __init__(self, okx_trader, logger):
+    def __init__(self, okx_trader, logger, enable_profit_rate_tp=True):
         self.okx = okx_trader
         self.logger = logger
         self.positions = {}  # 存储仓位信息，包括止盈止损
         self.monitoring = False
         self.monitor_thread = None
+        self.enable_profit_rate_tp = enable_profit_rate_tp  # 收益率自动止盈开关
 
     def update_position(self, coin: str, position_data: Dict[str, Any]):
         """更新仓位信息（包括止盈止损点）"""
@@ -104,7 +105,7 @@ class PositionManager:
             self.logger.error(f"同步仓位数据失败: {e}")
 
     def _monitor_loop(self):
-        """监控循环 - 每30秒检查一次"""
+        """监控循环 - 每10秒检查一次"""
         while self.monitoring:
             try:
                 # 先同步仓位数据
@@ -118,7 +119,7 @@ class PositionManager:
             except Exception as e:
                 self.logger.error(f"止盈止损监控异常: {e}")
 
-            time.sleep(30)
+            time.sleep(10)
 
     def _check_stop_loss_take_profit(self):
         """检查止盈止损触发"""
@@ -132,6 +133,25 @@ class PositionManager:
                 take_profit = pos_data.get("take_profit", 0.0)
                 stop_loss = pos_data.get("stop_loss", 0.0)
                 side = pos_data.get("side", "long")  # 获取仓位方向
+                entry_price = pos_data.get("entry_price", 0)
+                
+                # 优先检查收益率自动止盈（如果启用）
+                if self.enable_profit_rate_tp and entry_price > 0:
+                    # 计算收益率
+                    if side == "long":
+                        profit_rate = (current_price - entry_price) / entry_price * 100
+                    else:  # short
+                        profit_rate = (entry_price - current_price) / entry_price * 100
+                    
+                    # 收益率超过1%自动止盈
+                    if profit_rate >= 1.0:
+                        self.logger.warning(
+                            f"💰 {coin} 收益率达标自动止盈: {profit_rate:.2f}% >= 1.00% "
+                            f"({side}, 入场价: {entry_price:.2f}, 当前价: {current_price:.2f})"
+                        )
+                        self.okx.close_position(f"{coin}/USDT:USDT")
+                        self.remove_position(coin)
+                        continue  # 已平仓，跳过后续检查
 
                 # 根据仓位方向判断止盈止损触发条件
                 if side == "long":
