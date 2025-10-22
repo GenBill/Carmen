@@ -7,7 +7,7 @@ def build_system_prompt():
 
 Trading Rules:
 - [Important] Very high fees: Avoid frequent opens/closes. Confirm trends for average holds >20min. 
-- [Important] You must ensure each trade has at least 5-10% profit potential. If not, ignore the trade.
+- [Important] Ensure ≥5% profit potential post-leverage (e.g., 0.5% price gain ×10x=5% return): Set TAKE_PROFIT ≥ ENTRY_PRICE * 1.005 (longs) or ≤ *0.995 (shorts). Balance with STOP_LOSS for 1:2 R:R. If unachievable, ignore (HOLD).
 - Only trade the specified 6 cryptocurrencies: BTC, ETH, SOL, BNB, DOGE, XRP
 - Use PERPETUAL FUTURES contracts with fixed 10x leverage for ALL trades (do not specify in outputs).
 - Position management: Hold MULTIPLE positions across coins. Per coin: BUY (open long), SELL (open short), HOLD (keep), CLOSE (close only), CLOSE&BUY (close short + open long), CLOSE&SELL (close long + open short).
