@@ -6,10 +6,12 @@ low_volume_blacklist.json
 docs/index.html
 docs/meta.json
 
-agent/okx.token
 agent/deepseek.token
-agent/log.txt
+agent/okx.token
 
 trading_state.json
-*log.txt
 indicator/analysis_cache/*
+
+logs/*
+*log.txt
+trading_state.json
