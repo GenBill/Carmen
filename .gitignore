@@ -13,3 +13,5 @@ prompt_log.txt
 trading_log.txt
 trading_state.json
 indicator/analysis_cache/*
+
+logs/*

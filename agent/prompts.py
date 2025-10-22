@@ -102,14 +102,14 @@ RISK CONSTRAINTS (READ CAREFULLY):
   - CURRENT_TOTAL: Sum existing % (from account info).
   - Violate? Reduce or HOLD.
 
-TRADING PREFERENCES:
-- ETH: Strong; buy <3800 (strong zone), <3400 (diamond); long-term target 6000+.
-- SOL: Strong; long-term target 300+.
-- DOGE: MEME; sentiment-driven (trade on hype/social buzz; emotions > fundamentals).
-- BNB: Gas utility only (cyber rice); no long-term investment value.
-- Low risk (margin <50%): Hold drawdowns vs. premature close.
-
 """
+# TRADING PREFERENCES:
+# - ETH: Strong; buy <3800 (strong zone), <3400 (diamond); long-term target 6000+.
+# - SOL: Strong; long-term target 300+.
+# - DOGE: MEME; sentiment-driven (trade on hype/social buzz; emotions > fundamentals).
+# - BNB: Gas utility only (cyber rice); no long-term investment value.
+# - Low risk (margin <50%): Hold drawdowns vs. premature close.
+
     return prompt
 
 
