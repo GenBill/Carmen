@@ -186,7 +186,7 @@ def calculate_technical_indicators(data: pd.DataFrame) -> Dict:
     return indicators
 
 
-def get_stock_data(symbol: str, period_days: int = 30) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     获取股票数据（日K线和小时级数据）
     
@@ -198,10 +198,10 @@ def get_stock_data(symbol: str, period_days: int = 30) -> Tuple[pd.DataFrame, pd
         tuple: (日K线数据, 小时级数据)
     """
     # 获取日K线数据
-    daily_data = yf.download(symbol, period=f"{period_days}d", interval="1d")
+    daily_data = yf.download(symbol, period=f"{period_days}d", interval="1d", auto_adjust=True)
     
-    # 获取小时级数据（最近7天）
-    hourly_data = yf.download(symbol, period="7d", interval="1h")
+    # 获取小时级数据（最近30天）
+    hourly_data = yf.download(symbol, period="30d", interval="1h", auto_adjust=True)
     
     return daily_data, hourly_data
 
@@ -304,8 +304,30 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
         }
     
     # 获取最近的价格序列（确保是列表）
-    recent_prices = [float(x) for x in daily_data['Close'].tail(14).values]
-    recent_volumes = [int(x) for x in daily_data['Volume'].tail(14).values]
+    recent_prices = daily_data['Close'].iloc[:, 0].tail(24).tolist()
+    recent_volumes = daily_data['Volume'].iloc[:, 0].tail(24).tolist()
+    
+    daily_tail_long = 24
+    hourly_tail_long = 24
+    
+    # 获取日线技术指标的24个数据点
+    daily_rsi_7_series = daily_indicators['rsi_7'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_rsi_14_series = daily_indicators['rsi_14'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_macd_dif_series = daily_indicators['macd_dif'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_macd_dea_series = daily_indicators['macd_dea'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_macd_series = daily_indicators['macd'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_ema_20_series = daily_indicators['ema_20'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_ema_50_series = daily_indicators['ema_50'].iloc[:, 0].tail(daily_tail_long).tolist()
+    
+    # 获取小时级技术指标的24个数据点
+    hourly_rsi_7_series = []
+    hourly_macd_series = []
+    hourly_ema_20_series = []
+    
+    if hourly_data is not None and not hourly_data.empty and hourly_indicators:
+        hourly_rsi_7_series = hourly_indicators['rsi_7'].iloc[:, 0].tail(hourly_tail_long).tolist()
+        hourly_macd_series = hourly_indicators['macd'].iloc[:, 0].tail(hourly_tail_long).tolist()
+        hourly_ema_20_series = hourly_indicators['ema_20'].iloc[:, 0].tail(hourly_tail_long).tolist()
     
     # 格式化数值显示
     def format_value(value, format_str=".2f"):
@@ -313,31 +335,37 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
             return 'N/A'
         return f"{value:{format_str}}"
     
+    def format_series(series, format_str=".2f"):
+        """格式化数据序列"""
+        if not series:
+            return 'N/A'
+        return [f"{v:{format_str}}" if v is not None and not pd.isna(v) else 'N/A' for v in series]
+    
     analysis_text = f"""
 股票代码: {symbol}
 当前价格: ${current_price:.2f}
 当前成交量: {current_volume:,}
 
 === 日线技术指标 ===
-RSI(7): {format_value(latest_daily['rsi_7'])}
-RSI(14): {format_value(latest_daily['rsi_14'])}
-MACD DIF: {format_value(latest_daily['macd_dif'])}
-MACD DEA: {format_value(latest_daily['macd_dea'])}
-MACD: {format_value(latest_daily['macd'])}
-EMA(20): {format_value(latest_daily['ema_20'])}
-EMA(50): {format_value(latest_daily['ema_50'])}
+RSI(7) 最近{daily_tail_long}天: {format_series(daily_rsi_7_series)}
+RSI(14) 最近{daily_tail_long}天: {format_series(daily_rsi_14_series)}
+MACD DIF 最近{daily_tail_long}天: {format_series(daily_macd_dif_series)}
+MACD DEA 最近{daily_tail_long}天: {format_series(daily_macd_dea_series)}
+MACD 最近{daily_tail_long}天: {format_series(daily_macd_series)}
+EMA(20) 最近{daily_tail_long}天: {format_series(daily_ema_20_series)}
+EMA(50) 最近{daily_tail_long}天: {format_series(daily_ema_50_series)}
 ATR(14): {format_value(latest_daily['atr_14'])}
-成交量比率: {format_value(latest_daily['volume_ratio'])}
+成交量比率: {format_value(latest_daily['volume_ratio'])} （最后1日成交量 / 过去20日平均成交量）
 
 === 小时级技术指标 ===
 当前价格: ${latest_hourly['price']:.2f}
-RSI(7): {format_value(latest_hourly['rsi_7'])}
-MACD: {format_value(latest_hourly['macd'])}
-EMA(20): {format_value(latest_hourly['ema_20'])}
+RSI(7) 最近{hourly_tail_long}小时: {format_series(hourly_rsi_7_series)}
+MACD 最近{hourly_tail_long}小时: {format_series(hourly_macd_series)}
+EMA(20) 最近{hourly_tail_long}小时: {format_series(hourly_ema_20_series)}
 
 === 最近价格趋势 ===
-最近14天收盘价: {[f"${p:.2f}" for p in recent_prices]}
-最近14天成交量: {[f"{v:,}" for v in recent_volumes]}
+最近{daily_tail_long}天收盘价: {[f"${p:.2f}" for p in recent_prices]}
+最近{daily_tail_long}天成交量: {[f"{v:,}" for v in recent_volumes]}
 
 === 趋势分析 ===
 """
@@ -370,7 +398,7 @@ EMA(20): {format_value(latest_hourly['ema_20'])}
     return analysis_text
 
 
-def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
+def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     """
     使用AI分析股票，提供短线分析、建仓建议和买卖点
     
@@ -460,6 +488,7 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 30) -> str:
     
     # 5. 调用DeepSeek API
     print(f"🤖 调用DeepSeek AI进行分析...")
+    # if True: return prompt
     ai_checkpoint = call_deepseek_api(prompt)
     
     # 6. 保存缓存
