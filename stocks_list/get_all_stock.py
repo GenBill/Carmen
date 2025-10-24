@@ -38,6 +38,17 @@ def get_us_stock_list_from_files() -> List[str]:
 
     return sorted(list(all_tickers))
 
+def get_nasdaq_stock_symbols_from_file(path: str="us_stock_symbols.txt"):
+    """从文件读取股票列表并过滤"""
+    symbols = []
+    with open(path, "r") as f:
+        for line in f:
+            symbol = line.strip()
+            if is_valid_common_stock(symbol):
+                symbols.append(symbol)
+    
+    print(f"从文件读取: 原始{sum(1 for _ in open(path))}个 -> 过滤后{len(symbols)}个普通股")
+    return symbols
 
 def is_valid_common_stock(symbol: str) -> bool:
     """
@@ -67,7 +78,10 @@ def get_stock_list(path: str = '') -> List[str]:
     """
     获取全美股票列表，包括 NASDAQ、NYSE 和 AMEX。
     """
-    return get_us_stock_list_from_files()
+    if path != '':
+        return get_nasdaq_stock_symbols_from_file(path)
+    else:
+        return get_us_stock_list_from_files()
 
 
 if __name__ == "__main__":
