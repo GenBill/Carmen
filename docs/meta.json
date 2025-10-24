@@ -1,32 +1,24 @@
 {
-  "last_update": "2025-10-24T12:08:22.236572",
-  "last_update_readable": "2025-10-24 12:08:22",
-  "content_hash": "03cb607300a61bcc0267d663f171c20b",
+  "last_update": "2025-10-24T21:19:53.704745",
+  "last_update_readable": "2025-10-24 21:19:53",
+  "content_hash": "3d8b822099be9897b5b73ec279f85600",
   "html_file": "docs/index.html",
-  "html_file_size": 18368,
+  "html_file_size": 18374,
   "market_status": "⏰ 盘前时段",
-  "update_time": "2025-10-24 00:06:39 EDT",
+  "update_time": "2025-10-24 09:03:28 EDT",
   "mode": "盘前/盘后模式",
   "stats": {
-    "total_scanned": 1149,
-    "success_count": 1123,
+    "total_scanned": 4275,
+    "success_count": 2783,
     "signal_count": 0,
     "blacklist_count": 0,
-    "stocks_displayed": 1123
+    "stocks_displayed": 2783
   },
   "config": {
     "rsi_period": 8,
     "macd_params": "8,17,9"
   },
   "update_history": [
-    {
-      "timestamp": "2025-10-20T12:14:40.518416",
-      "timestamp_readable": "2025-10-20 12:14:40",
-      "content_hash": "60674d57a799718784172e85c802b0ae",
-      "market_status": "⏰ 盘前时段",
-      "stocks_count": 1144,
-      "signals": 0
-    },
     {
       "timestamp": "2025-10-21T04:18:18.574191",
       "timestamp_readable": "2025-10-21 04:18:18",
@@ -97,6 +89,14 @@
       "content_hash": "03cb607300a61bcc0267d663f171c20b",
       "market_status": "⏰ 盘前时段",
       "stocks_count": 1123,
+      "signals": 0
+    },
+    {
+      "timestamp": "2025-10-24T21:19:53.704745",
+      "timestamp_readable": "2025-10-24 21:19:53",
+      "content_hash": "3d8b822099be9897b5b73ec279f85600",
+      "market_status": "⏰ 盘前时段",
+      "stocks_count": 2783,
       "signals": 0
     }
   ],
