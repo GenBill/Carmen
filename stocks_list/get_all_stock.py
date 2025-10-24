@@ -26,7 +26,7 @@ def get_us_stock_list_from_files() -> List[str]:
             valid_tickers = {
                 ticker
                 for ticker in tickers
-                if ticker and len(ticker) <= 5 and not ticker.startswith("^")
+                if ticker and len(ticker) <= 5 and not "^" in ticker
             }
 
             all_tickers.update(valid_tickers)
@@ -62,7 +62,7 @@ def is_valid_common_stock(symbol: str) -> bool:
     return True
 
 
-def get_stock_list() -> List[str]:
+def get_stock_list(path: str = '') -> List[str]:
     """
     获取全美股票列表，包括 NASDAQ、NYSE 和 AMEX。
     """
