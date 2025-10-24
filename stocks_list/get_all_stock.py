@@ -23,10 +23,11 @@ def get_us_stock_list_from_files() -> List[str]:
             tickers = set(df["Symbol"].dropna().str.strip().tolist())
 
             # 过滤掉无效符号（如 ^, ~ 等测试符号）
+            invalid_chars = ['^', '~', '/']
             valid_tickers = {
                 ticker
                 for ticker in tickers
-                if ticker and len(ticker) <= 5 and not "^" in ticker
+                if ticker and len(ticker) <= 5 and not any(char in ticker for char in invalid_chars)
             }
 
             all_tickers.update(valid_tickers)
