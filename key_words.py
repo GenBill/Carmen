@@ -1,6 +1,6 @@
 import os
 import re
-from get_stock_list import get_nasdaq_stock_symbols
+from stocks_list.get_all_stock import get_stock_list
 
 KEY_WORDS = ['@所有人', '买', '卖', '入', '出']
 
@@ -99,10 +99,10 @@ def stock_code_check(upper_message):
     stock_file = 'nasdaq_stock_symbols.txt'
     if not os.path.exists(stock_file):
         try:
-            get_nasdaq_stock_symbols()
+            get_stock_list()
             print(f"Generated {stock_file}")
         except ImportError:
-            print(f"Error: Could not import get_nasdaq_stock_symbols from stock_list.")
+            print(f"Error: Could not import get_stock_list from stocks_list.get_all_stock.")
             return []
         except Exception as e:
             print(f"Error generating {stock_file}: {e}")

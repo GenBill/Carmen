@@ -1,7 +1,10 @@
 
 import sys
+import os
 sys.path.append('..')
-from get_stock_list import get_stock_list
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from stocks_list.get_all_stock import get_stock_list
 from get_stock_price import get_stock_data, get_stock_data_offline
 from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
 from market_hours import get_market_status, get_cache_expiry_for_premarket
