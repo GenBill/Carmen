@@ -15,3 +15,6 @@ indicator/analysis_cache/*
 logs/*
 *log.txt
 trading_state.json
+
+# GitHub Pages
+gh-pages/
