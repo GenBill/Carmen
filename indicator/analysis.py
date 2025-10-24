@@ -61,7 +61,7 @@ def load_analysis_cache(symbol: str) -> Optional[Dict]:
             print(f"📅 {symbol} 分析缓存已过期")
             return None
         
-        print(f"✅ {symbol} 命中分析缓存 (缓存时间: {cache_time.strftime('%Y-%m-%d %H:%M')})")
+        # print(f"✅ {symbol} 命中分析缓存 (缓存时间: {cache_time.strftime('%Y-%m-%d %H:%M')})")
         return cache_data
     
     except Exception as e:
@@ -432,12 +432,12 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     print("📊 计算技术指标...")
     daily_indicators = calculate_technical_indicators(daily_data)
     hourly_indicators = calculate_technical_indicators(hourly_data) if hourly_data is not None and not hourly_data.empty else {}
-    print("✅ 技术指标计算完成")
+    # print("✅ 技术指标计算完成")
     
     # 3. 格式化分析数据
     print("📝 格式化分析数据...")
     analysis_data = format_analysis_data(symbol, daily_data, hourly_data, daily_indicators, hourly_indicators)
-    print("✅ 数据格式化完成")
+    # print("✅ 数据格式化完成")
     
     # 4. 获取当前美股时间信息
     now_utc = datetime.utcnow()
@@ -490,7 +490,7 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     print(f"🤖 调用DeepSeek AI进行分析...")
     # if True: return prompt
     ai_checkpoint = call_deepseek_api(prompt)
-    
+
     # 6. 保存缓存
     save_analysis_cache(symbol, data_hash, ai_checkpoint)
     

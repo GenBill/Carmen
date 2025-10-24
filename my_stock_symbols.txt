@@ -45,5 +45,6 @@ CHA
 GILD
 NOV
 LLY
-
+GLD
+OKLO
 
