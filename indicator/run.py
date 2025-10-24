@@ -1,6 +1,7 @@
 
 import sys
 import signal
+sys.path.append('..')
 from main import main
 
 if __name__ == "__main__":

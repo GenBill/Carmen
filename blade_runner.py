@@ -6,7 +6,7 @@ import uiautomation as auto
 from colorama import Style
 
 from key_words import key_word_check
-from get_stock_list import get_nasdaq_stock_symbols
+from stocks_list.get_all_stock import get_stock_list
 
 MASTER = '卡门卡'
 MASTER_GROUP = '天天去旅行'
@@ -121,7 +121,7 @@ def monitor_wechat(DELAY_TIME = 10):
 if __name__ == '__main__':
 
     # 更新股票代码列表
-    get_nasdaq_stock_symbols()
+    get_stock_list()
     
     # 对于 Windows 打包或冻结应用时需要
     multiprocessing.freeze_support()
