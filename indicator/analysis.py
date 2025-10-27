@@ -206,25 +206,29 @@ def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, p
     return daily_data, hourly_data
 
 
-def call_deepseek_api(prompt: str) -> str:
-    """
-    调用DeepSeek API
-    
-    Args:
-        prompt: 输入提示词
-        
-    Returns:
-        str: API响应内容
-    """
+def call_deepseek_api_US(prompt: str) -> str:
     deepseek = DeepSeekAPI(
         system_prompt = """你是一位专业的股票技术分析师。
-        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。用户一般会在信号触发后第2天买入，第2-4天卖出。
-        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入、卖出、止损、止盈的价格区间和时间。
+        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
+        用户通常会在信号触发后的夜盘/盘前买入，并在下一个盘中时段卖出。特殊情况下，用户会额外持有2-3天。
+        用户对于此类投机仓位不会超过5%，风险在可控范围内。
+        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
+        并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？
         """, 
         model_type = "deepseek-reasoner"
     )
     return deepseek(prompt)
 
+
+def call_deepseek_api(prompt: str, market: str = "US") -> str:
+    if market == "US":
+        return call_deepseek_api_US(prompt)
+    elif market == "HK":
+        return call_deepseek_api_HK(prompt)
+    elif market == "CN":
+        return call_deepseek_api_CN(prompt)
+    else:
+        raise ValueError("Invalid market")
 
 def safe_get_value(series, default=None):
     """
