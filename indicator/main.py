@@ -323,7 +323,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                     # 生成HTML（会自动检测内容是否变化）
                     # print(f"\n{'='*60}")
                     # print("📄 正在生成HTML报告...")
-                    content_changed = generate_html_report(report_data)
+                    content_changed = generate_html_report(report_data, output_file='docs/index.html', is_hka_market=False)
                     
                     if content_changed:
                         # print("✅ HTML报告已生成（内容有更新）")

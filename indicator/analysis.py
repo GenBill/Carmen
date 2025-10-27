@@ -219,24 +219,36 @@ def call_deepseek_api_US(prompt: str) -> str:
     )
     return deepseek(prompt)
 
-# TODO: 实现港股分析
-def call_deepseek_api_HK(prompt: str) -> str:
-    pass
-
-# TODO: 实现A股分析
-def call_deepseek_api_A(prompt: str) -> str:
-    pass
-
+def call_deepseek_api_HKA(prompt: str) -> str:
+    deepseek = DeepSeekAPI(
+        system_prompt = """你是一位专业的股票技术分析师。
+        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
+        用户通常会在信号触发后的第二天买入，并在下一天卖出。特殊情况下，用户会额外持有2-3天。
+        用户对于此类投机仓位不会超过5%，风险在可控范围内。
+        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
+        并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？
+        """, 
+        model_type = "deepseek-reasoner"
+    )
+    return deepseek(prompt)
 
 def call_deepseek_api(prompt: str, market: str = "US") -> str:
+    """
+    调用DeepSeek API分析股票
+    
+    Args:
+        prompt: AI分析提示词
+        market: 市场类型（"US"或"HKA"）
+        
+    Returns:
+        str: AI分析结果
+    """
     if market == "US":
         return call_deepseek_api_US(prompt)
-    elif market == "HK":
-        return call_deepseek_api_HK(prompt)
-    elif market == "A":
-        return call_deepseek_api_A(prompt)
+    elif market == "HKA":
+        return call_deepseek_api_HKA(prompt)
     else:
-        raise ValueError("Invalid market")
+        raise ValueError(f"Invalid market: {market}. Must be 'US' or 'HKA'")
 
 def safe_get_value(series, default=None):
     """
@@ -430,17 +442,24 @@ def get_stock_type(symbol: str) -> str:
     else:
         return "美股"
 
-def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
+def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = None) -> str:
     """
     使用AI分析股票，提供短线分析、建仓建议和买卖点
     
     Args:
         symbol: 股票代码
         period_days: 分析数据的天数
+        market: 市场类型（"US"或"HKA"），None则自动识别
         
     Returns:
         str: AI分析结果
     """
+    # 自动识别市场类型
+    if market is None:
+        if symbol.endswith('.HK'):
+            market = "HKA"
+        else:
+            market = "US"
     print(f"🔍 开始分析股票: {symbol}")
     
     # 1. 获取股票数据
@@ -480,7 +499,20 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     time_info = get_time_info(symbol)
     stock_type = get_stock_type(symbol)
 
-    # 5. 构建AI分析提示词
+    # 5. 构建AI分析提示词（根据市场类型）
+    if market == "HKA":
+        # 港A股市场的prompt
+        market_instruction = """
+请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性。
+注意港A股市场特点：交易时间为上午9:30-12:00，下午13:00-16:00（港股），请充分考虑市场时间和流动性特点。
+"""
+    else:
+        # 美股市场的prompt
+        market_instruction = """
+请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性，并充分考虑当前时间因素对美股交易的影响。
+接口允许的话，你也可以适当检索一些新闻、政策、事件并分析其对美股交易的影响。
+"""
+    
     prompt = f"""
 你是一位专业的股票技术分析师，请基于以下技术指标数据和当前市场时间，对{stock_type} {symbol} 进行深度分析：
 
@@ -512,14 +544,13 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
    - 主要风险因素
    - 注意事项
 
-请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性，并充分考虑当前时间因素对美股交易的影响。
-接口允许的话，你也可以适当检索一些新闻、政策、事件并分析其对美股交易的影响。
+{market_instruction}
 """
     
-    # 5. 调用DeepSeek API
-    print(f"🤖 调用DeepSeek AI进行分析...")
+    # 5. 调用DeepSeek API（传入市场类型）
+    print(f"🤖 调用DeepSeek AI进行分析（{market}市场）...")
     # if True: return prompt
-    ai_checkpoint = call_deepseek_api(prompt)
+    ai_checkpoint = call_deepseek_api(prompt, market=market)
 
     # 6. 保存缓存
     save_analysis_cache(symbol, data_hash, ai_checkpoint)
