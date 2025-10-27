@@ -219,14 +219,22 @@ def call_deepseek_api_US(prompt: str) -> str:
     )
     return deepseek(prompt)
 
+# TODO: 实现港股分析
+def call_deepseek_api_HK(prompt: str) -> str:
+    pass
+
+# TODO: 实现A股分析
+def call_deepseek_api_A(prompt: str) -> str:
+    pass
+
 
 def call_deepseek_api(prompt: str, market: str = "US") -> str:
     if market == "US":
         return call_deepseek_api_US(prompt)
     elif market == "HK":
         return call_deepseek_api_HK(prompt)
-    elif market == "CN":
-        return call_deepseek_api_CN(prompt)
+    elif market == "A":
+        return call_deepseek_api_A(prompt)
     else:
         raise ValueError("Invalid market")
 
@@ -401,6 +409,26 @@ EMA(20) 最近{hourly_tail_long}小时: {format_series(hourly_ema_20_series)}
     
     return analysis_text
 
+def get_time_info(symbol: str) -> str:
+    if symbol.endswith(".HK"):
+        now_hk = datetime.now(pytz.timezone('Asia/Hong_Kong'))
+        time_info = f"""
+        === 当前港股交易时间 ===
+        {now_hk.strftime('%Y-%m-%d %H:%M:%S')} {now_hk.tzname()} {now_hk.strftime('%A')}
+        """
+    else:
+        now_et = datetime.now(pytz.timezone('US/Eastern'))
+        time_info = f"""
+        === 当前美股交易时间 ===
+        {now_et.strftime('%Y-%m-%d %H:%M:%S')} {now_et.tzname()} {now_et.strftime('%A')}
+        """
+    return time_info
+
+def get_stock_type(symbol: str) -> str:
+    if symbol.endswith(".HK"):
+        return "港股"
+    else:
+        return "美股"
 
 def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     """
@@ -449,14 +477,12 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250) -> str:
     et_tz = pytz.timezone('US/Eastern')
     now_et = now_utc.replace(tzinfo=pytz.UTC).astimezone(et_tz)
     
-    time_info = f"""
-=== 当前美股交易时间 ===
-{now_et.strftime('%Y-%m-%d %H:%M:%S')} {now_et.tzname()} {now_et.strftime('%A')}
-"""
+    time_info = get_time_info(symbol)
+    stock_type = get_stock_type(symbol)
 
     # 5. 构建AI分析提示词
     prompt = f"""
-你是一位专业的股票技术分析师，请基于以下技术指标数据和当前市场时间，对美股进行深度分析：
+你是一位专业的股票技术分析师，请基于以下技术指标数据和当前市场时间，对{stock_type} {symbol} 进行深度分析：
 
 {time_info}
 
