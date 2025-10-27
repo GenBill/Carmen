@@ -57,6 +57,24 @@ def process_hk_stock():
     # 将股票代码转换为字符串并补齐5位（港股代码为5位）
     result['Symbol'] = result['Symbol'].astype(str).str.zfill(5)
     
+    # 过滤掉所有 >=5 且首位不为 0 的港股代码
+    def should_keep(symbol):
+        """判断是否保留该股票代码"""
+        if len(symbol) >= 5 and symbol[0] != '0':
+            return False
+        return True
+    
+    result = result[result['Symbol'].apply(should_keep)].copy()
+    
+    # 为5位且首位为0的代码去掉首位0
+    def remove_leading_zero(symbol):
+        """去掉5位代码的首位0"""
+        if len(symbol) == 5 and symbol[0] == '0':
+            return symbol[1:]  # 去掉首位0
+        return symbol
+    
+    result['Symbol'] = result['Symbol'].apply(remove_leading_zero)
+
     # 添加.HK后缀（香港）
     result['Symbol'] = result['Symbol'] + '.HK'
     

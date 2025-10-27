@@ -3,8 +3,6 @@
 indicator/main.py
 low_volume_blacklist.json
 *.log
-docs/index.html
-docs/meta.json
 
 agent/deepseek.token
 agent/okx.token
@@ -18,3 +16,6 @@ trading_state.json
 
 # GitHub Pages
 gh-pages/
+docs/index.html
+docs/index_hka.html
+docs/meta.json
