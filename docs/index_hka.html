@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta data-hash="26fb10785648c68c84d6da58d3fa0880">
+    <title>Carmen Stock Scanner - 港A股监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', Courier, Monaco, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
+        }
+        
+        .header {
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        
+        #output {
+            white-space: pre;
+            overflow-x: auto;
+            font-family: inherit;
+            margin: 0;
+        }
+        
+        .upload-time {
+            color: #8b949e;
+            font-size: 0.9em;
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #30363d;
+            text-align: right;
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #0d1117;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
+        
+        /* AI分析结果样式 */
+        .ai-analysis-section {
+            margin-top: 30px;
+            border-top: 2px solid #30363d;
+            padding-top: 20px;
+        }
+        
+        .ai-analysis-header {
+            color: #58a6ff;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .ai-analysis-header::before {
+            content: "🤖";
+            margin-right: 8px;
+        }
+        
+        .ai-analysis-item {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        
+        .ai-analysis-header-item {
+            background: #161b22;
+            padding: 12px 15px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .ai-analysis-symbol {
+            color: #58a6ff;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .ai-analysis-score {
+            background: #238636;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        
+        .ai-analysis-content {
+            padding: 15px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .ai-analysis-price {
+            color: #8b949e;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    
+        <nav style="background: #0d1117; padding: 10px 0; margin-bottom: 20px; border-bottom: 1px solid #30363d;">
+            <div style="max-width: 1800px; margin: 0 auto; padding: 0 20px; display: flex; gap: 10px;">
+                <a href="index.html" style="color: #8b949e; text-decoration: none; padding: 8px 16px; background: #21262d; border-radius: 4px;">🇺🇸 美股</a>
+                <a href="index_hka.html" style="color: #58a6ff; text-decoration: none; padding: 8px 16px; background: #238636; border-radius: 4px;">🇭🇰🇨🇳 港A股</a>
+            </div>
+        </nav>
+        
+    <div class="container">
+        <div class="header">Carmen Stock Scanner - 港A股监控</div>
+        <pre id="output"></pre>
+        
+        <!-- AI分析结果部分 -->
+        
+        
+        <div class="upload-time">📤 上传时间: 2025-10-27 23:24:16</div>
+    </div>
+    <script>
+        // 使用ansi_up将ANSI颜色代码转换为HTML
+        const ansi_up = new AnsiUp();
+        const terminalOutput = `⏰ 港A股市场扫描 | 2025-10-27 23:23:16 CST
+查询 100 只股票 | RSI8 | MACD(8,17,9) | 港A股市场
+
+========================================================================================================================
+ 股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
+========================================================================================================================
+0001.HK |  $51.85 [91m +0.48%[0m | 量比:[97m   101.3%[0m | RSI:  51.4 [91m↑[0m 59.6 | DIF:[91m  0.08[0m DEA:[91m  0.03[0m 斜率: [91m+0.08[0m | 
+0002.HK |  $65.90 [92m -0.23%[0m | 量比:[92m    70.8%[0m | RSI:  60.1 [92m↓[0m 54.0 | DIF:[91m  0.19[0m DEA:[91m  0.21[0m 斜率: [92m-0.03[0m | 
+0003.HK |   $7.26 [91m +0.41%[0m | 量比:[92m    58.8%[0m | RSI:  66.2 [91m↑[0m 69.6 | DIF:[91m  0.09[0m DEA:[91m  0.08[0m 斜率: [97m 0.00[0m | 
+0004.HK |  $20.52 [92m -1.35%[0m | 量比:[97m    76.0%[0m | RSI:  30.0 [92m↓[0m 27.1 | DIF:[92m -0.44[0m DEA:[92m -0.38[0m 斜率: [97m 0.00[0m | 
+0005.HK | $102.00 [92m -1.73%[0m | 量比:[97m   149.1%[0m | RSI:  44.8 [92m↓[0m 38.0 | DIF:[92m -0.94[0m DEA:[92m -0.85[0m 斜率: [91m+0.02[0m | 
+0006.HK |  $49.84 [92m -0.82%[0m | 量比:[92m    67.0%[0m | RSI:  51.3 [92m↓[0m 45.7 | DIF:[91m  0.01[0m DEA:[92m -0.01[0m 斜率: [92m-0.03[0m | 
+0008.HK |   $5.51 [91m +1.10%[0m | 量比:[97m    93.2%[0m | RSI:  58.5 [91m↑[0m 65.2 | DIF:[91m  0.02[0m DEA:[91m  0.02[0m 斜率: [97m 0.00[0m | 
+0010.HK |  $14.88 [91m +0.54%[0m | 量比:[97m    77.7%[0m | RSI:  52.2 [91m↑[0m 54.8 | DIF:[91m  0.07[0m DEA:[91m  0.06[0m 斜率: [97m 0.00[0m | 
+0011.HK | $151.70 [97m +0.07%[0m | 量比:[92m    64.7%[0m | RSI:  90.4 [97m→[0m 89.5 | DIF:[91m  6.37[0m DEA:[91m  7.17[0m 斜率: [92m-0.33[0m | 
+0012.HK |  $28.26 [91m +1.29%[0m | 量比:[91m   186.5%[0m | RSI:  63.1 [91m↑[0m 71.7 | DIF:[91m  0.14[0m DEA:[91m  0.04[0m 斜率: [91m+0.05[0m | 
+0013.HK |  $23.42 [97m  0.00%[0m | 量比:[92m    74.6%[0m | RSI:  29.3 [91m↑[0m 34.7 | DIF:[92m -0.48[0m DEA:[92m -0.42[0m 斜率: [91m+0.03[0m | 
+0014.HK |  $16.21 [91m +1.31%[0m | 量比:[97m    75.8%[0m | RSI:  53.2 [91m↑[0m 62.0 | DIF:[91m  0.05[0m DEA:[91m  0.03[0m 斜率: [91m+0.02[0m | 
+0016.HK |  $95.10 [92m -0.73%[0m | 量比:[92m    56.5%[0m | RSI:  56.0 [97m→[0m 56.3 | DIF:[91m  0.07[0m DEA:[91m  0.04[0m 斜率: [91m+0.12[0m | 
+0017.HK |   $7.70 [91m +1.72%[0m | 量比:[92m    47.5%[0m | RSI:  40.6 [91m↑[0m 49.8 | DIF:[92m -0.09[0m DEA:[92m -0.08[0m 斜率: [91m+0.03[0m | 
+0019.HK |  $65.35 [92m -1.58%[0m | 量比:[92m    69.4%[0m | RSI:  61.0 [92m↓[0m 49.3 | DIF:[92m -0.03[0m DEA:[92m -0.24[0m 斜率: [92m-0.06[0m | 
+0020.HK |   $2.50 [92m -0.79%[0m | 量比:[97m    89.7%[0m | RSI:  44.4 [91m↑[0m 50.8 | DIF:[92m -0.04[0m DEA:[92m -0.02[0m 斜率: [91m+0.02[0m | 
+0023.HK |  $13.43 [91m +1.05%[0m | 量比:[92m    70.4%[0m | RSI:  74.2 [91m↑[0m 78.1 | DIF:[91m  0.26[0m DEA:[91m  0.22[0m 斜率: [97m 0.00[0m | 
+0027.HK |  $39.70 [91m +0.61%[0m | 量比:[97m    95.9%[0m | RSI:  53.9 [91m↑[0m 59.7 | DIF:[92m -0.33[0m DEA:[92m -0.67[0m 斜率: [91m+0.15[0m | 
+0031.HK |   $0.63 [91m +1.61%[0m | 量比:[97m   108.8%[0m | RSI:  44.7 [91m↑[0m 47.9 | DIF:[92m -0.02[0m DEA:[92m -0.02[0m 斜率: [97m 0.00[0m | 
+0038.HK |   $7.88 [92m -0.25%[0m | 量比:[97m   130.3%[0m | RSI:  75.8 [91m↑[0m 78.4 | DIF:[91m  0.18[0m DEA:[91m  0.09[0m 斜率: [97m 0.00[0m | 
+0041.HK |  $14.59 [91m +1.04%[0m | 量比:[97m    75.4%[0m | RSI:  55.5 [91m↑[0m 61.5 | DIF:[91m  0.04[0m DEA:[91m  0.02[0m 斜率: [91m+0.02[0m | 
+0066.HK |  $27.58 [91m +0.29%[0m | 量比:[97m    98.7%[0m | RSI:  81.4 [97m→[0m 83.2 | DIF:[91m  0.25[0m DEA:[91m  0.17[0m 斜率: [97m 0.00[0m | 
+0080.HK |   $0.47 [92m -2.08%[0m | 量比:[97m    86.8%[0m | RSI:  41.5 [92m↓[0m 37.5 | DIF:[92m -0.01[0m DEA:[92m  0.00[0m 斜率: [97m 0.00[0m | 
+0081.HK |   $2.33 [91m +1.30%[0m | 量比:[97m    92.9%[0m | RSI:  34.8 [91m↑[0m 48.7 | DIF:[92m -0.03[0m DEA:[92m -0.03[0m 斜率: [97m 0.00[0m | 
+0083.HK |   $9.86 [91m +1.23%[0m | 量比:[97m   101.3%[0m | RSI:  54.4 [91m↑[0m 66.5 | DIF:[91m  0.06[0m DEA:[91m  0.07[0m 斜率: [97m 0.00[0m | 
+0085.HK |   $1.58 [97m  0.00%[0m | 量比:[97m    89.6%[0m | RSI:  45.5 [97m→[0m 45.5 | DIF:[92m -0.03[0m DEA:[92m -0.02[0m 斜率: [97m 0.00[0m | 
+0087.HK |  $11.62 [91m +0.52%[0m | 量比:[92m    25.1%[0m | RSI:  34.8 [91m↑[0m 43.2 | DIF:[92m -0.02[0m DEA:[92m -0.00[0m 斜率: [97m 0.00[0m | 
+0101.HK |   $8.90 [97m  0.00%[0m | 量比:[97m    78.8%[0m | RSI:  52.3 [91m↑[0m 56.4 | DIF:[91m  0.04[0m DEA:[91m  0.05[0m 斜率: [97m 0.00[0m | 
+0107.HK |   $5.02 [92m -0.99%[0m | 量比:[92m    54.3%[0m | RSI:  70.6 [91m↑[0m 72.7 | DIF:[91m  0.10[0m DEA:[91m  0.10[0m 斜率: [97m 0.00[0m | 
+0116.HK |  $14.40 [91m +2.49%[0m | 量比:[97m    84.1%[0m | RSI:  45.7 [91m↑[0m 53.6 | DIF:[91m  0.02[0m DEA:[91m  0.06[0m 斜率: [91m+0.04[0m | 
+========================================================================================================================
+⚠️  本轮查询: 成功 30 | 失败 70
+🔔 本次扫描发现 0 个信号！`;
+        const html = ansi_up.ansi_to_html(terminalOutput);
+        document.getElementById('output').innerHTML = html;
+    </script>
+</body>
+</html>
