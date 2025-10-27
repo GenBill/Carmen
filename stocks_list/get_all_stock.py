@@ -1,6 +1,7 @@
 import pandas as pd
 from typing import List, Set
-
+from get_China_A_stock import get_china_a_stock_list
+from get_China_HK_stock import get_china_hk_stock_list
 
 def get_us_stock_list_from_files() -> List[str]:
     """
@@ -74,14 +75,22 @@ def is_valid_common_stock(symbol: str) -> bool:
     return True
 
 
-def get_stock_list(path: str = '') -> List[str]:
+def get_stock_list(path: str = '', mode: str = 'US') -> List[str]:
     """
     获取全美股票列表，包括 NASDAQ、NYSE 和 AMEX。
     """
     if path != '':
         return get_nasdaq_stock_symbols_from_file(path)
-    else:
+    elif mode == 'US':
         return get_us_stock_list_from_files()
+    elif mode == 'HK':
+        return get_china_hk_stock_list()
+    elif mode == 'A':
+        return get_china_a_stock_list()
+    elif mode == 'HK+A':
+        return get_china_hk_stock_list() + get_china_a_stock_list()
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
 
 
 if __name__ == "__main__":
