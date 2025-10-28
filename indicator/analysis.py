@@ -422,7 +422,7 @@ EMA(20) 最近{hourly_tail_long}小时: {format_series(hourly_ema_20_series)}
     return analysis_text
 
 def get_time_info(symbol: str) -> str:
-    if symbol.endswith(".HK"):
+    if symbol.endswith(".HK") or symbol.endswith(".SS") or symbol.endswith(".SZ"):
         now_hk = datetime.now(pytz.timezone('Asia/Hong_Kong'))
         time_info = f"""
         === 当前港股交易时间 ===
