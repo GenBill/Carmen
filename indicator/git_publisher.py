@@ -12,16 +12,18 @@ from typing import Optional
 class GitPublisher:
     """Git自动推送器（独立目录模式）"""
     
-    def __init__(self, repo_path: str = None, gh_pages_dir: str = None):
+    def __init__(self, repo_path: str = None, gh_pages_dir: str = None, force_push: bool = False):
         """
         初始化Git推送器
         
         Args:
             repo_path: 主仓库路径，默认为当前目录的父目录
             gh_pages_dir: gh-pages独立目录路径，默认为 repo_path/gh-pages
+            force_push: 是否强制推送，覆盖远端内容
         """
         self.repo_path = repo_path or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.gh_pages_dir = gh_pages_dir or os.path.join(self.repo_path, 'gh-pages')
+        self.force_push = force_push
         
         # 源文件路径
         self.html_file = os.path.join(self.repo_path, 'docs/index.html')
@@ -60,12 +62,13 @@ class GitPublisher:
         """检查gh-pages目录是否存在"""
         return os.path.exists(self.gh_pages_dir) and os.path.isdir(self.gh_pages_dir)
     
-    def publish(self, commit_message: Optional[str] = None) -> bool:
+    def publish(self, commit_message: Optional[str] = None, force_push: Optional[bool] = None) -> bool:
         """
         发布HTML到GitHub Pages
         
         Args:
             commit_message: 提交信息，默认为自动生成
+            force_push: 是否强制推送，覆盖远端内容。如果为None，使用初始化时的设置
             
         Returns:
             bool: 是否成功推送
@@ -98,6 +101,9 @@ class GitPublisher:
         
         try:
             # print(f"📁 gh-pages目录: {self.gh_pages_dir}")
+            
+            # 确定是否使用强制推送
+            use_force_push = force_push if force_push is not None else self.force_push
             
             # 确保目标目录存在
             os.makedirs(self.target_docs_dir, exist_ok=True)
@@ -149,7 +155,17 @@ class GitPublisher:
             
             # 推送到远程
             # print(f"🚀 推送到远程仓库...")
-            success, output = self._run_command(['git', 'push'], cwd=self.gh_pages_dir)
+            if use_force_push:
+                # 使用强制推送，覆盖远端内容
+                success, output = self._run_command(['git', 'push', '--force-with-lease'], cwd=self.gh_pages_dir)
+                if not success:
+                    # 如果--force-with-lease失败，尝试--force
+                    print(f"⚠️  --force-with-lease失败，尝试--force: {output}")
+                    success, output = self._run_command(['git', 'push', '--force'], cwd=self.gh_pages_dir)
+            else:
+                # 正常推送
+                success, output = self._run_command(['git', 'push'], cwd=self.gh_pages_dir)
+            
             if not success:
                 print(f"❌ 推送失败: {output}")
                 print(f"💡 提示: 请确保已配置远程仓库和推送权限")

@@ -1,5 +1,3 @@
-from cgi import test
-import os
 from openai import OpenAI
 
 class DeepSeekAPI:

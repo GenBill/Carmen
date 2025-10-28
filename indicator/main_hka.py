@@ -67,7 +67,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     """
     
     # 初始化Git推送器
-    git_publisher = GitPublisher(gh_pages_dir=github_branch) if enable_github_pages else None
+    git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
     
     # 清空输出缓冲区
     clear_output_buffer()
