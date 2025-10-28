@@ -46,7 +46,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
     """
     
     # 初始化Git推送器
-    git_publisher = GitPublisher(gh_pages_dir=github_branch) if enable_github_pages else None
+    git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
     
     # 状态跟踪变量
     last_market_status = None
