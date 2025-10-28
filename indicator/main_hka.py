@@ -22,7 +22,7 @@ import pytz
 from datetime import datetime
 import sys
 
-def get_hk_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.csv'):
+def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.csv'):
     """
     从CSV文件获取港股/A股列表
     
@@ -39,15 +39,18 @@ def get_hk_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.csv
         # 从Symbol列提取股票代码
         if 'Symbol' in df.columns:
             symbols = df['Symbol'].dropna().tolist()
-            return symbols
+            names = df['Name'].dropna().tolist()
+            return symbols, names
         else:
             print(f"⚠️ CSV文件中没有找到Symbol列")
-            return []
+            return [], []
     except Exception as e:
         print(f"⚠️ 读取股票列表失败: {e}")
-        return []
+        return [], []
 
-def main_hka(stock_path: str = 'stocks_list/cache/china_screener_HK.csv', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
+def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv', 
+             stock_pathA: str = 'stocks_list/cache/china_screener_A.csv',
+             rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
              avg_volume_days=8, enable_github_pages=True, github_branch='gh-pages'):
     """
     港A股市场扫描主函数
@@ -75,7 +78,13 @@ def main_hka(stock_path: str = 'stocks_list/cache/china_screener_HK.csv', rsi_pe
     current_time_str = now_beijing.strftime('%Y-%m-%d %H:%M:%S')
     
     # 获取港股/A股列表
-    stock_symbols = get_hk_stock_list(stock_path)
+    # stock_pathHK = 'stocks_list/cache/china_screener_HK.csv'
+    # stock_pathA = 'stocks_list/cache/china_screener_A.csv'
+
+    stock_symbols_HK, stock_names_HK = get_hka_stock_list(stock_pathHK)
+    stock_symbols_A, stock_names_A = get_hka_stock_list(stock_pathA)
+    stock_symbols = stock_symbols_HK + stock_symbols_A
+    stock_names = stock_names_HK + stock_names_A
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
     
     filtered_symbols = []
@@ -85,7 +94,7 @@ def main_hka(stock_path: str = 'stocks_list/cache/china_screener_HK.csv', rsi_pe
     stock_symbols = filtered_symbols
 
     # 获取自选股列表（用于显示判断）
-    watchlist_stocks = set(get_stock_list('my_stock_symbols_HK.txt'))
+    watchlist_stocks = set(get_stock_list('my_stock_symbols_HKA.txt'))
     
     # 限制扫描数量（避免扫描过多股票）
     max_stocks = 0  # 港股数据获取较慢，减少扫描数量
@@ -124,7 +133,7 @@ def main_hka(stock_path: str = 'stocks_list/cache/china_screener_HK.csv', rsi_pe
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
                 use_cache=True,
-                cache_minutes=720  # 24小时缓存
+                cache_minutes=240
             )
             
             if stock_data:
@@ -302,7 +311,8 @@ def flush_output():
 if __name__ == "__main__":
     
     # 配置参数
-    stock_path = 'stocks_list/cache/china_screener_HK.csv'  # 港股列表文件路径
+    stock_pathHK = 'stocks_list/cache/china_screener_HK.csv'  # 港股列表文件路径
+    stock_pathA = 'stocks_list/cache/china_screener_A.csv'  # A股列表文件路径
     
     # 技术指标参数（与美股保持一致）
     RSI_PERIOD = 8
@@ -317,7 +327,8 @@ if __name__ == "__main__":
     
     try:
         main_hka(
-            stock_path=stock_path,
+            stock_pathHK=stock_pathHK,
+            stock_pathA=stock_pathA,
             rsi_period=RSI_PERIOD,
             macd_fast=MACD_FAST,
             macd_slow=MACD_SLOW,
