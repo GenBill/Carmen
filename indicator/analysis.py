@@ -425,7 +425,7 @@ def get_time_info(symbol: str) -> str:
     if symbol.endswith(".HK") or symbol.endswith(".SS") or symbol.endswith(".SZ"):
         now_hk = datetime.now(pytz.timezone('Asia/Hong_Kong'))
         time_info = f"""
-        === 当前港股交易时间 ===
+        === 当前港A股交易时间 ===
         {now_hk.strftime('%Y-%m-%d %H:%M:%S')} {now_hk.tzname()} {now_hk.strftime('%A')}
         """
     else:
@@ -437,8 +437,8 @@ def get_time_info(symbol: str) -> str:
     return time_info
 
 def get_stock_type(symbol: str) -> str:
-    if symbol.endswith(".HK"):
-        return "港股"
+    if symbol.endswith(".HK") or symbol.endswith(".SS") or symbol.endswith(".SZ"):
+        return "港A股"
     else:
         return "美股"
 
