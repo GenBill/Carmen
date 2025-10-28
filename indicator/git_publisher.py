@@ -157,11 +157,7 @@ class GitPublisher:
             # print(f"🚀 推送到远程仓库...")
             if use_force_push:
                 # 使用强制推送，覆盖远端内容
-                success, output = self._run_command(['git', 'push', '--force-with-lease'], cwd=self.gh_pages_dir)
-                if not success:
-                    # 如果--force-with-lease失败，尝试--force
-                    print(f"⚠️  --force-with-lease失败，尝试--force: {output}")
-                    success, output = self._run_command(['git', 'push', '--force'], cwd=self.gh_pages_dir)
+                success, output = self._run_command(['git', 'push', '--force'], cwd=self.gh_pages_dir)
             else:
                 # 正常推送
                 success, output = self._run_command(['git', 'push'], cwd=self.gh_pages_dir)
