@@ -74,4 +74,40 @@ _INTRADAY_VOLUME_LUT = {
     '16:00': 1.00,   # 收盘，约占尾盘1/3
 }
 
+_INTRADAY_VOLUME_LUT_HK = {
+    '09:30': 0.05, 
+    '10:00': 0.20, 
+    '10:30': 0.40, 
+    '11:00': 0.45, 
+    '11:30': 0.50,
+    '12:00': 0.60,
+    '12:30': 0.60,
+    '13:00': 0.60,
+    '13:30': 0.70,
+    '14:00': 0.75,
+    '14:30': 0.80,
+    '15:00': 0.85,
+    '15:30': 0.90,
+    '16:00': 1.00,
+}
+
+_INTRADAY_VOLUME_LUT_A = {
+    '09:30': 0.05, 
+    '10:00': 0.20, 
+    '10:30': 0.40, 
+    '11:00': 0.50, 
+    '11:30': 0.60,
+    '12:00': 0.60,
+    '12:30': 0.60,
+    '13:00': 0.60,
+    '13:30': 0.75,
+    '14:00': 0.80,
+    '14:30': 0.85,
+    '15:00': 1.00,
+    '15:30': 1.00,
+    '16:00': 1.00,
+}
+
 INTRADAY_VOLUME_LUT = interpolate_volume_lut(_INTRADAY_VOLUME_LUT)
+INTRADAY_VOLUME_HK = interpolate_volume_lut(_INTRADAY_VOLUME_LUT_HK)
+INTRADAY_VOLUME_A = interpolate_volume_lut(_INTRADAY_VOLUME_LUT_A)

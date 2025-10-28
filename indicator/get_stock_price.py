@@ -8,7 +8,7 @@ import pickle
 from pathlib import Path
 import time
 
-from lut import INTRADAY_VOLUME_LUT
+from lut import INTRADAY_VOLUME_LUT, INTRADAY_VOLUME_HK, INTRADAY_VOLUME_A
 
 # 缓存目录
 CACHE_DIR = Path(__file__).parent / '.cache'
@@ -166,8 +166,100 @@ def is_market_time(current_et_time):
     
     return market_open <= current_time_minutes < market_close  # 注意：收盘不含16:00本身，若需含可改<=
 
+def estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=None, lunch_volume_multiplier=1.667):
+    """
+    港股/A股成交量估算（专用函数）
+    港股交易时间：早盘 9:30-12:00 CST，午盘 13:00-16:00 CST
+    午休时间：12:00-13:00 CST
+    
+    Args:
+        current_volume: 当前成交量
+        trading_date_timestamp: 交易日的时间戳（pandas Timestamp）
+        volume_lut: 成交量LUT表，None则使用默认表
+        lunch_volume_multiplier: 午休期间早盘成交量的倍率（默认1.667）
+        
+    Returns:
+        int: 估算的全天成交量
+    """
+    # 使用北京/香港时区（CST/HKT，UTC+8）
+    cst_tz = pytz.timezone('Asia/Shanghai')
+    
+    # 将交易日时间戳转换为北京时间
+    if trading_date_timestamp.tzinfo is None:
+        trading_date_cst = trading_date_timestamp.tz_localize('UTC').tz_convert(cst_tz)
+    else:
+        trading_date_cst = trading_date_timestamp.tz_convert(cst_tz)
+    
+    # 获取当前北京时间
+    current_cst = datetime.now(cst_tz)
+    
+    # 提取日期部分进行比较
+    trading_date_str = trading_date_cst.strftime('%Y-%m-%d')
+    current_date_str = current_cst.strftime('%Y-%m-%d')
+    
+    is_today = (trading_date_str == current_date_str)
+    
+    if not is_today:
+        # 不是今天的数据，直接返回原值（这是已收盘的完整数据）
+        return current_volume
+    
+    # 获取当前时间（CST）
+    current_time_minutes = current_cst.hour * 60 + current_cst.minute
+    
+    # 港股交易时间段（CST，北京时间）
+    # 早盘：9:30-12:00（150分钟）
+    # 午休：12:00-13:00（60分钟）
+    # 午盘：13:00-16:00（180分钟）
+    # 收盘后：16:00-次日9:30
+    
+    market_open_am = 9 * 60 + 30  # 9:30 CST
+    market_close_am = 12 * 60      # 12:00 CST
+    lunch_break_start = 12 * 60    # 12:00 CST
+    lunch_break_end = 13 * 60      # 13:00 CST
+    market_open_pm = 13 * 60       # 13:00 CST
+    market_close_pm = 16 * 60      # 16:00 CST
+    
+    # 判断当前时间
+    # 注意：脚本仅在午休时间和收盘后运行
+    if lunch_break_start <= current_time_minutes < lunch_break_end:
+        # 午休时段（12:00-13:00 CST）：早盘成交量 × 固定倍率
+        estimated_volume = int(current_volume * lunch_volume_multiplier)
+        return estimated_volume
+    elif current_time_minutes >= market_close_pm:
+        # 收盘后（16:00 CST之后）：直接使用当前成交量（已是全天成交量）
+        return current_volume
+    else:
+        # 交易时段（理论上不会到达这里，因为脚本不在此时运行）
+        # 但如果意外调用，使用LUT估算
+        if volume_lut is None:
+            volume_lut = INTRADAY_VOLUME_HK
+        
+        current_time_str = current_cst.strftime('%H:%M')
+        
+        # 查找最接近的时间点
+        time_keys = sorted(volume_lut.keys())
+        selected_ratio = None
+        
+        for time_key in time_keys:
+            if current_time_str <= time_key:
+                selected_ratio = volume_lut[time_key]
+                break
+        
+        # 如果当前时间超过最后一个时间点，使用1.0
+        if selected_ratio is None:
+            selected_ratio = 1.0
+        
+        # 估算全天成交量
+        if selected_ratio > 0:
+            estimated_volume = int(current_volume / selected_ratio)
+            return estimated_volume
+        else:
+            return current_volume
+
+
 def estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=None):
     """
+    美股成交量估算（原有函数）
     根据盘中当前时间和成交量估算全天成交量
     只在确认是当日盘中数据时才估算，否则返回原值
     
@@ -391,8 +483,17 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     # 当日成交量
     current_volume = last_trading_day['Volume']
     
+    # 判断是港股/A股还是美股
+    is_hk_stock = symbol.endswith('.HK')
+    is_a_stock = symbol.endswith('.SS') or symbol.endswith('.SZ')
+    
     # 估算全天成交量（只在确认是当日盘中数据时才估算）
-    estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
+    if is_hk_stock:
+        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_HK)
+    elif is_a_stock:
+        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_A)
+    else:
+        estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
     
     # 计算 RSI（获取完整序列以便提取前一日数据）
     rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
