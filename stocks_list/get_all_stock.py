@@ -39,7 +39,7 @@ def get_us_stock_list_from_files() -> List[str]:
 
     return sorted(list(all_tickers))
 
-def get_nasdaq_stock_symbols_from_file(path: str="us_stock_symbols.txt"):
+def get_simple_stock_symbols_from_file(path: str="my_stock_symbols.txt"):
     """从文件读取股票列表并过滤"""
     symbols = []
     with open(path, "r") as f:
@@ -47,42 +47,56 @@ def get_nasdaq_stock_symbols_from_file(path: str="us_stock_symbols.txt"):
             symbol = line.strip()
             if is_valid_common_stock(symbol):
                 symbols.append(symbol)
-    
-    print(f"从文件读取: 原始{sum(1 for _ in open(path))}个 -> 过滤后{len(symbols)}个普通股")
-    return symbols
-
-def get_simple_stock_symbols_from_file(path: str="my_stock_symbols.txt"):
-    """从文件读取股票列表并过滤"""
-    symbols = []
-    with open(path, "r") as f:
-        for line in f:
-            symbol = line.strip()
-            if symbol is not None and symbol != '':
-                symbols.append(symbol)
     return symbols
 
 def is_valid_common_stock(symbol: str) -> bool:
     """
     判断是否是有效的普通股票代码
     过滤掉权证、单位、优先股等特殊证券
-
+    
     Args:
         symbol: 股票代码
-
+        
     Returns:
         bool: True表示是普通股票
     """
     symbol = symbol.strip().upper()
-
     # 排除空代码
     if not symbol or len(symbol) < 1:
         return False
 
-    # 排除过长的代码（通常普通股是1-4个字母）
-    if len(symbol) >= 5:
-        return False
+    if '.HK' in symbol:
+        return len(symbol) == 4+3
+    
+    elif '.SS' in symbol:
+        return len(symbol) == 6+3
+    
+    elif '.SH' in symbol:
+        return len(symbol) == 6+3
+    
+    # 纯美股的情况
+    else: 
 
-    return True
+        # 排除特殊后缀：
+        # W - 权证 (Warrants)
+        # U - 单位 (Units)
+        # R - 权利 (Rights)  
+        # P - 优先股 (Preferred)
+        # 注意：纳斯达克规则是只有5个字符的股票代码，第5个字符才是特殊后缀
+        # 例如：AAPLW(5字符)是权证，但AAPL(4字符)、APP(3字符)、SERV(4字符)都是正常股票
+        special_suffixes = ['W', 'U', 'R', 'P', 'V']
+        
+        # 只检查5字符代码的最后一个字符
+        if len(symbol) == 5:
+            for suffix in special_suffixes:
+                if symbol.endswith(suffix):
+                    return False
+        
+        # 排除过长的代码（通常普通股是1-5个字母）
+        if len(symbol) > 5:
+            return False
+        
+        return True
 
 
 def get_stock_list(path: str = '', mode: str = 'US') -> List[str]:
