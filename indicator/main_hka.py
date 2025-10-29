@@ -133,7 +133,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
                 use_cache=True,
-                cache_minutes=240
+                cache_minutes=120
             )
             
             if stock_data:
