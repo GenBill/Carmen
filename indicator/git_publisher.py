@@ -62,6 +62,28 @@ class GitPublisher:
         """检查gh-pages目录是否存在"""
         return os.path.exists(self.gh_pages_dir) and os.path.isdir(self.gh_pages_dir)
     
+    def _should_copy_file(self, source_file: str, target_file: str) -> bool:
+        """
+        检查是否应该复制文件
+        
+        Args:
+            source_file: 源文件路径
+            target_file: 目标文件路径
+            
+        Returns:
+            bool: True表示应该复制，False表示不需要复制
+        """
+        # 如果目标文件不存在，需要复制
+        if not os.path.exists(target_file):
+            return True
+        
+        # 比较文件修改时间
+        source_mtime = os.path.getmtime(source_file)
+        target_mtime = os.path.getmtime(target_file)
+        
+        # 如果源文件比目标文件新，需要复制
+        return source_mtime > target_mtime
+    
     def publish(self, commit_message: Optional[str] = None, force_push: Optional[bool] = None) -> bool:
         """
         发布HTML到GitHub Pages
@@ -107,6 +129,12 @@ class GitPublisher:
             
             # 确保目标目录存在
             os.makedirs(self.target_docs_dir, exist_ok=True)
+
+            # 先pull再push
+            success, output = self._run_command(['git', 'pull'], cwd=self.gh_pages_dir)
+            if not success:
+                print(f"❌ Git Pull失败: {output}")
+                return False
             
             # 复制HTML文件
             import shutil
@@ -114,21 +142,25 @@ class GitPublisher:
             # 复制美股HTML
             if os.path.exists(self.html_file):
                 target_html = os.path.join(self.target_docs_dir, 'index.html')
-                shutil.copy2(self.html_file, target_html)
+                if self._should_copy_file(self.html_file, target_html):
+                    shutil.copy2(self.html_file, target_html)
             
             # 复制港A股HTML
             if os.path.exists(self.html_hka_file):
                 target_html_hka = os.path.join(self.target_docs_dir, 'index_hka.html')
-                shutil.copy2(self.html_hka_file, target_html_hka)
+                if self._should_copy_file(self.html_hka_file, target_html_hka):
+                    shutil.copy2(self.html_hka_file, target_html_hka)
             
             # 复制meta文件（如果存在）
             if os.path.exists(self.meta_file):
                 target_meta = os.path.join(self.target_docs_dir, 'meta.json')
-                shutil.copy2(self.meta_file, target_meta)
+                if self._should_copy_file(self.meta_file, target_meta):
+                    shutil.copy2(self.meta_file, target_meta)
             
             if os.path.exists(self.meta_hka_file):
                 target_meta_hka = os.path.join(self.target_docs_dir, 'meta_hka.json')
-                shutil.copy2(self.meta_hka_file, target_meta_hka)
+                if self._should_copy_file(self.meta_hka_file, target_meta_hka):
+                    shutil.copy2(self.meta_hka_file, target_meta_hka)
             
             # 添加文件到Git
             # print(f"\n📝 添加文件到暂存区...")
