@@ -81,10 +81,10 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     # stock_pathHK = 'stocks_list/cache/china_screener_HK.csv'
     # stock_pathA = 'stocks_list/cache/china_screener_A.csv'
 
-    stock_symbols_HK, stock_names_HK = get_hka_stock_list(stock_pathHK)
     stock_symbols_A, stock_names_A = get_hka_stock_list(stock_pathA)
-    stock_symbols = stock_symbols_HK + stock_symbols_A
-    stock_names = stock_names_HK + stock_names_A
+    stock_symbols_HK, stock_names_HK = get_hka_stock_list(stock_pathHK)
+    stock_symbols = stock_symbols_A + stock_symbols_HK
+    stock_names = stock_names_A + stock_names_HK
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
     
     filtered_symbols = []
