@@ -411,11 +411,23 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
             return False
     else:
         # 当前不在盘中（盘前/盘后/周末），只需要最新交易日数据
-        # 计算数据距今天数
-        days_old = (current_et.date() - last_data_date_et.date()).days
-        
-        # 如果数据是最近2天内的，认为有效（考虑周末和节假日）
-        return days_old <= 2
+        # 先判断缓存获取时段
+        if was_cached_during_market:
+            # 盘中获取的缓存，需要按cache_minutes检查
+            cache_age_minutes = (now - cached_time).total_seconds() / 60
+            return cache_age_minutes < cache_minutes
+        else:
+            # 非盘中获取的缓存，检查是否为最新交易日
+            current_date = current_et.date()
+            last_data_only_date = last_data_date_et.date()
+            
+            # 数据不是今天的，需要刷新
+            if last_data_only_date < current_date:
+                return False
+            
+            # 数据是今天的，检查缓存年龄
+            cache_age_minutes = (now - cached_time).total_seconds() / 60
+            return cache_age_minutes < cache_minutes
 
 
 def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
