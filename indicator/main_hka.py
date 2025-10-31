@@ -132,7 +132,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                 macd_slow=macd_slow,
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
-                use_cache=True,
+                use_cache=False,
                 cache_minutes=120
             )
             
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     
     # 基于本地进程内记录的上次运行时间，按每日 12:00 / 18:00 节点运行
     tz = pytz.timezone('Asia/Shanghai')
-    last_run_time = datetime.now(tz)
+    last_run_time = None  # 记录上次运行时间（进程内）
 
     while True:
         try:
@@ -344,11 +344,9 @@ if __name__ == "__main__":
             # 当天两个运行节点
             node_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
             node_evening = now.replace(hour=16, minute=30, second=0, microsecond=0)
-            node_test = now.replace(hour=21, minute=45, second=0, microsecond=0)
-            time_nodes = [node_noon, node_evening, node_test]
 
             # 已经过去的最近节点（若当前时间已超过该节点）
-            passed_nodes = [t for t in time_nodes if now >= t]
+            passed_nodes = [t for t in (node_noon, node_evening) if now >= t]
             last_node = max(passed_nodes) if passed_nodes else None
 
             should_run = False
@@ -357,7 +355,6 @@ if __name__ == "__main__":
                     should_run = True
 
             if should_run:
-                # print('Done!')
                 main_hka(
                     stock_pathHK=stock_pathHK,
                     stock_pathA=stock_pathA,
