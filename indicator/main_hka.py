@@ -218,6 +218,14 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     capture_output(f"⚠️  本轮查询: 成功 {success_count} | 失败 {failed_count}")
     capture_output(f"🔔 本次扫描发现 {alert_count} 个信号！")
     print_watchlist_summary()
+
+    # 显示成交量过滤器状态
+    volume_filter = get_volume_filter()
+    blacklist_summary = volume_filter.get_blacklist_summary()
+    capture_output(f"\n{blacklist_summary}")
+    
+    # 保存黑名单（如果有新增）
+    volume_filter.save_blacklist()
     
     # 生成HTML报告并推送到GitHub Pages
     if git_publisher and stocks_data_for_html:
@@ -325,20 +333,52 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True
     GITHUB_BRANCH = 'gh-pages'
     
-    try:
-        main_hka(
-            stock_pathHK=stock_pathHK,
-            stock_pathA=stock_pathA,
-            rsi_period=RSI_PERIOD,
-            macd_fast=MACD_FAST,
-            macd_slow=MACD_SLOW,
-            macd_signal=MACD_SIGNAL,
-            avg_volume_days=AVG_VOLUME_DAYS,
-            enable_github_pages=ENABLE_GITHUB_PAGES,
-            github_branch=GITHUB_BRANCH
-        )
-    except Exception as e:
-        print(f'❌ 程序运行失败: {e}')
-        import traceback
-        traceback.print_exc()
+    # 基于本地进程内记录的上次运行时间，按每日 12:00 / 18:00 节点运行
+    tz = pytz.timezone('Asia/Shanghai')
+    last_run_time = datetime.now(tz)
+
+    while True:
+        try:
+            now = datetime.now(tz)
+
+            # 当天两个运行节点
+            node_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+            node_evening = now.replace(hour=16, minute=30, second=0, microsecond=0)
+            node_test = now.replace(hour=21, minute=45, second=0, microsecond=0)
+            time_nodes = [node_noon, node_evening, node_test]
+
+            # 已经过去的最近节点（若当前时间已超过该节点）
+            passed_nodes = [t for t in time_nodes if now >= t]
+            last_node = max(passed_nodes) if passed_nodes else None
+
+            should_run = False
+            if last_node is not None:
+                if last_run_time is None or last_run_time < last_node:
+                    should_run = True
+
+            if should_run:
+                # print('Done!')
+                main_hka(
+                    stock_pathHK=stock_pathHK,
+                    stock_pathA=stock_pathA,
+                    rsi_period=RSI_PERIOD,
+                    macd_fast=MACD_FAST,
+                    macd_slow=MACD_SLOW,
+                    macd_signal=MACD_SIGNAL,
+                    avg_volume_days=AVG_VOLUME_DAYS,
+                    enable_github_pages=ENABLE_GITHUB_PAGES,
+                    github_branch=GITHUB_BRANCH
+                )
+                last_run_time = now
+
+        except KeyboardInterrupt:
+            print("\n⚠️  终止运行")
+            break
+        except Exception as e:
+            print(f'❌ 程序运行失败: {e}')
+            import traceback
+            traceback.print_exc()
+
+        # 每 10 分钟检查一次
+        time.sleep(600)
 
