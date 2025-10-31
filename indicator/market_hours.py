@@ -53,7 +53,7 @@ def get_market_status():
             status['message'] = '💤 夜盘时段'
         elif current_time < time(9, 30):
             status['message'] = '⏰ 盘前时段'
-        elif current_time < time(17, 0):
+        elif current_time < time(16, 30):
             status['message'] = '🌙 盘后时段（缓存缓冲）'
         elif current_time < time(20, 0):
             status['message'] = '🌙 盘后时段'
