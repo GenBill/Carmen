@@ -464,7 +464,7 @@ class VolumeFilter:
 
 
 # 全局过滤器实例
-min_volume_usd = 400 * 10000
+min_volume_usd = 1000 * 10000
 removal_multiplier = 2.0  # 移除需要达到2倍阈值（避免反复横跳）
 volume_filter = VolumeFilter(min_volume_usd=min_volume_usd, removal_multiplier=removal_multiplier)
 
