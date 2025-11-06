@@ -1,32 +1,24 @@
 {
-  "last_update": "2025-11-06T05:06:28.074630",
-  "last_update_readable": "2025-11-06 05:06:28",
-  "content_hash": "db65fe9ab79484ea773633938406cc7e",
+  "last_update": "2025-11-06T09:34:54.479028",
+  "last_update_readable": "2025-11-06 09:34:54",
+  "content_hash": "7a55788616bc225b90329bc539b0f075",
   "html_file": "docs/index.html",
-  "html_file_size": 22921,
-  "market_status": "🌙 盘后时段（缓存缓冲）",
-  "update_time": "2025-11-05 16:03:29 EST",
+  "html_file_size": 45531,
+  "market_status": "💤 夜盘时段",
+  "update_time": "2025-11-05 20:09:32 EST",
   "mode": "盘前/盘后模式",
   "stats": {
     "total_scanned": 2696,
-    "success_count": 2345,
-    "signal_count": 0,
+    "success_count": 2336,
+    "signal_count": 1,
     "blacklist_count": 0,
-    "stocks_displayed": 2345
+    "stocks_displayed": 2336
   },
   "config": {
     "rsi_period": 8,
     "macd_params": "8,17,9"
   },
   "update_history": [
-    {
-      "timestamp": "2025-11-04T09:39:21.296575",
-      "timestamp_readable": "2025-11-04 09:39:21",
-      "content_hash": "b399afdbcb469e084926d41605216cc8",
-      "market_status": "💤 夜盘时段",
-      "stocks_count": 2359,
-      "signals": 0
-    },
     {
       "timestamp": "2025-11-04T12:36:33.521428",
       "timestamp_readable": "2025-11-04 12:36:33",
@@ -98,6 +90,14 @@
       "market_status": "🌙 盘后时段（缓存缓冲）",
       "stocks_count": 2345,
       "signals": 0
+    },
+    {
+      "timestamp": "2025-11-06T09:34:54.479028",
+      "timestamp_readable": "2025-11-06 09:34:54",
+      "content_hash": "7a55788616bc225b90329bc539b0f075",
+      "market_status": "💤 夜盘时段",
+      "stocks_count": 2336,
+      "signals": 1
     }
   ],
   "total_updates": 10
