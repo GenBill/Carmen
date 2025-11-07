@@ -1,11 +1,11 @@
 {
-  "last_update": "2025-11-07T12:42:51.901441",
-  "last_update_readable": "2025-11-07 12:42:51",
-  "content_hash": "aba27b768a612afd81ec87cf0677afd2",
+  "last_update": "2025-11-07T17:05:58.552492",
+  "last_update_readable": "2025-11-07 17:05:58",
+  "content_hash": "c9fbdc77abe3860ea66607f428d03ee5",
   "html_file": "docs/index_hka.html",
-  "html_file_size": 29627,
+  "html_file_size": 20673,
   "market_status": "港A股市场扫描",
-  "update_time": "2025-11-07 12:06:43",
+  "update_time": "2025-11-07 16:33:05",
   "mode": "港A股市场模式",
   "stats": {
     "total_scanned": 7252,
@@ -19,14 +19,6 @@
     "macd_params": "8,17,9"
   },
   "update_history": [
-    {
-      "timestamp": "2025-11-05T17:34:08.819958",
-      "timestamp_readable": "2025-11-05 17:34:08",
-      "content_hash": "8bbbe5c04e856de926530de058017c6d",
-      "market_status": "港A股市场扫描",
-      "stocks_count": 5233,
-      "signals": 0
-    },
     {
       "timestamp": "2025-11-06T05:06:28.074630",
       "timestamp_readable": "2025-11-06 05:06:28",
@@ -95,6 +87,14 @@
       "timestamp": "2025-11-07T12:42:51.901441",
       "timestamp_readable": "2025-11-07 12:42:51",
       "content_hash": "aba27b768a612afd81ec87cf0677afd2",
+      "market_status": "港A股市场扫描",
+      "stocks_count": 5224,
+      "signals": 0
+    },
+    {
+      "timestamp": "2025-11-07T17:05:58.552492",
+      "timestamp_readable": "2025-11-07 17:05:58",
+      "content_hash": "c9fbdc77abe3860ea66607f428d03ee5",
       "market_status": "港A股市场扫描",
       "stocks_count": 5224,
       "signals": 0
