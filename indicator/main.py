@@ -13,6 +13,7 @@ from display_utils import print_stock_info, print_header, get_output_buffer, cap
 from volume_filter import get_volume_filter, filter_low_volume_stocks, should_filter_stock
 from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
+from qq_notifier import QQNotifier, load_qq_token
 
 import time
 import signal
@@ -25,7 +26,8 @@ def flush_output():
 
 def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
          avg_volume_days=8, poll_interval=10, use_cache=True, cache_minutes=5, offline_mode=False,
-         intraday_use_all_stocks=False, enable_github_pages=True, github_branch='gh-pages'):
+         intraday_use_all_stocks=False, enable_github_pages=True, github_branch='gh-pages',
+         enable_qq_notify=False, qq_key='', qq_number=''):
     """
     主循环函数，轮询股票数据（双模式：盘中/盘前盘后）
     
@@ -43,10 +45,16 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
         intraday_use_all_stocks: 盘中时段是否使用全股票列表，默认False（使用自选股）
         enable_github_pages: 是否启用GitHub Pages自动推送，默认True
         github_branch: GitHub Pages分支名，默认gh-pages
+        enable_qq_notify: 是否启用QQ推送，默认False
+        qq_key: Qmsg酱的KEY，在Qmsg酱官网登录后，在控制台可以获取KEY
+        qq_number: 接收消息的QQ号
     """
     
     # 初始化Git推送器
     git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
+    
+    # 初始化QQ推送器
+    qq_notifier = QQNotifier(key=qq_key, qq=qq_number) if (enable_qq_notify and qq_key and qq_number) else None
     
     # 状态跟踪变量
     last_market_status = None
@@ -128,6 +136,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             alert_count = 0
             failed_count = 0
             stocks_data_for_html = []  # 收集股票数据用于生成HTML
+            ai_analysis_cache = {}  # 缓存扫描时已分析的AI结果，供生成HTML时复用
 
             if offline_mode:
                 get_stock_data_func = get_stock_data_offline
@@ -174,6 +183,40 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                 )
                                 if backtest_result:
                                     backtest_str = f"({backtest_result.get('buy_count', 0)}/{backtest_result.get('total_days', 0)})"
+                                    confidence = backtest_result.get('buy_count', 0)/backtest_result.get('total_days', 0)
+                                    # 发送QQ推送
+                                    if qq_notifier and confidence >= 0.5:
+                                        price = stock_data.get('close', 0)
+                                        rsi = stock_data.get('rsi')
+                                        estimated_volume = stock_data.get('estimated_volume', 0)
+                                        avg_volume = stock_data.get('avg_volume', 1)
+                                        volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
+                                        
+                                        # 进行AI分析和提炼
+                                        max_buy_price = None
+                                        ai_win_rate = None
+                                        try:
+                                            from analysis import analyze_stock_with_ai, refine_ai_analysis
+                                            print(f"🤖 正在对 {symbol} 进行AI分析并提炼关键信息...")
+                                            ai_analysis = analyze_stock_with_ai(symbol, market="US")
+                                            ai_analysis_cache[symbol] = ai_analysis  # 保存分析结果，供生成HTML时复用
+                                            refined_info = refine_ai_analysis(ai_analysis, market="US")
+                                            max_buy_price = refined_info.get('max_buy_price')
+                                            ai_win_rate = refined_info.get('win_rate')
+                                            print(f"✅ {symbol} AI提炼完成: 最高买入价={max_buy_price}, 胜率={ai_win_rate}")
+                                        except Exception as e:
+                                            print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
+                                        
+                                        qq_notifier.send_buy_signal(
+                                            symbol=symbol,
+                                            price=price,
+                                            score=score[0],
+                                            backtest_str=backtest_str, 
+                                            rsi=rsi,
+                                            volume_ratio=volume_ratio,
+                                            max_buy_price=max_buy_price,
+                                            ai_win_rate=ai_win_rate
+                                        )
                             except Exception as e:
                                 # 回测失败不影响主流程
                                 pass
@@ -275,8 +318,11 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             symbol = stock['symbol']
                             print(f"🤖 正在分析 {symbol}...")
                             try:
-                                # 运行AI分析
-                                analysis_result = analyze_stock_with_ai(symbol)
+                                if symbol in ai_analysis_cache:
+                                    analysis_result = ai_analysis_cache[symbol]
+                                else:
+                                    analysis_result = analyze_stock_with_ai(symbol)
+                                
                                 ai_analysis_results.append({
                                     'symbol': symbol,
                                     'analysis': analysis_result,
@@ -411,6 +457,18 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True   # 是否启用GitHub Pages自动推送
     GITHUB_BRANCH = 'gh-pages'   # GitHub Pages分支名
     
+    # QQ推送配置
+    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
+    # 从token文件读取QQ配置
+    try:
+        QQ_KEY, QQ_NUMBER = load_qq_token()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"⚠️  无法加载QQ token: {e}")
+        print("⚠️  QQ推送功能已禁用")
+        ENABLE_QQ_NOTIFY = False
+        QQ_KEY = ''
+        QQ_NUMBER = ''
+    
     # 启动时清空旧缓存（可选，确保使用最新验证逻辑）
     CLEAR_CACHE_ON_START = False  # 设为True可清空启动时的缓存
     
@@ -440,7 +498,10 @@ if __name__ == "__main__":
             offline_mode=OFFLINE_MODE,
             intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
             enable_github_pages=ENABLE_GITHUB_PAGES,
-            github_branch=GITHUB_BRANCH
+            github_branch=GITHUB_BRANCH,
+            enable_qq_notify=ENABLE_QQ_NOTIFY,
+            qq_key=QQ_KEY,
+            qq_number=QQ_NUMBER
         )
     except KeyboardInterrupt:
         print('\n\n👋 程序已被用户中断，正在退出...')

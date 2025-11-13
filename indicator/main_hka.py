@@ -16,6 +16,7 @@ from volume_filter import get_volume_filter, should_filter_stock
 from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
 from alert_system import add_to_watchlist, print_watchlist_summary
+from qq_notifier import QQNotifier, load_qq_token
 
 import time
 import pytz
@@ -51,12 +52,14 @@ def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.cs
 def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv', 
              stock_pathA: str = 'stocks_list/cache/china_screener_A.csv',
              rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
-             avg_volume_days=8, enable_github_pages=True, github_branch='gh-pages'):
+             avg_volume_days=8, enable_github_pages=True, github_branch='gh-pages',
+             enable_qq_notify=False, qq_key='', qq_number=''):
     """
     港A股市场扫描主函数
     
     Args:
-        stock_path: 港股列表文件路径
+        stock_pathHK: 港股列表文件路径
+        stock_pathA: A股列表文件路径
         rsi_period: RSI 周期，默认 8
         macd_fast: MACD 快线周期，默认 8
         macd_slow: MACD 慢线周期，默认 17
@@ -64,10 +67,16 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
         avg_volume_days: 平均成交量计算天数，默认 8
         enable_github_pages: 是否启用GitHub Pages自动推送，默认True
         github_branch: GitHub Pages分支名，默认gh-pages
+        enable_qq_notify: 是否启用QQ推送，默认False
+        qq_key: Qmsg酱的KEY，在Qmsg酱官网登录后，在控制台可以获取KEY
+        qq_number: 接收消息的QQ号
     """
     
     # 初始化Git推送器
     git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
+    
+    # 初始化QQ推送器
+    qq_notifier = QQNotifier(key=qq_key, qq=qq_number) if (enable_qq_notify and qq_key and qq_number) else None
     
     # 清空输出缓冲区
     clear_output_buffer()
@@ -117,6 +126,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     alert_count = 0
     failed_count = 0
     stocks_data_for_html = []
+    ai_analysis_cache = {}  # 缓存扫描时已分析的AI结果，供生成HTML时复用
     
     for symbol in stock_symbols:
         try:
@@ -163,6 +173,41 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                         )
                         if backtest_result:
                             backtest_str = f"({backtest_result.get('buy_count', 0)}/{backtest_result.get('total_days', 0)})"
+                            confidence = backtest_result.get('buy_count', 0)/backtest_result.get('total_days', 0)
+                            # 发送QQ推送
+                            if qq_notifier and confidence >= 0.5:
+                                price = stock_data.get('close', 0)
+                                rsi = stock_data.get('rsi')
+                                estimated_volume = stock_data.get('estimated_volume', 0)
+                                avg_volume = stock_data.get('avg_volume', 1)
+                                volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
+                                
+                                # 进行AI分析和提炼
+                                max_buy_price = None
+                                ai_win_rate = None
+                                try:
+                                    from analysis import analyze_stock_with_ai, refine_ai_analysis
+                                    print(f"🤖 正在对 {symbol} 进行AI分析并提炼关键信息...")
+                                    ai_analysis = analyze_stock_with_ai(symbol, market="HKA")
+                                    ai_analysis_cache[symbol] = ai_analysis  # 保存分析结果，供生成HTML时复用
+                                    refined_info = refine_ai_analysis(ai_analysis, market="HKA")
+                                    max_buy_price = refined_info.get('max_buy_price')
+                                    ai_win_rate = refined_info.get('win_rate')
+                                    print(f"✅ {symbol} AI提炼完成: 最高买入价={max_buy_price}, 胜率={ai_win_rate}")
+                                except Exception as e:
+                                    print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
+                                
+                                qq_notifier.send_buy_signal(
+                                    symbol=symbol,
+                                    price=price,
+                                    score=score[0],
+                                    backtest_str=backtest_str, 
+                                    rsi=rsi,
+                                    volume_ratio=volume_ratio,
+                                    max_buy_price=max_buy_price,
+                                    ai_win_rate=ai_win_rate
+                                )
+                    
                     except Exception as e:
                         pass
                 
@@ -244,8 +289,11 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                     symbol = stock['symbol']
                     print(f"🤖 正在分析 {symbol}...")
                     try:
-                        # 运行AI分析（自动识别为港A股市场）
-                        analysis_result = analyze_stock_with_ai(symbol, market="HKA")
+                        if symbol in ai_analysis_cache:
+                            analysis_result = ai_analysis_cache[symbol]
+                        else:
+                            analysis_result = analyze_stock_with_ai(symbol, market="HKA")
+                        
                         ai_analysis_results.append({
                             'symbol': symbol,
                             'analysis': analysis_result,
@@ -333,6 +381,18 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True
     GITHUB_BRANCH = 'gh-pages'
     
+    # QQ推送配置
+    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
+    # 从token文件读取QQ配置
+    try:
+        QQ_KEY, QQ_NUMBER = load_qq_token()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"⚠️  无法加载QQ token: {e}")
+        print("⚠️  QQ推送功能已禁用")
+        ENABLE_QQ_NOTIFY = False
+        QQ_KEY = ''
+        QQ_NUMBER = ''
+    
     # 基于本地进程内记录的上次运行时间，按每日 12:00 / 18:00 节点运行
     tz = pytz.timezone('Asia/Shanghai')
     last_run_time = None  # 记录上次运行时间（进程内）
@@ -364,7 +424,10 @@ if __name__ == "__main__":
                     macd_signal=MACD_SIGNAL,
                     avg_volume_days=AVG_VOLUME_DAYS,
                     enable_github_pages=ENABLE_GITHUB_PAGES,
-                    github_branch=GITHUB_BRANCH
+                    github_branch=GITHUB_BRANCH,
+                    enable_qq_notify=ENABLE_QQ_NOTIFY,
+                    qq_key=QQ_KEY,
+                    qq_number=QQ_NUMBER
                 )
                 last_run_time = now
 

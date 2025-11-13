@@ -6,6 +6,7 @@ low_volume_blacklist.json
 
 agent/deepseek.token
 agent/okx.token
+indicator/qq.token
 
 trading_state.json
 indicator/analysis_cache/*
