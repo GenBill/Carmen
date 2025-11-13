@@ -306,12 +306,15 @@ class VolumeFilter:
         # 计算更新进度
         update_progress = days_since_earliest / self.update_cycle_days
         
+        total_stocks = len(self.blacklist)
+        
         if update_progress >= 1.0:
-            # 超过更新周期，全部更新
-            return len(self.blacklist)
+            # 超过更新周期，按正常周期分配每日配额（避免一次更新所有）
+            # 即使超过周期，每天也只更新总股票数的 1/更新周期天数
+            daily_quota = max(1, total_stocks // self.update_cycle_days)
+            return daily_quota * 2
         
         # 计算剩余需要更新的股票数量
-        total_stocks = len(self.blacklist)
         remaining_stocks = int(total_stocks * (1 - update_progress))
         remaining_days = self.update_cycle_days - days_since_earliest
         
