@@ -1,4 +1,4 @@
-
+import yfinance as yf
 
 def carmen_indicator(stock_data):
     """
@@ -212,9 +212,13 @@ def _get_historical_data_with_cache(symbol):
 
         # 策略2: 缓存不可用或数据不足，下载新的历史数据
         # print(f"📥 下载 {symbol} 历史数据 (5年, 目标>1000天)...")
-        import yfinance as yf
-        stock = yf.Ticker(symbol)
-        historical_data = stock.history(period="5y", timeout=15, progress=False)
+        # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
+        # auto_adjust=False 保持与 stock.history() 默认行为一致
+        historical_data = yf.download(symbol, period="5y", progress=False, auto_adjust=False)
+        
+        # 处理可能的双层列索引（单只股票时 yf.download 可能返回多层索引）
+        if not historical_data.empty and isinstance(historical_data.columns, pd.MultiIndex):
+            historical_data.columns = historical_data.columns.droplevel(1)
         
         if not historical_data.empty:
             return historical_data
