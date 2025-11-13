@@ -629,15 +629,19 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                     return None
                 
                 try:
-                    stock = yf.Ticker(symbol)
-                    
                     # 获取足够的历史数据以计算技术指标
                     # 数据越多，EMA越稳定。API调用次数与数据长度无关，所以尽可能多获取
                     # EMA需要足够的warmup期才能稳定，建议至少(慢线+信号线)*5 或 100天以上
                     # 对于MACD(8,17,9)：(17+9)*5 = 130天
                     # 对于MACD(12,26,9)：(26+9)*5 = 175天
                     # 使用1y获取约250天数据，精度最佳且API消耗不变
-                    hist = stock.history(period="1y", timeout=10, progress=False)
+                    # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
+                    # auto_adjust=False 保持与 stock.history() 默认行为一致
+                    hist = yf.download(symbol, period="1y", progress=False, auto_adjust=False)
+                    
+                    # 处理可能的双层列索引（单只股票时 yf.download 可能返回多层索引）
+                    if not hist.empty and isinstance(hist.columns, pd.MultiIndex):
+                        hist.columns = hist.columns.droplevel(1)
                     
                     if not hist.empty:
                         cache_source = "API"
