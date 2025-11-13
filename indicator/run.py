@@ -3,6 +3,7 @@ import sys
 import signal
 sys.path.append('..')
 from main import main
+from qq_notifier import load_qq_token
 
 if __name__ == "__main__":
 
@@ -30,6 +31,18 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True   # 是否启用GitHub Pages自动推送
     GITHUB_BRANCH = 'gh-pages'   # GitHub Pages分支名
     
+    # QQ推送配置
+    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
+    # 从token文件读取QQ配置
+    try:
+        QQ_KEY, QQ_NUMBER = load_qq_token()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"⚠️  无法加载QQ token: {e}")
+        print("⚠️  QQ推送功能已禁用")
+        ENABLE_QQ_NOTIFY = False
+        QQ_KEY = ''
+        QQ_NUMBER = ''
+    
     # 设置信号处理，优雅退出
     def signal_handler(sig, frame):
         print('\n\n👋 程序已被用户中断，正在退出...')
@@ -51,7 +64,10 @@ if __name__ == "__main__":
             offline_mode=OFFLINE_MODE,
             intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
             enable_github_pages=ENABLE_GITHUB_PAGES,
-            github_branch=GITHUB_BRANCH
+            github_branch=GITHUB_BRANCH,
+            enable_qq_notify=ENABLE_QQ_NOTIFY,
+            qq_key=QQ_KEY,
+            qq_number=QQ_NUMBER
         )
     
     except KeyboardInterrupt:
