@@ -101,7 +101,7 @@ class VolumeFilter:
             self.blacklist.remove(symbol)
             if symbol in self.blacklist_metadata:
                 del self.blacklist_metadata[symbol]
-            print(f"✅ 已从黑名单移除: {symbol}")
+            # print(f"✅ 已从黑名单移除: {symbol}")
     
     def filter_stocks(self, stock_symbols: List[str]) -> List[str]:
         """
