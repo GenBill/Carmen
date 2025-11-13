@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Set, Dict, List
+from tqdm import tqdm
 
 class VolumeFilter:
     """低成交量股票过滤器"""
@@ -380,50 +381,48 @@ class VolumeFilter:
         updated_count = 0
         removed_count = 0
         today = datetime.now().date().isoformat()
-        
-        for i, symbol in enumerate(candidates[:update_count]):
-            if stock_data_func is None:
-                # 如果没有数据获取函数，只移除最早添加的股票（模拟更新）
-                if symbol in self.blacklist:
-                    self.remove_from_blacklist(symbol)
-                    removed_count += 1
-                    updated_count += 1
-                continue
-            
-            try:
-                # 重新获取股票数据
-                stock_data = stock_data_func(symbol)
+
+        # 使用 tqdm 显示进度条
+        with tqdm(total=update_count, desc="更新黑名单", unit="iter", ncols=100) as pbar:
+            for i, symbol in enumerate(candidates[:update_count]):
+                if stock_data_func is None:
+                    continue
                 
-                # 使用更严格的移除条件（需要达到2倍阈值）
-                if stock_data and self.should_remove_from_blacklist(stock_data):
-                    # 股票成交量达到移除阈值，从黑名单中移除
-                    volume_usd = stock_data.get('avg_volume', 0) * stock_data.get('close', 0)
-                    self.remove_from_blacklist(symbol)
-                    removed_count += 1
-                    print(f"✅ {symbol} 已从黑名单移除: 成交金额 ${volume_usd:,.0f} (阈值: ${self.min_volume_usd * self.removal_multiplier:,.0f})")
-                else:
-                    # 股票仍然不满足条件，更新元数据和检查日期
-                    if stock_data:
-                        self.blacklist_metadata[symbol] = {
-                            'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
-                            'last_checked_date': today,  # 更新上次检查日期
-                            'last_checked': datetime.now().isoformat(),  # 详细时间戳
-                            'avg_volume': stock_data.get('avg_volume', 0),
-                            'avg_price': stock_data.get('close', 0),
-                            'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
-                            'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
-                        }
+                try:
+                    # 重新获取股票数据
+                    stock_data = stock_data_func(symbol)
+                    
+                    # 使用更严格的移除条件（需要达到2倍阈值）
+                    if stock_data and self.should_remove_from_blacklist(stock_data):
+                        # 股票成交量达到移除阈值，从黑名单中移除
+                        volume_usd = stock_data.get('avg_volume', 0) * stock_data.get('close', 0)
+                        self.remove_from_blacklist(symbol)
+                        removed_count += 1
+                        # 更新进度条显示移除信息
+                        pbar.set_postfix_str(f"Removed: {removed_count} | {symbol} ${volume_usd:,.0f}")
                     else:
-                        # 即使获取数据失败，也标记为已检查（避免重复失败）
-                        if symbol in self.blacklist_metadata:
-                            self.blacklist_metadata[symbol]['last_checked_date'] = today
-                            self.blacklist_metadata[symbol]['last_checked'] = datetime.now().isoformat()
-                
-                updated_count += 1
-                
-            except Exception as e:
-                print(f"⚠️  更新 {symbol} 时出错: {e}")
-                continue
+                        # 股票仍然不满足条件，更新元数据和检查日期
+                        if stock_data:
+                            self.blacklist_metadata[symbol] = {
+                                'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
+                                'last_checked_date': today,  # 更新上次检查日期
+                                'last_checked': datetime.now().isoformat(),  # 详细时间戳
+                                'avg_volume': stock_data.get('avg_volume', 0),
+                                'avg_price': stock_data.get('close', 0),
+                                'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
+                                'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
+                            }
+                        else:
+                            # 即使获取数据失败，也标记为已检查（避免重复失败）
+                            if symbol in self.blacklist_metadata:
+                                self.blacklist_metadata[symbol]['last_checked_date'] = today
+                                self.blacklist_metadata[symbol]['last_checked'] = datetime.now().isoformat()
+                    
+                    updated_count += 1
+                    pbar.update(1)
+                    
+                except Exception as e:
+                    continue
         
         # 统计今天已检查的总数
         checked_today = sum(1 for meta in self.blacklist_metadata.values() 
