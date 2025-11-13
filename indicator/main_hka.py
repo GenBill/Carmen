@@ -22,6 +22,7 @@ import time
 import pytz
 from datetime import datetime
 import sys
+import traceback
 
 def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.csv'):
     """
@@ -126,8 +127,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     alert_count = 0
     failed_count = 0
     stocks_data_for_html = []
-    ai_analysis_cache = {}  # 缓存扫描时已分析的AI结果，供生成HTML时复用
-    
+
     for symbol in stock_symbols:
         try:
             # 跳过明显无法获取的数据
@@ -172,10 +172,18 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                             avg_volume_days=avg_volume_days
                         )
                         if backtest_result:
-                            backtest_str = f"({backtest_result.get('buy_count', 0)}/{backtest_result.get('total_days', 0)})"
-                            confidence = backtest_result.get('buy_count', 0)/backtest_result.get('total_days', 0)
+                            buy_success, buy_total = 0, 0
+                            if 'buy_prob' in backtest_result:
+                                buy_success, buy_total = backtest_result['buy_prob']
+                            
+                            backtest_str = f"({buy_success}/{buy_total})"
+                            if buy_total > 0:
+                                confidence = buy_success / buy_total
+                            else:
+                                confidence = 0.0
+                            
                             # 发送QQ推送
-                            if qq_notifier and confidence >= 0.5:
+                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -189,7 +197,6 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                                     from analysis import analyze_stock_with_ai, refine_ai_analysis
                                     print(f"🤖 正在对 {symbol} 进行AI分析并提炼关键信息...")
                                     ai_analysis = analyze_stock_with_ai(symbol, market="HKA")
-                                    ai_analysis_cache[symbol] = ai_analysis  # 保存分析结果，供生成HTML时复用
                                     refined_info = refine_ai_analysis(ai_analysis, market="HKA")
                                     max_buy_price = refined_info.get('max_buy_price')
                                     ai_win_rate = refined_info.get('win_rate')
@@ -209,7 +216,8 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                                 )
                     
                     except Exception as e:
-                        pass
+                        print(f"⚠️  处理 {symbol} 回测时出错:")
+                        traceback.print_exc()
                 
                 # 打印股票信息
                 is_watchlist = symbol in watchlist_stocks
@@ -289,10 +297,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                     symbol = stock['symbol']
                     print(f"🤖 正在分析 {symbol}...")
                     try:
-                        if symbol in ai_analysis_cache:
-                            analysis_result = ai_analysis_cache[symbol]
-                        else:
-                            analysis_result = analyze_stock_with_ai(symbol, market="HKA")
+                        analysis_result = analyze_stock_with_ai(symbol, market="HKA")
                         
                         ai_analysis_results.append({
                             'symbol': symbol,
@@ -354,7 +359,6 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                 
         except Exception as e:
             print(f"⚠️  生成HTML或推送时出错: {e}")
-            import traceback
             traceback.print_exc()
 
 
@@ -436,7 +440,6 @@ if __name__ == "__main__":
             break
         except Exception as e:
             print(f'❌ 程序运行失败: {e}')
-            import traceback
             traceback.print_exc()
 
         # 每 10 分钟检查一次
