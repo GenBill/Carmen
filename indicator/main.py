@@ -17,6 +17,7 @@ from qq_notifier import QQNotifier, load_qq_token
 
 import time
 import signal
+import traceback
 
 # 强制刷新输出缓冲区，解决重定向时的缓冲问题
 def flush_output():
@@ -136,7 +137,6 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
             alert_count = 0
             failed_count = 0
             stocks_data_for_html = []  # 收集股票数据用于生成HTML
-            ai_analysis_cache = {}  # 缓存扫描时已分析的AI结果，供生成HTML时复用
 
             if offline_mode:
                 get_stock_data_func = get_stock_data_offline
@@ -182,10 +182,18 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                     avg_volume_days=avg_volume_days
                                 )
                                 if backtest_result:
-                                    backtest_str = f"({backtest_result.get('buy_count', 0)}/{backtest_result.get('total_days', 0)})"
-                                    confidence = backtest_result.get('buy_count', 0)/backtest_result.get('total_days', 0)
+                                    buy_success, buy_total = 0, 0
+                                    if 'buy_prob' in backtest_result:
+                                        buy_success, buy_total = backtest_result['buy_prob']
+                                    
+                                    backtest_str = f"({buy_success}/{buy_total})"
+                                    if buy_total > 0:
+                                        confidence = buy_success / buy_total
+                                    else:
+                                        confidence = 0.0
+                                    
                                     # 发送QQ推送
-                                    if qq_notifier and confidence >= 0.5:
+                                    if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
                                         price = stock_data.get('close', 0)
                                         rsi = stock_data.get('rsi')
                                         estimated_volume = stock_data.get('estimated_volume', 0)
@@ -199,7 +207,6 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                             from analysis import analyze_stock_with_ai, refine_ai_analysis
                                             print(f"🤖 正在对 {symbol} 进行AI分析并提炼关键信息...")
                                             ai_analysis = analyze_stock_with_ai(symbol, market="US")
-                                            ai_analysis_cache[symbol] = ai_analysis  # 保存分析结果，供生成HTML时复用
                                             refined_info = refine_ai_analysis(ai_analysis, market="US")
                                             max_buy_price = refined_info.get('max_buy_price')
                                             ai_win_rate = refined_info.get('win_rate')
@@ -218,8 +225,8 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                             ai_win_rate=ai_win_rate
                                         )
                             except Exception as e:
-                                # 回测失败不影响主流程
-                                pass
+                                print(f"⚠️  处理 {symbol} 回测时出错:")
+                                traceback.print_exc()
                         
                         # 检查报警条件
                         if score[0] >= 3:
@@ -318,10 +325,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                             symbol = stock['symbol']
                             print(f"🤖 正在分析 {symbol}...")
                             try:
-                                if symbol in ai_analysis_cache:
-                                    analysis_result = ai_analysis_cache[symbol]
-                                else:
-                                    analysis_result = analyze_stock_with_ai(symbol)
+                                analysis_result = analyze_stock_with_ai(symbol)
                                 
                                 ai_analysis_results.append({
                                     'symbol': symbol,
@@ -388,7 +392,6 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                     
                 except Exception as e:
                     print(f"⚠️  生成HTML或推送时出错: {e}")
-                    import traceback
                     traceback.print_exc()
             
             # 缓存当前状态和数据

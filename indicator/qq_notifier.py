@@ -70,14 +70,15 @@ class QQNotifier:
         msg_parts = [
             f"🔔 买入信号提醒",
             f"股票: {symbol}",
-            f"当前价格: ${price:.2f}",
+            f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
-            f"回测胜率: {backtest_str}",
+            f"回测胜率: {backtest_str[1:-1]}",
         ]
         
         # 添加AI提炼的信息
         if max_buy_price is not None:
-            msg_parts.append(f"最高买入价: ${max_buy_price:.2f}")
+            msg_parts.append(f"AI买入价: {max_buy_price:.2f}")
+            msg_parts.append(f"最高买入价: {max_buy_price*1.02:.2f}")
         
         if ai_win_rate is not None:
             msg_parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
