@@ -28,10 +28,16 @@ class QQNotifier:
         # 推送缓存：{symbol: last_push_timestamp}，避免重复推送
         self.push_cache = {}
         self.cache_hours = 8  # 缓存时间（小时）
+        
+        # 指数退避重试配置
+        self.max_retries = 4  # 最大重试次数
+        self.initial_wait = 1  # 初始等待时间（秒）
+        self.max_wait = 30  # 最大等待时间（秒）
+        self.backoff_multiplier = 2  # 退避倍数
     
     def send_message(self, msg: str) -> bool:
         """
-        发送QQ消息
+        发送QQ消息（带指数退避重试机制）
         
         Args:
             msg: 要发送的消息内容
@@ -39,17 +45,36 @@ class QQNotifier:
         Returns:
             bool: 是否发送成功
         """
-        try:
-            data = {
-                "msg": msg,
-                "qq": self.qq,
-            }
-            response = requests.post(self.url, data=data, timeout=10)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            print(f"⚠️  QQ推送失败: {e}")
-            return False
+        wait_time = self.initial_wait
+        
+        for attempt in range(self.max_retries + 1):  # 0到max_retries，共max_retries+1次尝试
+            try:
+                data = {
+                    "msg": msg,
+                    "qq": self.qq,
+                }
+                response = requests.post(self.url, data=data, timeout=10)
+                response.raise_for_status()
+                
+                # 如果之前有重试，打印成功信息
+                if attempt > 0:
+                    print(f"✅ QQ推送成功（第{attempt + 1}次尝试）")
+                
+                return True
+            except Exception as e:
+                # 如果是最后一次尝试，打印失败信息并返回
+                if attempt == self.max_retries:
+                    print(f"⚠️  QQ推送失败（已重试{self.max_retries}次）: {e}")
+                    return False
+                
+                # 不是最后一次尝试，等待后重试
+                print(f"⚠️  QQ推送失败（第{attempt + 1}次尝试）: {e}，{wait_time}秒后重试...")
+                time.sleep(wait_time)
+                
+                # 指数退避：等待时间翻倍，但不超过最大等待时间
+                wait_time = min(wait_time * self.backoff_multiplier, self.max_wait)
+        
+        return False
     
     def send_buy_signal(self, symbol: str, price: float, score: float, backtest_str: str, 
                        rsi: Optional[float] = None, volume_ratio: Optional[float] = None,
