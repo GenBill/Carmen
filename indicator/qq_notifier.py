@@ -4,6 +4,7 @@ QQ消息推送模块
 """
 import requests
 import os
+import time
 from typing import Optional, Tuple
 
 
@@ -24,6 +25,9 @@ class QQNotifier:
         self.url = f'https://qmsg.zendee.cn/send/{key}'
         # 群消息推送接口（备用）
         # self.url = f'https://qmsg.zendee.cn/group/{key}'
+        # 推送缓存：{symbol: last_push_timestamp}，避免重复推送
+        self.push_cache = {}
+        self.cache_hours = 8  # 缓存时间（小时）
     
     def send_message(self, msg: str) -> bool:
         """
@@ -51,7 +55,7 @@ class QQNotifier:
                        rsi: Optional[float] = None, volume_ratio: Optional[float] = None,
                        max_buy_price: Optional[float] = None, ai_win_rate: Optional[float] = None) -> bool:
         """
-        发送买入信号通知
+        发送买入信号通知（带缓存，避免重复推送）
         
         Args:
             symbol: 股票代码
@@ -64,8 +68,17 @@ class QQNotifier:
             ai_win_rate: AI预估的胜率（可选，0-1之间）
             
         Returns:
-            bool: 是否发送成功
+            bool: 是否发送成功（如果缓存时间内已推送过，返回False）
         """
+        # 检查缓存，避免缓存时间内重复推送
+        current_time = time.time()
+        if symbol in self.push_cache:
+            last_push_time = self.push_cache[symbol]
+            hours_passed = (current_time - last_push_time) / 3600
+            if hours_passed < self.cache_hours:
+                print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
+                return False
+        
         # 构建消息内容
         msg_parts = [
             f"🔔 买入信号提醒",
@@ -90,7 +103,13 @@ class QQNotifier:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
         
         msg = "\n".join(msg_parts)
-        return self.send_message(msg)
+        success = self.send_message(msg)
+        
+        # 如果发送成功，更新缓存
+        if success:
+            self.push_cache[symbol] = current_time
+        
+        return success
 
 
 def load_qq_token(token_path: str = None) -> Tuple[str, str]:

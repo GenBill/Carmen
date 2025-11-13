@@ -193,7 +193,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                         confidence = 0.0
                                     
                                     # 发送QQ推送
-                                    if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
+                                    if (not is_open) and qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
                                         price = stock_data.get('close', 0)
                                         rsi = stock_data.get('rsi')
                                         estimated_volume = stock_data.get('estimated_volume', 0)
@@ -224,6 +224,7 @@ def main(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signa
                                             max_buy_price=max_buy_price,
                                             ai_win_rate=ai_win_rate
                                         )
+                            
                             except Exception as e:
                                 print(f"⚠️  处理 {symbol} 回测时出错:")
                                 traceback.print_exc()
