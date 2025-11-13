@@ -195,12 +195,10 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                                 ai_win_rate = None
                                 try:
                                     from analysis import analyze_stock_with_ai, refine_ai_analysis
-                                    print(f"🤖 正在对 {symbol} 进行AI分析并提炼关键信息...")
                                     ai_analysis = analyze_stock_with_ai(symbol, market="HKA")
                                     refined_info = refine_ai_analysis(ai_analysis, market="HKA")
                                     max_buy_price = refined_info.get('max_buy_price')
                                     ai_win_rate = refined_info.get('win_rate')
-                                    print(f"✅ {symbol} AI提炼完成: 最高买入价={max_buy_price}, 胜率={ai_win_rate}")
                                 except Exception as e:
                                     print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
                                 
@@ -295,7 +293,6 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                 
                 for stock in buy_signal_stocks:
                     symbol = stock['symbol']
-                    print(f"🤖 正在分析 {symbol}...")
                     try:
                         analysis_result = analyze_stock_with_ai(symbol, market="HKA")
                         
@@ -305,7 +302,6 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                             'score_buy': stock.get('score_buy', 0),
                             'price': stock.get('price', 0)
                         })
-                        print(f"✅ {symbol} 分析完成")
                     except Exception as e:
                         print(f"⚠️ {symbol} 分析失败: {e}")
                         ai_analysis_results.append({

@@ -637,7 +637,7 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                     # 对于MACD(8,17,9)：(17+9)*5 = 130天
                     # 对于MACD(12,26,9)：(26+9)*5 = 175天
                     # 使用1y获取约250天数据，精度最佳且API消耗不变
-                    hist = stock.history(period="1y", timeout=10)
+                    hist = stock.history(period="1y", timeout=10, progress=False)
                     
                     if not hist.empty:
                         cache_source = "API"
