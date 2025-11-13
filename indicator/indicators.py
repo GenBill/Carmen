@@ -214,7 +214,7 @@ def _get_historical_data_with_cache(symbol):
         # print(f"📥 下载 {symbol} 历史数据 (5年, 目标>1000天)...")
         import yfinance as yf
         stock = yf.Ticker(symbol)
-        historical_data = stock.history(period="5y", timeout=15)
+        historical_data = stock.history(period="5y", timeout=15, progress=False)
         
         if not historical_data.empty:
             return historical_data

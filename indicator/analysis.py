@@ -58,10 +58,7 @@ def load_analysis_cache(symbol: str) -> Optional[Dict]:
         # 检查缓存是否过期
         cache_time = datetime.fromisoformat(cache_data['timestamp'])
         if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
-            print(f"📅 {symbol} 分析缓存已过期")
             return None
-        
-        # print(f"✅ {symbol} 命中分析缓存 (缓存时间: {cache_time.strftime('%Y-%m-%d %H:%M')})")
         return cache_data
     
     except Exception as e:
@@ -83,8 +80,6 @@ def save_analysis_cache(symbol: str, data_hash: str, analysis_result: str):
         cache_file = get_cache_file_path(symbol)
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
-        
-        print(f"💾 {symbol} 分析结果已缓存")
     
     except Exception as e:
         print(f"⚠️ 保存 {symbol} 分析缓存失败: {e}")
@@ -198,10 +193,10 @@ def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, p
         tuple: (日K线数据, 小时级数据)
     """
     # 获取日K线数据
-    daily_data = yf.download(symbol, period=f"{period_days}d", interval="1d", auto_adjust=True)
+    daily_data = yf.download(symbol, period=f"{period_days}d", interval="1d", auto_adjust=True, progress=False)
     
     # 获取小时级数据（最近30天）
-    hourly_data = yf.download(symbol, period="30d", interval="1h", auto_adjust=True)
+    hourly_data = yf.download(symbol, period="30d", interval="1h", auto_adjust=True, progress=False)
     
     return daily_data, hourly_data
 
@@ -570,7 +565,6 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
             market = "HKA"
         else:
             market = "US"
-    print(f"🔍 开始分析股票: {symbol}")
     
     # 1. 获取股票数据
     daily_data, hourly_data = get_stock_data(symbol, period_days)
@@ -578,7 +572,7 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
     if daily_data is None or daily_data.empty:
         return f"❌ 无法获取 {symbol} 的股票数据"
     
-    print(f"✅ 成功获取 {symbol} 数据: 日线{len(daily_data)}条, 小时线{len(hourly_data) if hourly_data is not None else 0}条")
+    # print(f"✅ 成功获取 {symbol} 数据: 日线{len(daily_data)}条, 小时线{len(hourly_data) if hourly_data is not None else 0}条")
     
     # 2. 计算数据哈希值
     data_hash = calculate_data_hash(symbol, daily_data, hourly_data)
@@ -586,19 +580,15 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
     # 3. 检查缓存
     cache_data = load_analysis_cache(symbol)
     if cache_data and cache_data.get('data_hash') == data_hash:
-        print(f"🚀 {symbol} 使用缓存结果，跳过AI分析")
+        # print(f"🚀 {symbol} 使用缓存结果，跳过AI分析")
         return cache_data['analysis']
     
     # 2. 计算技术指标
-    print("📊 计算技术指标...")
     daily_indicators = calculate_technical_indicators(daily_data)
     hourly_indicators = calculate_technical_indicators(hourly_data) if hourly_data is not None and not hourly_data.empty else {}
-    # print("✅ 技术指标计算完成")
     
     # 3. 格式化分析数据
-    print("📝 格式化分析数据...")
     analysis_data = format_analysis_data(symbol, daily_data, hourly_data, daily_indicators, hourly_indicators)
-    # print("✅ 数据格式化完成")
     
     # 4. 获取当前美股时间信息
     now_utc = datetime.utcnow()
@@ -658,8 +648,6 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
 """
     
     # 5. 调用DeepSeek API（传入市场类型）
-    print(f"🤖 调用DeepSeek AI进行分析（{market}市场）...")
-    # if True: return prompt
     ai_checkpoint = call_deepseek_api(prompt, market=market)
 
     # 6. 保存缓存
