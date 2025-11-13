@@ -250,6 +250,116 @@ def call_deepseek_api(prompt: str, market: str = "US") -> str:
     else:
         raise ValueError(f"Invalid market: {market}. Must be 'US' or 'HKA'")
 
+
+def refine_ai_analysis(ai_output: str, market: str = "US") -> dict:
+    """
+    将AI分析结果再喂给AI进行提炼，提取关键信息
+    
+    Args:
+        ai_output: AI的原始分析结果
+        market: 市场类型（"US"或"HKA"）
+        
+    Returns:
+        dict: 包含提炼后的信息，格式为 {
+            'max_buy_price': float or None,  # 最高买入价
+            'win_rate': float or None,  # 胜率（0-1之间）
+            'refined_text': str  # 提炼后的文本
+        }
+    """
+    # 构建提炼提示词
+    refine_prompt = f"""
+请从以下股票分析报告中，提炼出最关键的信息，并以简洁的格式输出：
+
+{ai_output}
+
+请提取以下信息：
+1. **最高买入价**：从分析中找出建议的最高买入价格（如果有多个价格区间，取上限）
+2. **预估胜率**：从分析中找出预估的短线胜率（如果是百分比，转换为0-1之间的小数）
+
+请以以下格式输出（每行一个）：
+最高买入价: [价格]
+预估胜率: [0-1之间的小数]
+
+然后简要总结关键信息（不超过3句话）。
+"""
+    
+    # 调用简易AI进行提炼（使用chat模型，更快更便宜）
+    try:
+        deepseek = DeepSeekAPI(
+            system_prompt="你是一个信息提炼助手，擅长从长文本中提取关键信息。",
+            model_type="deepseek-chat"  # 使用chat模型，更快
+        )
+        refined_output = deepseek(refine_prompt)
+        
+        # 解析提炼后的信息
+        import re
+        max_buy_price = None
+        win_rate = None
+        
+        # 提取最高买入价 - 更精确的正则表达式
+        price_patterns = [
+            r'最高买入价[：:]\s*\$?([\d.]+)',  # 最高买入价: $123.45 或 最高买入价: 123.45
+            r'买入价[：:]\s*\$?([\d.]+)',     # 买入价: $123.45
+            r'最高.*?([\d.]+)\s*[元美元]',     # 最高123.45元
+            r'建议.*?([\d.]+)\s*[元美元]',     # 建议123.45元
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, refined_output, re.IGNORECASE)
+            if match:
+                try:
+                    price = float(match.group(1))
+                    if max_buy_price is None or price > max_buy_price:
+                        max_buy_price = price
+                except:
+                    pass
+        
+        # 提取胜率 - 更精确的正则表达式
+        rate_patterns = [
+            r'胜率[：:]\s*([\d.]+)\s*%',      # 胜率: 65%
+            r'胜率[：:]\s*([\d.]+)\s*$',      # 胜率: 0.65
+            r'成功率[：:]\s*([\d.]+)\s*%',    # 成功率: 65%
+            r'预估胜率[：:]\s*([\d.]+)\s*%',  # 预估胜率: 65%
+            r'([\d.]+)\s*%.*?胜',             # 65%胜率
+        ]
+        
+        for pattern in rate_patterns:
+            match = re.search(pattern, refined_output, re.IGNORECASE)
+            if match:
+                try:
+                    rate = float(match.group(1))
+                    # 如果是百分比形式（>1），转换为小数
+                    if rate > 1:
+                        rate = rate / 100
+                    # 确保在0-1之间
+                    if 0 <= rate <= 1:
+                        win_rate = rate
+                        break
+                except:
+                    pass
+        
+        # 如果没有找到百分比形式，尝试找小数形式
+        if win_rate is None:
+            decimal_match = re.search(r'胜率[：:]\s*([01]\.\d+)', refined_output, re.IGNORECASE)
+            if decimal_match:
+                try:
+                    win_rate = float(decimal_match.group(1))
+                except:
+                    pass
+        
+        return {
+            'max_buy_price': max_buy_price,
+            'win_rate': win_rate,
+            'refined_text': refined_output
+        }
+    except Exception as e:
+        print(f"⚠️  AI提炼失败: {e}")
+        return {
+            'max_buy_price': None,
+            'win_rate': None,
+            'refined_text': ''
+        }
+
 def safe_get_value(series, default=None):
     """
     安全地从pandas Series获取最后一个值
@@ -456,7 +566,7 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
     """
     # 自动识别市场类型
     if market is None:
-        if symbol.endswith('.HK'):
+        if symbol.endswith('.HK') or symbol.endswith('.SS') or symbol.endswith('.SZ'):
             market = "HKA"
         else:
             market = "US"
