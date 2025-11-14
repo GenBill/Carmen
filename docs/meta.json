@@ -1,32 +1,24 @@
 {
-  "last_update": "2025-11-14T17:32:19.150019",
-  "last_update_readable": "2025-11-14 17:32:19",
-  "content_hash": "76fbab935d49f49f63d8fd97010242bc",
-  "html_file": "docs/index_hka.html",
-  "html_file_size": 34756,
-  "market_status": "港A股市场扫描",
-  "update_time": "2025-11-14 16:38:08",
-  "mode": "港A股市场模式",
+  "last_update": "2025-11-15T05:03:19.430743",
+  "last_update_readable": "2025-11-15 05:03:19",
+  "content_hash": "de234137b95b42c3669463fbb1d192d3",
+  "html_file": "docs/index.html",
+  "html_file_size": 10740,
+  "market_status": "🌙 盘后时段（缓存缓冲）",
+  "update_time": "2025-11-14 16:02:57 EST",
+  "mode": "盘前/盘后模式",
   "stats": {
-    "total_scanned": 7252,
-    "success_count": 5215,
+    "total_scanned": 2660,
+    "success_count": 2310,
     "signal_count": 0,
     "blacklist_count": 0,
-    "stocks_displayed": 5215
+    "stocks_displayed": 2310
   },
   "config": {
     "rsi_period": 8,
     "macd_params": "8,17,9"
   },
   "update_history": [
-    {
-      "timestamp": "2025-11-13T09:13:03.118454",
-      "timestamp_readable": "2025-11-13 09:13:03",
-      "content_hash": "3d4dd576f595c164f639c7f061e90a05",
-      "market_status": "💤 夜盘时段",
-      "stocks_count": 2285,
-      "signals": 0
-    },
     {
       "timestamp": "2025-11-13T12:45:07.270078",
       "timestamp_readable": "2025-11-13 12:45:07",
@@ -97,6 +89,14 @@
       "content_hash": "76fbab935d49f49f63d8fd97010242bc",
       "market_status": "港A股市场扫描",
       "stocks_count": 5215,
+      "signals": 0
+    },
+    {
+      "timestamp": "2025-11-15T05:03:19.430743",
+      "timestamp_readable": "2025-11-15 05:03:19",
+      "content_hash": "de234137b95b42c3669463fbb1d192d3",
+      "market_status": "🌙 盘后时段（缓存缓冲）",
+      "stocks_count": 2310,
       "signals": 0
     }
   ],
