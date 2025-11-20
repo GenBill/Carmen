@@ -618,7 +618,7 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
         # 2. 如果没有缓存或缓存过期，从API获取（带指数退避重试）
         if hist is None:
             # 避免过于频繁的API调用
-            time.sleep(0.1)
+            time.sleep(0.01)
             
             max_retries = 4   # 最多重试4次
             base_delay = 2    # 基础延迟2秒

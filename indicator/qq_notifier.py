@@ -27,7 +27,7 @@ class QQNotifier:
         # self.url = f'https://qmsg.zendee.cn/group/{key}'
         # 推送缓存：{symbol: last_push_timestamp}，避免重复推送
         self.push_cache = {}
-        self.cache_hours = 8  # 缓存时间（小时）
+        self.cache_hours = 1  # 缓存时间（小时）
         
         # 指数退避重试配置
         self.max_retries = 4  # 最大重试次数
