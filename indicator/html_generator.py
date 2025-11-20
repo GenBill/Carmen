@@ -50,17 +50,23 @@ def calculate_content_hash(data: dict) -> str:
     return hashlib.md5(content_str.encode()).hexdigest()
 
 
-def generate_html_report(report_data: dict, output_file: str = 'docs/index.html', is_hka_market: bool = False) -> bool:
+def generate_html_report(report_data: dict, output_file: str = 'docs/index.html', market_type: str = 'US', is_hka_market: bool = None) -> bool:
     """
     生成HTML报告（纯文本终端风格）
     
     Args:
         report_data: 包含股票数据、市场状态等信息的字典
         output_file: 输出HTML文件路径
+        market_type: 市场类型 ('US', 'HK', 'A', 'HKA')
+        is_hka_market: (Deprecated) 兼容旧代码，如果为True则market_type='HKA'
         
     Returns:
         bool: 是否生成新内容（内容有变化）
     """
+    
+    # 兼容旧代码
+    if is_hka_market is not None:
+        market_type = 'HKA' if is_hka_market else 'US'
     
     # 检查文件是否存在
     file_exists = os.path.exists(output_file)
@@ -95,25 +101,45 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     escaped_output = html.escape(terminal_output)
     
     # 生成HTML（使用ansi_up.js渲染ANSI颜色）
+    
+    # 确定页面标题
+    titles = {
+        'US': '美股监控',
+        'HK': '港股监控',
+        'A': 'A股监控',
+        'HKA': '港A股监控'
+    }
+    page_title = titles.get(market_type, '股票监控')
+    
     # 生成导航栏HTML
-    nav_html = ''
-    if not is_hka_market:
-        # 美股页面，添加切换到港A股的链接
-        nav_html = """
+    # 定义导航链接
+    nav_links = [
+        {'type': 'US', 'text': '🇺🇸 美股', 'href': 'index.html'},
+        {'type': 'HK', 'text': '🇭🇰 港股', 'href': 'index_hk.html'},
+        {'type': 'A', 'text': '🇨🇳 A股', 'href': 'index_a.html'},
+        {'type': 'HKA', 'text': '🇭🇰🇨🇳 港A股', 'href': 'index_hka.html'}
+    ]
+    
+    nav_items_html = []
+    for link in nav_links:
+        # 只有当不是HKA模式，或者当前就是HKA模式时才显示HKA链接（避免混乱，或者全部显示）
+        # 这里全部显示，方便跳转
+        
+        is_active = (link['type'] == market_type)
+        bg_color = '#238636' if is_active else '#21262d'
+        text_color = '#ffffff' if is_active else '#8b949e' # active时白色，inactive时灰色
+        if is_active:
+             # active link style
+             style = f"color: #58a6ff; text-decoration: none; padding: 8px 16px; background: {bg_color}; border-radius: 4px;"
+        else:
+             style = f"color: {text_color}; text-decoration: none; padding: 8px 16px; background: {bg_color}; border-radius: 4px;"
+             
+        nav_items_html.append(f'<a href="{link["href"]}" style="{style}">{link["text"]}</a>')
+    
+    nav_html = f"""
         <nav style="background: #0d1117; padding: 10px 0; margin-bottom: 20px; border-bottom: 1px solid #30363d;">
             <div style="max-width: 1800px; margin: 0 auto; padding: 0 20px; display: flex; gap: 10px;">
-                <a href="index.html" style="color: #58a6ff; text-decoration: none; padding: 8px 16px; background: #238636; border-radius: 4px;">🇺🇸 美股</a>
-                <a href="index_hka.html" style="color: #8b949e; text-decoration: none; padding: 8px 16px; background: #21262d; border-radius: 4px;">🇭🇰🇨🇳 港A股</a>
-            </div>
-        </nav>
-        """
-    else:
-        # 港A股页面，添加切换到美股的链接
-        nav_html = """
-        <nav style="background: #0d1117; padding: 10px 0; margin-bottom: 20px; border-bottom: 1px solid #30363d;">
-            <div style="max-width: 1800px; margin: 0 auto; padding: 0 20px; display: flex; gap: 10px;">
-                <a href="index.html" style="color: #8b949e; text-decoration: none; padding: 8px 16px; background: #21262d; border-radius: 4px;">🇺🇸 美股</a>
-                <a href="index_hka.html" style="color: #58a6ff; text-decoration: none; padding: 8px 16px; background: #238636; border-radius: 4px;">🇭🇰🇨🇳 港A股</a>
+                {''.join(nav_items_html)}
             </div>
         </nav>
         """
@@ -124,7 +150,7 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta data-hash="{new_hash}">
-    <title>Carmen Stock Scanner - {'港A股监控' if is_hka_market else '美股监控'}</title>
+    <title>Carmen Stock Scanner - {page_title}</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
         * {{
@@ -262,7 +288,7 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
 <body>
     {nav_html}
     <div class="container">
-        <div class="header">Carmen Stock Scanner - {'港A股监控' if is_hka_market else '美股监控'}</div>
+        <div class="header">Carmen Stock Scanner - {page_title}</div>
         <pre id="output"></pre>
         
         <!-- AI分析结果部分 -->

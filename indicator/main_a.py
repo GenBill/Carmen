@@ -1,6 +1,6 @@
 """
-港A股市场扫描主程序
-专用于港股和A股市场扫描，每天北京时间18:00运行一次
+A股市场扫描主程序
+专用于A股市场扫描，每天北京时间11:30和15:05运行
 """
 
 import sys
@@ -24,9 +24,9 @@ from datetime import datetime
 import sys
 import traceback
 
-def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.csv'):
+def get_stock_list_from_csv(stock_path: str):
     """
-    从CSV文件获取港股/A股列表
+    从CSV文件获取股票列表
     
     Args:
         stock_path: 股票列表CSV文件路径
@@ -41,7 +41,7 @@ def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.cs
         # 从Symbol列提取股票代码
         if 'Symbol' in df.columns:
             symbols = df['Symbol'].dropna().tolist()
-            names = df['Name'].dropna().tolist()
+            names = df['Name'].dropna().tolist() if 'Name' in df.columns else []
             return symbols, names
         else:
             print(f"⚠️ CSV文件中没有找到Symbol列")
@@ -50,17 +50,15 @@ def get_hka_stock_list(stock_path: str = 'stocks_list/cache/china_screener_HK.cs
         print(f"⚠️ 读取股票列表失败: {e}")
         return [], []
 
-def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv', 
-             stock_pathA: str = 'stocks_list/cache/china_screener_A.csv',
+def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv', 
              rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
              avg_volume_days=8, enable_github_pages=True, github_branch='gh-pages',
              enable_qq_notify=False, qq_key='', qq_number=''):
     """
-    港A股市场扫描主函数
+    A股市场扫描主函数
     
     Args:
-        stock_pathHK: 港股列表文件路径
-        stock_pathA: A股列表文件路径
+        stock_path: A股列表文件路径
         rsi_period: RSI 周期，默认 8
         macd_fast: MACD 快线周期，默认 8
         macd_slow: MACD 慢线周期，默认 17
@@ -82,40 +80,29 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
     # 清空输出缓冲区
     clear_output_buffer()
     
-    # 获取当前时间（北京/香港时间）
+    # 获取当前时间（北京时间）
     beijing_tz = pytz.timezone('Asia/Shanghai')
     now_beijing = datetime.now(beijing_tz)
     current_time_str = now_beijing.strftime('%Y-%m-%d %H:%M:%S')
     
-    # 获取港股/A股列表
-    # stock_pathHK = 'stocks_list/cache/china_screener_HK.csv'
-    # stock_pathA = 'stocks_list/cache/china_screener_A.csv'
-
-    stock_symbols_A, stock_names_A = get_hka_stock_list(stock_pathA)
-    stock_symbols_HK, stock_names_HK = get_hka_stock_list(stock_pathHK)
-    stock_symbols = stock_symbols_A + stock_symbols_HK
-    stock_names = stock_names_A + stock_names_HK
+    # 获取A股列表
+    stock_symbols, stock_names = get_stock_list_from_csv(stock_path)
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
     
-    filtered_symbols = []
-    for s in stock_symbols:
-        filtered_symbols.append(s)
-    
-    stock_symbols = filtered_symbols
-
     # 获取自选股列表（用于显示判断）
+    # 注意：这里我们仍然可以加载HKA的自选股，或者新建一个A股自选列表。暂时复用HKA。
     watchlist_stocks = set(get_stock_list('my_stock_symbols_HKA.txt'))
     
-    # 限制扫描数量（避免扫描过多股票）
-    max_stocks = 0  # 港股数据获取较慢，减少扫描数量
+    # 限制扫描数量
+    max_stocks = 0  
     if len(stock_symbols) > max_stocks and max_stocks > 0:
         print(f"⚠️ 股票数量过多({len(stock_symbols)}只)，限制为前{max_stocks}只")
         stock_symbols = stock_symbols[:max_stocks]
     
     # 打印状态栏
     print(f"\n{'='*120}")
-    capture_output(f"⏰ 港A股市场扫描 | {current_time_str} CST")
-    capture_output(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | 港A股市场")
+    capture_output(f"⏰ A股市场扫描 | {current_time_str} CST")
+    capture_output(f"查询 {len(stock_symbols)} 只股票 | RSI{rsi_period} | MACD({macd_fast},{macd_slow},{macd_signal}) | A股市场")
     
     flush_output()
     
@@ -195,6 +182,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                                 ai_win_rate = None
                                 try:
                                     from analysis import analyze_stock_with_ai, refine_ai_analysis
+                                    # A股使用HKA模式进行分析
                                     ai_analysis = analyze_stock_with_ai(symbol, market="HKA")
                                     refined_info = refine_ai_analysis(ai_analysis, market="HKA")
                                     max_buy_price = refined_info.get('max_buy_price')
@@ -283,7 +271,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.4的股票并运行AI分析（港A股）
+            # 筛选买入评分>=2.4的股票并运行AI分析（A股）
             buy_signal_stocks = [stock for stock in stocks_data_for_html if stock.get('score_buy', 0) >= 2.4]
             ai_analysis_results = []
             
@@ -294,6 +282,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                 for stock in buy_signal_stocks:
                     symbol = stock['symbol']
                     try:
+                        # 仍然使用HKA模式，因为A股和HK市场特点相似
                         analysis_result = analyze_stock_with_ai(symbol, market="HKA")
                         
                         ai_analysis_results.append({
@@ -315,9 +304,9 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
             report_data = prepare_report_data(
                 stocks_data=stocks_data_for_html,
                 market_info={
-                    'status': '港A股市场扫描',
+                    'status': 'A股市场扫描',
                     'current_time': current_time_str,
-                    'mode': '港A股市场模式'
+                    'mode': 'A股市场模式'
                 },
                 stats={
                     'total_scanned': len(stock_symbols),
@@ -339,15 +328,14 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
             )
             
             # 生成HTML
-            # 注意：这里使用不同的文件名，以便与美股区分
-            output_file = 'docs/index_hka.html'
-            content_changed = generate_html_report(report_data, output_file, is_hka_market=True)
+            output_file = 'docs/index_a.html'
+            content_changed = generate_html_report(report_data, output_file, market_type="A")
             
             if content_changed:
                 if git_publisher.publish(): 
                     pages_url = git_publisher.get_pages_url()
                     if pages_url:
-                        print(f"🌐 访问港A股页面: {pages_url}index_hka.html")
+                        print(f"🌐 访问A股页面: {pages_url}index_a.html")
                 else: 
                     print("⚠️  推送失败，请检查Git配置")
             else:
@@ -367,7 +355,6 @@ def flush_output():
 if __name__ == "__main__":
     
     # 配置参数
-    stock_pathHK = 'stocks_list/cache/china_screener_HK.csv'  # 港股列表文件路径
     stock_pathA = 'stocks_list/cache/china_screener_A.csv'  # A股列表文件路径
     
     # 技术指标参数（与美股保持一致）
@@ -393,13 +380,13 @@ if __name__ == "__main__":
         QQ_KEY = ''
         QQ_NUMBER = ''
     
-    # 基于本地进程内记录的上次运行时间，按每日 12:00 / 16:30 节点运行
+    # 基于本地进程内记录的上次运行时间
     tz = pytz.timezone('Asia/Shanghai')
     
     def load_last_run_time():
         try:
-            if os.path.exists('.last_run_hka'):
-                with open('.last_run_hka', 'r') as f:
+            if os.path.exists('.last_run_a'):
+                with open('.last_run_a', 'r') as f:
                     timestamp = float(f.read().strip())
                     return datetime.fromtimestamp(timestamp, tz)
         except Exception:
@@ -408,7 +395,7 @@ if __name__ == "__main__":
 
     def save_last_run_time(dt):
         try:
-            with open('.last_run_hka', 'w') as f:
+            with open('.last_run_a', 'w') as f:
                 f.write(str(dt.timestamp()))
         except Exception:
             pass
@@ -419,12 +406,12 @@ if __name__ == "__main__":
         try:
             now = datetime.now(tz)
 
-            # 当天两个运行节点
-            node_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
-            node_evening = now.replace(hour=16, minute=30, second=0, microsecond=0)
+            # A股运行节点: 11:30(午休), 15:05(收盘)
+            node_noon = now.replace(hour=11, minute=35, second=0, microsecond=0)
+            node_close = now.replace(hour=15, minute=10, second=0, microsecond=0)
 
-            # 已经过去的最近节点（若当前时间已超过该节点）
-            passed_nodes = [t for t in (node_noon, node_evening) if now >= t]
+            # 已经过去的最近节点
+            passed_nodes = [t for t in (node_noon, node_close) if now >= t]
             last_node = max(passed_nodes) if passed_nodes else None
 
             should_run = False
@@ -433,9 +420,8 @@ if __name__ == "__main__":
                     should_run = True
 
             if should_run:
-                main_hka(
-                    stock_pathHK=stock_pathHK,
-                    stock_pathA=stock_pathA,
+                main_a(
+                    stock_path=stock_pathA,
                     rsi_period=RSI_PERIOD,
                     macd_fast=MACD_FAST,
                     macd_slow=MACD_SLOW,
@@ -459,4 +445,3 @@ if __name__ == "__main__":
 
         # 每 10 分钟检查一次
         time.sleep(600)
-
