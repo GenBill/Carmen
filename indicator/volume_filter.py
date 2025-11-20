@@ -5,6 +5,7 @@
 
 import os
 import json
+import math
 from pathlib import Path
 from datetime import datetime
 from typing import Set, Dict, List
@@ -80,8 +81,14 @@ class VolumeFilter:
         """
         symbol = symbol.upper()
         if symbol not in self.blacklist:
+            # Sanitize inputs to ensure JSON compliance (no NaN)
+            if avg_price is None or (isinstance(avg_price, float) and math.isnan(avg_price)):
+                avg_price = 0.0
+            if avg_volume is None or (isinstance(avg_volume, float) and math.isnan(avg_volume)):
+                avg_volume = 0
+            
             # 计算成交金额
-            volume_usd = avg_volume * avg_price if avg_price else 0
+            volume_usd = avg_volume * avg_price
             
             self.blacklist.add(symbol)
             self.blacklist_metadata[symbol] = {
@@ -391,6 +398,16 @@ class VolumeFilter:
                 try:
                     # 重新获取股票数据
                     stock_data = stock_data_func(symbol)
+                    
+                    # Sanitize stock_data to prevent NaN values in JSON
+                    if stock_data:
+                        val_vol = stock_data.get('avg_volume')
+                        if val_vol is None or (isinstance(val_vol, float) and math.isnan(val_vol)):
+                            stock_data['avg_volume'] = 0
+                            
+                        val_close = stock_data.get('close')
+                        if val_close is None or (isinstance(val_close, float) and math.isnan(val_close)):
+                            stock_data['close'] = 0.0
                     
                     # 使用更严格的移除条件（需要达到2倍阈值）
                     if stock_data and self.should_remove_from_blacklist(stock_data):
