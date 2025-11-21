@@ -150,11 +150,11 @@ class GitPublisher:
                 if self._should_copy_file(self.html_file, target_html):
                     shutil.copy2(self.html_file, target_html)
             
-            # 复制港A股HTML
-            if os.path.exists(self.html_hka_file):
-                target_html_hka = os.path.join(self.target_docs_dir, 'index_hka.html')
-                if self._should_copy_file(self.html_hka_file, target_html_hka):
-                    shutil.copy2(self.html_hka_file, target_html_hka)
+            # # 复制港A股HTML
+            # if os.path.exists(self.html_hka_file):
+            #     target_html_hka = os.path.join(self.target_docs_dir, 'index_hka.html')
+            #     if self._should_copy_file(self.html_hka_file, target_html_hka):
+            #         shutil.copy2(self.html_hka_file, target_html_hka)
             
             # 复制A股HTML
             if os.path.exists(self.html_a_file):
