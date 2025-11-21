@@ -27,12 +27,12 @@ class GitPublisher:
         
         # 源文件路径
         self.html_file = os.path.join(self.repo_path, 'docs/index.html')
-        self.html_hka_file = os.path.join(self.repo_path, 'docs/index_hka.html')
+        # self.html_hka_file = os.path.join(self.repo_path, 'docs/index_hka.html')
         self.html_a_file = os.path.join(self.repo_path, 'docs/index_a.html')
         self.html_hk_file = os.path.join(self.repo_path, 'docs/index_hk.html')
         
         self.meta_file = os.path.join(self.repo_path, 'docs/meta.json')
-        self.meta_hka_file = os.path.join(self.repo_path, 'docs/meta_hka.json')
+        # self.meta_hka_file = os.path.join(self.repo_path, 'docs/meta_hka.json')
         self.meta_a_file = os.path.join(self.repo_path, 'docs/meta_a.json')
         self.meta_hk_file = os.path.join(self.repo_path, 'docs/meta_hk.json')
         
@@ -118,9 +118,9 @@ class GitPublisher:
         if not os.path.exists(self.html_file):
             print(f"❌ HTML文件不存在: {self.html_file}")
             return False
-        if not os.path.exists(self.html_hka_file):
-            print(f"❌ HTML文件不存在: {self.html_hka_file}")
-            return False
+        # if not os.path.exists(self.html_hka_file):
+        #     print(f"❌ HTML文件不存在: {self.html_hka_file}")
+        #     return False
         
         # print(f"\n{'='*60}")
         # print(f"📤 开始推送到 GitHub Pages...")
