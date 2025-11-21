@@ -116,8 +116,7 @@ def generate_html_report(report_data: dict, output_file: str = 'docs/index.html'
     nav_links = [
         {'type': 'US', 'text': '🇺🇸 美股', 'href': 'index.html'},
         {'type': 'HK', 'text': '🇭🇰 港股', 'href': 'index_hk.html'},
-        {'type': 'A', 'text': '🇨🇳 A股', 'href': 'index_a.html'},
-        {'type': 'HKA', 'text': '🇭🇰🇨🇳 港A股', 'href': 'index_hka.html'}
+        {'type': 'A', 'text': '🇨🇳 A股', 'href': 'index_a.html'}
     ]
     
     nav_items_html = []
