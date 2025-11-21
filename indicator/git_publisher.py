@@ -28,8 +28,13 @@ class GitPublisher:
         # 源文件路径
         self.html_file = os.path.join(self.repo_path, 'docs/index.html')
         self.html_hka_file = os.path.join(self.repo_path, 'docs/index_hka.html')
+        self.html_a_file = os.path.join(self.repo_path, 'docs/index_a.html')
+        self.html_hk_file = os.path.join(self.repo_path, 'docs/index_hk.html')
+        
         self.meta_file = os.path.join(self.repo_path, 'docs/meta.json')
         self.meta_hka_file = os.path.join(self.repo_path, 'docs/meta_hka.json')
+        self.meta_a_file = os.path.join(self.repo_path, 'docs/meta_a.json')
+        self.meta_hk_file = os.path.join(self.repo_path, 'docs/meta_hk.json')
         
         # 目标文件路径
         self.target_docs_dir = os.path.join(self.gh_pages_dir, 'docs')
@@ -151,6 +156,18 @@ class GitPublisher:
                 if self._should_copy_file(self.html_hka_file, target_html_hka):
                     shutil.copy2(self.html_hka_file, target_html_hka)
             
+            # 复制A股HTML
+            if os.path.exists(self.html_a_file):
+                target_html_a = os.path.join(self.target_docs_dir, 'index_a.html')
+                if self._should_copy_file(self.html_a_file, target_html_a):
+                    shutil.copy2(self.html_a_file, target_html_a)
+            
+            # 复制港股HTML
+            if os.path.exists(self.html_hk_file):
+                target_html_hk = os.path.join(self.target_docs_dir, 'index_hk.html')
+                if self._should_copy_file(self.html_hk_file, target_html_hk):
+                    shutil.copy2(self.html_hk_file, target_html_hk)
+            
             # 复制meta文件（如果存在）
             if os.path.exists(self.meta_file):
                 target_meta = os.path.join(self.target_docs_dir, 'meta.json')
@@ -161,6 +178,16 @@ class GitPublisher:
                 target_meta_hka = os.path.join(self.target_docs_dir, 'meta_hka.json')
                 if self._should_copy_file(self.meta_hka_file, target_meta_hka):
                     shutil.copy2(self.meta_hka_file, target_meta_hka)
+
+            if os.path.exists(self.meta_a_file):
+                target_meta_a = os.path.join(self.target_docs_dir, 'meta_a.json')
+                if self._should_copy_file(self.meta_a_file, target_meta_a):
+                    shutil.copy2(self.meta_a_file, target_meta_a)
+
+            if os.path.exists(self.meta_hk_file):
+                target_meta_hk = os.path.join(self.target_docs_dir, 'meta_hk.json')
+                if self._should_copy_file(self.meta_hk_file, target_meta_hk):
+                    shutil.copy2(self.meta_hk_file, target_meta_hk)
             
             # 添加文件到Git
             # print(f"\n📝 添加文件到暂存区...")
