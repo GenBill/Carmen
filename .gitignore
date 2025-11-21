@@ -17,7 +17,6 @@ trading_state.json
 
 # GitHub Pages
 gh-pages/
-docs/index.html
-docs/index_hka.html
-docs/meta.json
+docs/index*.html
+docs/meta*.json
 .last_run_*
