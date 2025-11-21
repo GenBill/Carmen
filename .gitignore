@@ -20,3 +20,4 @@ gh-pages/
 docs/index.html
 docs/index_hka.html
 docs/meta.json
+.last_run_*

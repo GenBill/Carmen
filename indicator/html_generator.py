@@ -331,7 +331,19 @@ def save_meta_info(report_data: dict, content_hash: str, html_file: str):
     
     # 确定meta文件路径（与HTML同目录）
     html_dir = os.path.dirname(html_file) if os.path.dirname(html_file) else '.'
-    meta_file = os.path.join(html_dir, 'meta.json')
+    
+    # 根据HTML文件名生成meta文件名
+    # index.html -> meta.json
+    # index_a.html -> meta_a.json
+    # index_hk.html -> meta_hk.json
+    # index_hka.html -> meta_hka.json
+    basename = os.path.basename(html_file)
+    if basename.startswith('index'):
+        meta_basename = basename.replace('index', 'meta', 1).replace('.html', '.json')
+    else:
+        meta_basename = 'meta.json'
+        
+    meta_file = os.path.join(html_dir, meta_basename)
     
     # 构建meta信息
     meta_info = {
