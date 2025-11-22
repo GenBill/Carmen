@@ -174,10 +174,10 @@ class GitPublisher:
                 if self._should_copy_file(self.meta_file, target_meta):
                     shutil.copy2(self.meta_file, target_meta)
             
-            if os.path.exists(self.meta_hka_file):
-                target_meta_hka = os.path.join(self.target_docs_dir, 'meta_hka.json')
-                if self._should_copy_file(self.meta_hka_file, target_meta_hka):
-                    shutil.copy2(self.meta_hka_file, target_meta_hka)
+            # if os.path.exists(self.meta_hka_file):
+            #     target_meta_hka = os.path.join(self.target_docs_dir, 'meta_hka.json')
+            #     if self._should_copy_file(self.meta_hka_file, target_meta_hka):
+            #         shutil.copy2(self.meta_hka_file, target_meta_hka)
 
             if os.path.exists(self.meta_a_file):
                 target_meta_a = os.path.join(self.target_docs_dir, 'meta_a.json')
