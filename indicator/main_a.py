@@ -401,6 +401,7 @@ if __name__ == "__main__":
             pass
 
     last_run_time = load_last_run_time()  # 启动时加载上次运行时间
+    is_first_run = True  # 标记是否是启动后的第一次运行
 
     while True:
         try:
@@ -415,10 +416,13 @@ if __name__ == "__main__":
             last_node = max(passed_nodes) if passed_nodes else None
 
             should_run = False
-            if last_node is not None:
+            if is_first_run:
+                should_run = True
+                is_first_run = False
+            elif last_node is not None:
                 if last_run_time is None or last_run_time < last_node:
                     should_run = True
-
+            
             if should_run:
                 main_a(
                     stock_path=stock_pathA,
