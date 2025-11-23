@@ -347,6 +347,93 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
             traceback.print_exc()
 
 
+
+def run_scheduler(stock_path='my_stock_symbols.txt', 
+                  rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8,
+                  use_cache=True, cache_minutes=5, 
+                  offline_mode=False, intraday_use_all_stocks=False,
+                  enable_github_pages=True, github_branch='gh-pages',
+                  enable_qq_notify=True, qq_key='', qq_number=''):
+    """
+    运行美股扫描调度器 (混合模式)
+    """
+    
+    # 如果开启QQ通知但没提供key/number，尝试加载
+    if enable_qq_notify and (not qq_key or not qq_number):
+        try:
+            loaded_key, loaded_number = load_qq_token()
+            qq_key = qq_key or loaded_key
+            qq_number = qq_number or loaded_number
+        except (FileNotFoundError, ValueError) as e:
+            print(f"⚠️  无法加载QQ token: {e}")
+            print("⚠️  QQ推送功能已禁用")
+            enable_qq_notify = False
+            qq_key = ''
+            qq_number = ''
+
+    # 美股运行节点 (ET): 
+    # 08:00 (盘前 - 全市场扫描)
+    # 16:05 (收盘 - 全市场扫描)
+    # 注意：盘中时段 (09:30-16:00) 将由主循环自动检测并持续运行，不再依赖调度器定点
+    scheduler = MarketScheduler(
+        market='US',
+        run_nodes_cfg=[
+            {'hour': 8, 'minute': 0},
+            {'hour': 16, 'minute': 10}
+        ]
+    )
+
+    print("🚀 美股扫描程序已启动 (Hybrid Mode)")
+    print(f"⏰ 定点扫描 (盘前/盘后): {scheduler.run_nodes_cfg}")
+    print(f"⚡ 盘中监控: 市场开启期间每 60 秒扫描一次自选股")
+    
+    while True:
+        try:
+            # 获取当前市场状态
+            market_status = get_market_status()
+            is_open = market_status['is_open']
+            
+            should_run = False
+            
+            if is_open:
+                # 盘中模式：持续运行 (亚实时监控)
+                should_run = True
+            else:
+                # 盘前/盘后模式：仅在特定时间点运行
+                if scheduler.check_should_run():
+                    should_run = True
+
+            if should_run:
+                main_us(
+                    stock_path=stock_path,
+                    rsi_period=rsi_period,
+                    macd_fast=macd_fast,
+                    macd_slow=macd_slow,
+                    macd_signal=macd_signal,
+                    avg_volume_days=avg_volume_days,
+                    use_cache=use_cache,
+                    cache_minutes=cache_minutes,
+                    offline_mode=offline_mode,
+                    intraday_use_all_stocks=intraday_use_all_stocks,
+                    enable_github_pages=enable_github_pages,
+                    github_branch=github_branch,
+                    enable_qq_notify=enable_qq_notify,
+                    qq_key=qq_key,
+                    qq_number=qq_number
+                )
+            
+            # 基础轮询间隔
+            time.sleep(60)
+            
+        except KeyboardInterrupt:
+            print("\n⚠️  终止运行")
+            break
+        except Exception as e:
+            print(f'❌ 程序运行失败: {e}')
+            traceback.print_exc()
+            time.sleep(60)
+
+
 if __name__ == "__main__":
     
     # 配置参数
@@ -373,61 +460,19 @@ if __name__ == "__main__":
     
     # QQ推送配置
     ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
-    try:
-        QQ_KEY, QQ_NUMBER = load_qq_token()
-    except (FileNotFoundError, ValueError) as e:
-        print(f"⚠️  无法加载QQ token: {e}")
-        print("⚠️  QQ推送功能已禁用")
-        ENABLE_QQ_NOTIFY = False
-        QQ_KEY = ''
-        QQ_NUMBER = ''
 
-    # 美股运行节点 (ET): 
-    # 08:00 (盘前)
-    # 09:35 (开盘不久)
-    # 12:00 (午间)
-    # 16:05 (收盘)
-    scheduler = MarketScheduler(
-        market='US',
-        run_nodes_cfg=[
-            {'hour': 8, 'minute': 0},
-            {'hour': 9, 'minute': 35},
-            {'hour': 12, 'minute': 0},
-            {'hour': 16, 'minute': 5}
-        ]
+    run_scheduler(
+        stock_path=STOCK_PATH,
+        rsi_period=RSI_PERIOD,
+        macd_fast=MACD_FAST,
+        macd_slow=MACD_SLOW,
+        macd_signal=MACD_SIGNAL,
+        avg_volume_days=AVG_VOLUME_DAYS,
+        use_cache=USE_CACHE,
+        cache_minutes=CACHE_MINUTES,
+        offline_mode=OFFLINE_MODE,
+        intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
+        enable_github_pages=ENABLE_GITHUB_PAGES,
+        github_branch=GITHUB_BRANCH,
+        enable_qq_notify=ENABLE_QQ_NOTIFY
     )
-
-    print("🚀 美股扫描程序已启动 (Scheduled Mode)")
-    print(f"⏰ 运行节点 (ET): {scheduler.run_nodes_cfg}")
-    
-    while True:
-        try:
-            if scheduler.check_should_run():
-                main_us(
-                    stock_path=STOCK_PATH,
-                    rsi_period=RSI_PERIOD,
-                    macd_fast=MACD_FAST,
-                    macd_slow=MACD_SLOW,
-                    macd_signal=MACD_SIGNAL,
-                    avg_volume_days=AVG_VOLUME_DAYS,
-                    use_cache=USE_CACHE,
-                    cache_minutes=CACHE_MINUTES,
-                    offline_mode=OFFLINE_MODE,
-                    intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
-                    enable_github_pages=ENABLE_GITHUB_PAGES,
-                    github_branch=GITHUB_BRANCH,
-                    enable_qq_notify=ENABLE_QQ_NOTIFY,
-                    qq_key=QQ_KEY,
-                    qq_number=QQ_NUMBER
-                )
-            
-            # 每 60 秒检查一次 (比A/HK更频繁一点，因为美股节点多)
-            time.sleep(60)
-            
-        except KeyboardInterrupt:
-            print("\n⚠️  终止运行")
-            break
-        except Exception as e:
-            print(f'❌ 程序运行失败: {e}')
-            traceback.print_exc()
-            time.sleep(60)

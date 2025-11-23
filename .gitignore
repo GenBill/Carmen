@@ -1,7 +1,5 @@
 @AutomationLog.txt
 *.pyc
-indicator/main.py
-low_volume_blacklist.json
 *.log
 
 agent/deepseek.token
@@ -9,6 +7,7 @@ agent/okx.token
 indicator/qq.token
 
 trading_state.json
+low_volume_blacklist.json
 indicator/analysis_cache/*
 
 logs/*
