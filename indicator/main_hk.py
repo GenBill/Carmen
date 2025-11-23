@@ -17,6 +17,7 @@ from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
 from alert_system import add_to_watchlist, print_watchlist_summary
 from qq_notifier import QQNotifier, load_qq_token
+from scheduler import MarketScheduler
 
 import time
 import pytz
@@ -378,50 +379,19 @@ if __name__ == "__main__":
         QQ_KEY = ''
         QQ_NUMBER = ''
     
-    # 基于本地进程内记录的上次运行时间
-    tz = pytz.timezone('Asia/Shanghai')
-    
-    def load_last_run_time():
-        try:
-            if os.path.exists('.last_run_hk'):
-                with open('.last_run_hk', 'r') as f:
-                    timestamp = float(f.read().strip())
-                    return datetime.fromtimestamp(timestamp, tz)
-        except Exception:
-            pass
-        return None
-
-    def save_last_run_time(dt):
-        try:
-            with open('.last_run_hk', 'w') as f:
-                f.write(str(dt.timestamp()))
-        except Exception:
-            pass
-
-    last_run_time = load_last_run_time()  # 启动时加载上次运行时间
-    is_first_run = True  # 标记是否是启动后的第一次运行
+    # 初始化调度器
+    # 港股运行节点: 12:05(午休), 16:10(收盘)
+    scheduler = MarketScheduler(
+        market='HK',
+        run_nodes_cfg=[
+            {'hour': 12, 'minute': 5},
+            {'hour': 16, 'minute': 10}
+        ]
+    )
 
     while True:
         try:
-            now = datetime.now(tz)
-
-            # 港股运行节点: 12:05(午休), 16:10(收盘)
-            node_noon = now.replace(hour=12, minute=5, second=0, microsecond=0)
-            node_close = now.replace(hour=16, minute=10, second=0, microsecond=0)
-
-            # 已经过去的最近节点
-            passed_nodes = [t for t in (node_noon, node_close) if now >= t]
-            last_node = max(passed_nodes) if passed_nodes else None
-
-            should_run = False
-            if is_first_run:
-                should_run = True
-                is_first_run = False
-            elif last_node is not None:
-                if last_run_time is None or last_run_time < last_node:
-                    should_run = True
-            
-            if should_run:
+            if scheduler.check_should_run():
                 main_hk(
                     stock_path=stock_pathHK,
                     rsi_period=RSI_PERIOD,
@@ -435,8 +405,6 @@ if __name__ == "__main__":
                     qq_key=QQ_KEY,
                     qq_number=QQ_NUMBER
                 )
-                last_run_time = now
-                save_last_run_time(now)
 
         except KeyboardInterrupt:
             print("\n⚠️  终止运行")
