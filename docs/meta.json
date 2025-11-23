@@ -1,11 +1,11 @@
 {
-  "last_update": "2025-11-22T14:40:31.316529",
-  "last_update_readable": "2025-11-22 14:40:31",
-  "content_hash": "c8439f20866d7661de138a542df60e45",
+  "last_update": "2025-11-24T05:14:03.854194",
+  "last_update_readable": "2025-11-24 05:14:03",
+  "content_hash": "e147a088542298c652ec55e42fbe4b73",
   "html_file": "docs/index.html",
-  "html_file_size": 29974,
-  "market_status": "💤 夜盘时段",
-  "update_time": "2025-11-21 21:20:10 EST",
+  "html_file_size": 30809,
+  "market_status": "⏸️ 周末休市",
+  "update_time": "2025-11-23 12:29:55 EST",
   "mode": "盘前/盘后模式",
   "stats": {
     "total_scanned": 2592,
@@ -90,7 +90,15 @@
       "market_status": "💤 夜盘时段",
       "stocks_count": 2239,
       "signals": 0
+    },
+    {
+      "timestamp": "2025-11-24T05:14:03.854194",
+      "timestamp_readable": "2025-11-24 05:14:03",
+      "content_hash": "e147a088542298c652ec55e42fbe4b73",
+      "market_status": "⏸️ 周末休市",
+      "stocks_count": 2239,
+      "signals": 0
     }
   ],
-  "total_updates": 9
+  "total_updates": 10
 }
