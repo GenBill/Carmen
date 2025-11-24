@@ -176,7 +176,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             else:
                                 confidence = 0.0
                             
-                            if (not is_open) and qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
+                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -423,7 +423,7 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
                 )
             
             # 基础轮询间隔
-            time.sleep(60)
+            time.sleep(600)
             
         except KeyboardInterrupt:
             print("\n⚠️  终止运行")
@@ -431,7 +431,7 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
         except Exception as e:
             print(f'❌ 程序运行失败: {e}')
             traceback.print_exc()
-            time.sleep(60)
+            time.sleep(600)
 
 
 if __name__ == "__main__":
