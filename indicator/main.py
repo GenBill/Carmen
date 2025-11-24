@@ -176,10 +176,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             else:
                                 confidence = 0.0
                             
-                            # 发送QQ推送 (仅在非盘中或满足高置信度时推送，避免骚扰？ 原逻辑是 (not is_open) ... )
-                            # 原逻辑: if (not is_open) and qq_notifier ...
-                            # 我们可以放宽一点，或者保持一致
-                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
+                            if (not is_open) and qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -219,7 +216,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 
                 if not print_success:
                     failed_count += 1
-                else:
+                elif (not is_open):
                     # 收集数据用于HTML生成
                     price = stock_data.get('close', 0)
                     open_price = stock_data.get('open', 0)
@@ -246,7 +243,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     })
                     
                     if score[0] >= 3:
-                         alert_count += 1
+                        alert_count += 1
                 
                 flush_output()
             else:
@@ -270,7 +267,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
     print_watchlist_summary()
 
     # 生成HTML报告并推送到GitHub Pages
-    if git_publisher and stocks_data_for_html:
+    if (not is_open) and git_publisher and stocks_data_for_html:
         try:
             terminal_output = get_output_buffer()
             
