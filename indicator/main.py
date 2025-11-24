@@ -216,34 +216,37 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 
                 if not print_success:
                     failed_count += 1
-                elif (not is_open):
-                    # 收集数据用于HTML生成
-                    price = stock_data.get('close', 0)
-                    open_price = stock_data.get('open', 0)
-                    estimated_volume = stock_data.get('estimated_volume', 0)
-                    avg_volume = stock_data.get('avg_volume', 1)
-                    
-                    change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
-                    volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
-                    
-                    stocks_data_for_html.append({
-                        'symbol': symbol,
-                        'price': price,
-                        'change_pct': change_pct,
-                        'volume_ratio': volume_ratio,
-                        'rsi_prev': stock_data.get('rsi_prev', 0),
-                        'rsi_current': stock_data.get('rsi', 0),
-                        'dif': stock_data.get('dif', 0),
-                        'dea': stock_data.get('dea', 0),
-                        'dif_dea_slope': stock_data.get('dif_dea_slope', 0),
-                        'score_buy': score[0],
-                        'score_sell': score[1],
-                        'backtest_str': backtest_str,
-                        'is_watchlist': is_watchlist
-                    })
-                    
+                else:
+                    # 统计信号 (无论盘中盘后都统计，以便CLI显示)
                     if score[0] >= 3:
-                        alert_count += 1
+                         alert_count += 1
+
+                    # 仅在非盘中时收集数据用于HTML生成
+                    if (not is_open):
+                        # 收集数据用于HTML生成
+                        price = stock_data.get('close', 0)
+                        open_price = stock_data.get('open', 0)
+                        estimated_volume = stock_data.get('estimated_volume', 0)
+                        avg_volume = stock_data.get('avg_volume', 1)
+                        
+                        change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
+                        volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
+                        
+                        stocks_data_for_html.append({
+                            'symbol': symbol,
+                            'price': price,
+                            'change_pct': change_pct,
+                            'volume_ratio': volume_ratio,
+                            'rsi_prev': stock_data.get('rsi_prev', 0),
+                            'rsi_current': stock_data.get('rsi', 0),
+                            'dif': stock_data.get('dif', 0),
+                            'dea': stock_data.get('dea', 0),
+                            'dif_dea_slope': stock_data.get('dif_dea_slope', 0),
+                            'score_buy': score[0],
+                            'score_sell': score[1],
+                            'backtest_str': backtest_str,
+                            'is_watchlist': is_watchlist
+                        })
                 
                 flush_output()
             else:
