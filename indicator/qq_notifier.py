@@ -30,8 +30,8 @@ class QQNotifier:
         self.cache_hours = 1  # 缓存时间（小时）
         
         # 指数退避重试配置
-        self.max_retries = 4  # 最大重试次数
-        self.initial_wait = 1  # 初始等待时间（秒）
+        self.max_retries = 3  # 最大重试次数
+        self.initial_wait = 0.5  # 初始等待时间（秒）
         self.max_wait = 30  # 最大等待时间（秒）
         self.backoff_multiplier = 2  # 退避倍数
     
@@ -46,6 +46,9 @@ class QQNotifier:
             bool: 是否发送成功
         """
         wait_time = self.initial_wait
+        if msg == "":
+            print("⚠️  QQ推送消息为空，跳过")
+            return False
         
         for attempt in range(self.max_retries + 1):  # 0到max_retries，共max_retries+1次尝试
             try:

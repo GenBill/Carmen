@@ -620,8 +620,8 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
             # 避免过于频繁的API调用
             time.sleep(0.01)
             
-            max_retries = 4   # 最多重试4次
-            base_delay = 2    # 基础延迟2秒
+            max_retries = 3   # 减少重试次数
+            base_delay = 0.5  # 调整基础延迟
             
             for attempt in range(max_retries):
 
@@ -656,18 +656,12 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                         
                 except Exception as api_error:
                     if attempt < max_retries - 1:
-                        # 指数退避：1秒, 2秒, 4秒...
+                        # 指数退避
                         delay = base_delay * (2 ** attempt)
                         print(f"⚠️  {symbol} API调用失败 (尝试 {attempt + 1}/{max_retries}): {api_error}")
-                        print(f"   等待 {delay} 秒后重试...")
                         time.sleep(delay)
                     else:
-                        # 最后一次尝试也失败
                         print(f"❌ {symbol} API调用最终失败 (已重试{max_retries}次): {api_error}")
-                        # broken_stock_symbols.append(symbol)
-                        # with open('broken_stock_symbols.txt', 'w') as f:
-                        #     for symbol in broken_stock_symbols:
-                        #         f.write(symbol + "\n")
                         return None
         
         # 3. 使用历史数据计算指标（公共计算逻辑）
