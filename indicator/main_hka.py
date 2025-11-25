@@ -178,7 +178,7 @@ def main_hka(stock_pathHK: str = 'stocks_list/cache/china_screener_HK.csv',
                             
                             backtest_str = f"({buy_success}/{buy_total})"
                             if buy_total > 0:
-                                confidence = buy_success / buy_total
+                                confidence = (buy_success-1) / buy_total
                             else:
                                 confidence = 0.0
                             
