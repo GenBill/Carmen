@@ -65,13 +65,18 @@ class QQNotifier:
                 
                 return True
             except Exception as e:
+                # 获取服务器返回的详细错误信息
+                error_detail = ""
+                if 'response' in locals() and hasattr(response, 'text'):
+                    error_detail = f" Server response: {response.text}"
+
                 # 如果是最后一次尝试，打印失败信息并返回
                 if attempt == self.max_retries:
-                    print(f"⚠️  QQ推送失败（已重试{self.max_retries}次）: {e}")
+                    print(f"⚠️  QQ推送失败（已重试{self.max_retries}次）: {e}{error_detail}")
                     return False
                 
                 # 不是最后一次尝试，等待后重试
-                print(f"⚠️  QQ推送失败（第{attempt + 1}次尝试）: {e}，{wait_time}秒后重试...")
+                print(f"⚠️  QQ推送失败（第{attempt + 1}次尝试）: {e}{error_detail}，{wait_time}秒后重试...")
                 time.sleep(wait_time)
                 
                 # 指数退避：等待时间翻倍，但不超过最大等待时间

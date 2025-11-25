@@ -172,7 +172,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             
                             backtest_str = f"({buy_success}/{buy_total})"
                             if buy_total > 0:
-                                confidence = buy_success / buy_total
+                                confidence = (buy_success-1) / buy_total
                             else:
                                 confidence = 0.0
                             
