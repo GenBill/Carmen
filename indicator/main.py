@@ -63,8 +63,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
     if (not is_open) and (not offline_mode):
         try:
             volume_filter_instance = get_volume_filter()
-            # 注意：update_blacklist可能会消耗大量时间
-            # volume_filter_instance.daily_update_blacklist(get_stock_data)
+            volume_filter_instance.daily_update_blacklist(get_stock_data)
             pass 
         except Exception as e:
             print(f"⚠️ 黑名单更新失败: {e}")
