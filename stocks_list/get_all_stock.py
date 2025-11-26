@@ -1,7 +1,10 @@
 import pandas as pd
+import os
+import time
 from typing import List, Set
 from .get_China_A_stock import get_china_a_stock_list
 from .get_China_HK_stock import get_china_hk_stock_list
+from .update_stock_lists import update_stock_lists_cache
 
 def get_us_stock_list_from_files() -> List[str]:
     """
@@ -13,6 +16,36 @@ def get_us_stock_list_from_files() -> List[str]:
         "stocks_list/cache/nasdaq_screener_NYSE.csv",
         "stocks_list/cache/nasdaq_screener_AMEX.csv",
     ]
+
+    # 自动检查并更新股票列表
+    should_update = False
+    max_age_seconds = 7 * 24 * 3600  # 7天过期
+    
+    for file in files:
+        if not os.path.exists(file):
+            print(f"⚠️ 股票列表文件缺失: {file}")
+            should_update = True
+            break
+        else:
+            # 检查修改时间
+            try:
+                mtime = os.path.getmtime(file)
+                age = time.time() - mtime
+                if age > max_age_seconds:
+                    print(f"⚠️ 股票列表文件已过期 ({int(age/3600/24)}天): {file}")
+                    should_update = True
+                    break
+            except OSError:
+                should_update = True
+                break
+    
+    if should_update:
+        try:
+            print("🔄 正在自动更新股票列表...")
+            update_stock_lists_cache()
+        except Exception as e:
+            print(f"❌ 自动更新股票列表失败: {e}")
+            # 继续尝试读取现有文件
 
     all_tickers: Set[str] = set()
     for file in files:
@@ -28,7 +61,9 @@ def get_us_stock_list_from_files() -> List[str]:
             valid_tickers = {
                 ticker
                 for ticker in tickers
-                if ticker and len(ticker) <= 5 and not any(char in ticker for char in invalid_chars)
+                if ticker and len(ticker) <= 5 
+                and not any(char in ticker for char in invalid_chars)
+                and is_valid_common_stock(ticker)
             }
 
             all_tickers.update(valid_tickers)
@@ -84,7 +119,7 @@ def is_valid_common_stock(symbol: str) -> bool:
         # P - 优先股 (Preferred)
         # 注意：纳斯达克规则是只有5个字符的股票代码，第5个字符才是特殊后缀
         # 例如：AAPLW(5字符)是权证，但AAPL(4字符)、APP(3字符)、SERV(4字符)都是正常股票
-        special_suffixes = ['W', 'U', 'R', 'P', 'V']
+        special_suffixes = ['W', 'U', 'R', 'P', 'V', 'L', 'Z']
         
         # 只检查5字符代码的最后一个字符
         if len(symbol) == 5:
