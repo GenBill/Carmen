@@ -640,7 +640,7 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
             symbols_to_download.append(symbol)
 
     if not symbols_to_download:
-        print("✅ 所有股票缓存均有效，无需重新下载")
+        # print("✅ 所有股票缓存均有效，无需重新下载")
         return
     # if use_cache:
     #     print(f"📂 缓存目录: {CACHE_DIR.resolve()}")
