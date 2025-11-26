@@ -4,7 +4,7 @@ sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from stocks_list.get_all_stock import get_stock_list
-from get_stock_price import get_stock_data, get_stock_data_offline
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
 from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
 from market_hours import get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
@@ -115,6 +115,17 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
     # 打印表头
     print_header()
     flush_output()
+
+    # 批量下载股票数据（多线程加速）
+    if not offline_mode:
+        batch_download_stocks(
+            stock_symbols, 
+            use_cache=use_cache, 
+            cache_minutes=actual_cache_minutes,
+            batch_size=50,
+            period="1y"
+        )
+        flush_output()
 
     # 轮询每支股票
     alert_count = 0
@@ -447,7 +458,7 @@ if __name__ == "__main__":
     
     # 缓存配置
     USE_CACHE = True
-    CACHE_MINUTES = 5
+    CACHE_MINUTES = 60
     
     # 模式配置
     OFFLINE_MODE = False        # 是否离线模式

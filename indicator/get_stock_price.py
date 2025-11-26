@@ -417,17 +417,22 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
             cache_age_minutes = (now - cached_time).total_seconds() / 60
             return cache_age_minutes < cache_minutes
         else:
-            # 非盘中获取的缓存，检查是否为最新交易日
+            # 优先检查缓存年龄。如果缓存很新（在有效期内），直接认为有效
+            # 这解决了盘前（日期变更但未开盘）时，强制刷新刚刚下载的数据的问题
+            cache_age_minutes = (now - cached_time).total_seconds() / 60
+            if cache_age_minutes < cache_minutes:
+                return True
+
+            # 缓存已过期
+            # 数据不是今天的，肯定无效
             current_date = current_et.date()
             last_data_only_date = last_data_date_et.date()
-            
-            # 数据不是今天的，需要刷新
+
             if last_data_only_date < current_date:
                 return False
             
-            # 数据是今天的，检查缓存年龄
-            cache_age_minutes = (now - cached_time).total_seconds() / 60
-            return cache_age_minutes < cache_minutes
+            # 数据是今天的，但缓存过期了，也无效
+            return False
 
 
 def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
@@ -590,6 +595,118 @@ def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=2
     except Exception as e:
         print(f"⚠️  离线模式获取 {symbol} 数据时出错: {e}")
         return None
+
+
+def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_size=50, period="1y"):
+    """
+    批量下载股票数据（使用 yfinance 的多线程加速）
+
+    Args:
+        symbols: 股票代码列表
+        use_cache: 是否使用缓存，默认 True
+        cache_minutes: 缓存有效期（分钟），默认 5分钟
+        batch_size: 每批下载的股票数量，默认 50
+        period: 下载数据的时间周期，默认 "1y"
+
+    Returns:
+        None
+    """
+    if not symbols:
+        return
+
+    # 过滤掉损坏的股票代码
+    valid_symbols = [s for s in symbols if s not in broken_stock_symbols]
+    if not valid_symbols:
+        return
+
+    # 检查缓存，只下载没有有效缓存的股票
+    symbols_to_download = []
+    for symbol in valid_symbols:
+        if use_cache:
+            hist, _ = _load_from_cache(symbol, cache_minutes, ignore_expiry=False)
+            if hist is None:
+                symbols_to_download.append(symbol)
+        else:
+            symbols_to_download.append(symbol)
+
+    if not symbols_to_download:
+        print("✅ 所有股票缓存均有效，无需重新下载")
+        return
+    # if use_cache:
+    #     print(f"📂 缓存目录: {CACHE_DIR.resolve()}")
+
+    # 分批下载，避免单次请求过多
+    total_batches = (len(symbols_to_download) + batch_size - 1) // batch_size
+    try:
+        from tqdm import tqdm
+        batch_iter = tqdm(
+            range(0, len(symbols_to_download), batch_size),
+            desc="📥 批量下载股票数据",
+            total=total_batches,
+            unit="batch"
+        )
+    except ImportError:
+        # 如果没有安装 tqdm，使用普通 range
+        batch_iter = range(0, len(symbols_to_download), batch_size)
+
+    for i in batch_iter:
+        batch = symbols_to_download[i:i + batch_size]
+        if not batch:
+            continue
+
+        try:
+            # 使用 yf.download 批量下载，自动多线程加速
+            # 必须指定 group_by='ticker' 才能使 Ticker 作为第一层索引，方便按股票切分
+            hist_batch = yf.download(batch, period=period, progress=False, auto_adjust=False, threads=True, group_by='ticker')
+
+            if hist_batch.empty:
+                print(f"⚠️  批量下载返回空数据，批次: {i//batch_size + 1}")
+                continue
+
+            # 处理返回的数据格式
+            # yf.download 返回格式：
+            # - 单只股票：可能返回单层索引或 MultiIndex（取决于版本）
+            # - 多只股票：返回 MultiIndex (ticker, column)
+            if isinstance(hist_batch.columns, pd.MultiIndex):
+                # MultiIndex：按 ticker 拆分
+                # 获取所有 ticker（第一层索引）
+                tickers_in_data = hist_batch.columns.get_level_values(0).unique().tolist()
+                for symbol in batch:
+                    if symbol in tickers_in_data:
+                        try:
+                            hist = hist_batch[symbol].copy()
+                            if not hist.empty:
+                                # 更新缓存
+                                # 确保格式对齐：(timestamp, dataframe)
+                                if use_cache:
+                                    now = datetime.now()
+                                    _DATA_CACHE[symbol] = (now, hist)
+                                    _save_cache_to_file(symbol, now, hist)
+                        except Exception as e:
+                            print(f"⚠️  处理 {symbol} 数据时出错: {e}")
+                            continue
+            else:
+                # 单层索引：只有一只股票的情况
+                if len(batch) == 1:
+                    symbol = batch[0]
+                    if not hist_batch.empty:
+                        if use_cache:
+                            now = datetime.now()
+                            _DATA_CACHE[symbol] = (now, hist_batch)
+                            _save_cache_to_file(symbol, now, hist_batch)
+                else:
+                    # 多只股票但返回单层索引（异常情况，可能所有股票都下载失败）
+                    print(f"⚠️  批量下载返回异常格式，批次大小: {len(batch)}")
+
+            # 避免过于频繁的API调用
+            if i + batch_size < len(symbols_to_download):
+                time.sleep(0.01)
+
+        except Exception as e:
+            print(f"⚠️  批量下载失败 (批次 {i//batch_size + 1}): {e}")
+            continue
+    return
+
 
 def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 
                    avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5):

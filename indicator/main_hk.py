@@ -8,7 +8,7 @@ import os
 sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from get_stock_price import get_stock_data
+from get_stock_price import get_stock_data, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list
 from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
@@ -109,6 +109,16 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     # 打印表头
     print_header()
     flush_output()
+
+    # 批量下载股票数据（多线程加速）
+    batch_download_stocks(
+        stock_symbols, 
+        use_cache=True, 
+        cache_minutes=60,
+        batch_size=50,
+        period="1y"
+    )
+    flush_output()
     
     # 扫描股票
     alert_count = 0
@@ -129,8 +139,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 macd_slow=macd_slow,
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
-                use_cache=False,
-                cache_minutes=120
+                use_cache=True,
+                cache_minutes=60
             )
             
             if stock_data:
