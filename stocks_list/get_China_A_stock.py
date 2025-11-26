@@ -90,6 +90,14 @@ def update_a_csv_cache():
         print(f"❌ 转换A股数据失败: {e}")
         return False
 
+def get_china_a_stock_list():
+    path = 'stocks_list/cache/china_screener_A.csv'
+    try:
+        df = pd.read_csv(path)
+        return df['Symbol'].tolist()
+    except FileNotFoundError:
+        return []
+
 if __name__ == '__main__':
 
     update_a_csv_cache()

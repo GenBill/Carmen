@@ -98,6 +98,14 @@ def update_hk_csv_cache():
         print(f"❌ 转换港股数据失败: {e}")
         return False
 
+def get_china_hk_stock_list():
+    path = 'stocks_list/cache/china_screener_HK.csv'
+    try:
+        df = pd.read_csv(path)
+        return df['Symbol'].tolist()
+    except FileNotFoundError:
+        return []
+
 if __name__ == '__main__':
     
     update_hk_csv_cache()
