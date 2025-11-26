@@ -6,18 +6,8 @@ from .get_China_A_stock import get_china_a_stock_list
 from .get_China_HK_stock import get_china_hk_stock_list
 from .update_stock_lists import update_stock_lists_cache
 
-def get_us_stock_list_from_files() -> List[str]:
-    """
-    从本地下载的CSV文件读取全美股票列表，包括 NASDAQ、NYSE 和 AMEX。
-    假设文件已下载到 stock_cache/ 目录下。
-    """
-    files = [
-        "stocks_list/cache/nasdaq_screener_NSDQ.csv",
-        "stocks_list/cache/nasdaq_screener_NYSE.csv",
-        "stocks_list/cache/nasdaq_screener_AMEX.csv",
-    ]
-
-    # 自动检查并更新股票列表
+def check_and_update_cache(files: List[str]):
+    """检查缓存文件并自动更新"""
     should_update = False
     max_age_seconds = 7 * 24 * 3600  # 7天过期
     
@@ -45,7 +35,20 @@ def get_us_stock_list_from_files() -> List[str]:
             update_stock_lists_cache()
         except Exception as e:
             print(f"❌ 自动更新股票列表失败: {e}")
-            # 继续尝试读取现有文件
+
+def get_us_stock_list_from_files() -> List[str]:
+    """
+    从本地下载的CSV文件读取全美股票列表，包括 NASDAQ、NYSE 和 AMEX。
+    假设文件已下载到 stock_cache/ 目录下。
+    """
+    files = [
+        "stocks_list/cache/nasdaq_screener_NSDQ.csv",
+        "stocks_list/cache/nasdaq_screener_NYSE.csv",
+        "stocks_list/cache/nasdaq_screener_AMEX.csv",
+    ]
+
+    # 自动检查并更新股票列表
+    check_and_update_cache(files)
 
     all_tickers: Set[str] = set()
     for file in files:
@@ -143,10 +146,13 @@ def get_stock_list(path: str = '', mode: str = 'US') -> List[str]:
     elif mode == 'US':
         return get_us_stock_list_from_files()
     elif mode == 'HK':
+        check_and_update_cache(['stocks_list/cache/china_screener_HK.csv'])
         return get_china_hk_stock_list()
     elif mode == 'A':
+        check_and_update_cache(['stocks_list/cache/china_screener_A.csv'])
         return get_china_a_stock_list()
     elif mode == 'HK+A':
+        check_and_update_cache(['stocks_list/cache/china_screener_HK.csv', 'stocks_list/cache/china_screener_A.csv'])
         return get_china_hk_stock_list() + get_china_a_stock_list()
     else:
         raise ValueError(f"Invalid mode: {mode}")
