@@ -1,9 +1,38 @@
 import time
+import os
+import pickle
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from get_stock_price import _load_from_cache
+
+# 长期数据缓存目录（5年历史数据，1天有效期）
+LONGTERM_CACHE_DIR = os.path.join(os.path.dirname(__file__), '.cache_5y')
+
+
+def _load_longterm_cache(symbol):
+    """加载长期数据缓存（1天内有效）"""
+    cache_path = os.path.join(LONGTERM_CACHE_DIR, f"{symbol}.pkl")
+    if os.path.exists(cache_path):
+        file_mtime = os.path.getmtime(cache_path)
+        if time.time() - file_mtime < 86400:  # 24小时
+            try:
+                with open(cache_path, 'rb') as f:
+                    return pickle.load(f)
+            except:
+                pass
+    return None
+
+
+def _save_longterm_cache(symbol, data):
+    """保存长期数据缓存"""
+    os.makedirs(LONGTERM_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(LONGTERM_CACHE_DIR, f"{symbol}.pkl")
+    try:
+        with open(cache_path, 'wb') as f:
+            pickle.dump(data, f)
+    except:
+        pass
 
 def carmen_indicator(stock_data):
     """
@@ -191,28 +220,12 @@ def _get_historical_data_with_cache(symbol):
     """
     
     try:
-        # 策略1: 检查现有缓存
-        
-        cached_hist, cache_source = _load_from_cache(symbol, cache_minutes=0, ignore_expiry=True)
-        
-        if cached_hist is not None:
-            data_points = len(cached_hist)
-            last_date = cached_hist.index[-1]
-            if isinstance(last_date, str):
-                last_date = pd.Timestamp(last_date)
-            # 处理时区问题
-            if last_date.tz is not None:
-                days_old = (pd.Timestamp.now(tz=last_date.tz) - last_date).days
-            else:
-                days_old = (pd.Timestamp.now() - last_date).days
-            
-            # 回测专用缓存策略：确保有足够的历史数据
-            IDEAL_BACKTEST_DAYS = 500  # 理想回测数据要求
-            
-            if data_points >= IDEAL_BACKTEST_DAYS and days_old <= 7:
-                return cached_hist
+        # 检查长期数据缓存（1天内有效）
+        longterm_cached = _load_longterm_cache(symbol)
+        if longterm_cached is not None and not longterm_cached.empty:
+            return longterm_cached
 
-        # 策略2: 缓存不可用或数据不足，下载新的历史数据
+        # 缓存不可用，下载新的历史数据
         # print(f"📥 下载 {symbol} 历史数据 (5年, 目标>1000天)...")
 
         max_retries = 3
@@ -247,6 +260,8 @@ def _get_historical_data_with_cache(symbol):
             historical_data.columns = historical_data.columns.droplevel(1)
         
         if not historical_data.empty:
+            # 保存到长期缓存
+            _save_longterm_cache(symbol, historical_data)
             return historical_data
         
         print(f"❌ {symbol} 无法获取历史数据")
