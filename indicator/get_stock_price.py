@@ -488,6 +488,11 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     
     # 获取最后一个交易日数据（当日或最近交易日）
     last_trading_day = hist.iloc[-1]
+    
+    # 检查关键数据有效性
+    if pd.isna(last_trading_day['Close']):
+        return None
+
     trading_date_timestamp = hist.index[-1]
     trading_date = trading_date_timestamp.strftime('%Y-%m-%d')
     
@@ -497,8 +502,13 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     else:
         avg_volume = hist.iloc[:-1]['Volume'].mean()
     
+    if pd.isna(avg_volume):
+        avg_volume = 0
+
     # 当日成交量
     current_volume = last_trading_day['Volume']
+    if pd.isna(current_volume):
+        current_volume = 0
     
     # 判断是港股/A股还是美股
     is_hk_stock = symbol.endswith('.HK')
