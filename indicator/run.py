@@ -24,7 +24,7 @@ if __name__ == "__main__":
     AVG_VOLUME_DAYS = 8     # 平均成交量天数
     
     USE_CACHE = True         # 是否使用缓存
-    CACHE_MINUTES = 5        # 缓存有效期（分钟）
+    CACHE_MINUTES = 60       # 缓存有效期（分钟）
     OFFLINE_MODE = False     # 是否离线模式
     INTRADAY_USE_ALL_STOCKS = False  # 盘中时段是否使用全股票列表
     
