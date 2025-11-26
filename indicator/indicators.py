@@ -1,4 +1,9 @@
+import time
 import yfinance as yf
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from get_stock_price import _load_from_cache
 
 def carmen_indicator(stock_data):
     """
@@ -135,8 +140,7 @@ def _calculate_historical_indicators(historical_data, rsi_period=8, macd_fast=8,
     Returns:
         dict: 包含所有技术指标的字典
     """
-    import pandas as pd
-    import numpy as np
+    
     
     # 计算RSI
     delta = historical_data['Close'].diff()
@@ -185,12 +189,10 @@ def _get_historical_data_with_cache(symbol):
     Returns:
         DataFrame: 历史数据，失败返回None
     """
-    import pandas as pd
-    from datetime import datetime, timedelta
     
     try:
         # 策略1: 检查现有缓存
-        from get_stock_price import _load_from_cache
+        
         cached_hist, cache_source = _load_from_cache(symbol, cache_minutes=0, ignore_expiry=True)
         
         if cached_hist is not None:
@@ -212,9 +214,33 @@ def _get_historical_data_with_cache(symbol):
 
         # 策略2: 缓存不可用或数据不足，下载新的历史数据
         # print(f"📥 下载 {symbol} 历史数据 (5年, 目标>1000天)...")
-        # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
-        # auto_adjust=False 保持与 stock.history() 默认行为一致
-        historical_data = yf.download(symbol, period="5y", progress=False, auto_adjust=False)
+
+        max_retries = 3
+        base_delay = 0.5
+        historical_data = pd.DataFrame()
+        
+        for attempt in range(max_retries):
+            try:
+                # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
+                # auto_adjust=False 保持与 stock.history() 默认行为一致
+                historical_data = yf.download(symbol, period="5y", progress=False, auto_adjust=False)
+                
+                if not historical_data.empty:
+                    break
+                elif attempt == max_retries - 1:
+                    # 最后一次尝试仍为空，不抛异常，让后面逻辑处理
+                    pass
+                else:
+                    # 空数据重试
+                    raise ValueError("Empty data returned")
+                    
+            except Exception as api_error:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    # print(f"⚠️ {symbol} 下载历史数据失败 (尝试 {attempt + 1}/{max_retries}): {api_error}，{delay}秒后重试...")
+                    time.sleep(delay)
+                else:
+                    print(f"❌ {symbol} 下载历史数据最终失败: {api_error}")
         
         # 处理可能的双层列索引（单只股票时 yf.download 可能返回多层索引）
         if not historical_data.empty and isinstance(historical_data.columns, pd.MultiIndex):
@@ -279,7 +305,6 @@ def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, g
         sell_success_count = 0
         
         # 批量处理历史数据
-        import pandas as pd
         
         for i in range(max(14, macd_slow + macd_signal), len(historical_data) - 3):
             # 构建历史股票数据
