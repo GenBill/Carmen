@@ -157,6 +157,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 # 进行回测
                 backtest_result = None
                 backtest_str = ''
+                confidence = 0.0
                 if score[0] >= 2.4 or score[1] >= 2.4:
                     try:
                         backtest_result = backtest_carmen_indicator(
@@ -243,6 +244,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                         'score_buy': score[0],
                         'score_sell': score[1],
                         'backtest_str': backtest_str,
+                        'confidence': confidence,
                         'is_watchlist': False
                     })
                 
@@ -280,8 +282,11 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.4的股票并运行AI分析（港股）
-            buy_signal_stocks = [stock for stock in stocks_data_for_html if stock.get('score_buy', 0) >= 2.4]
+            # 筛选买入评分>=2.4 且 胜率>=0.5 的股票并运行AI分析（港股）
+            buy_signal_stocks = [
+                stock for stock in stocks_data_for_html 
+                if stock.get('score_buy', 0) >= 2.4 and stock.get('confidence', 0) >= 0.5
+            ]
             ai_analysis_results = []
             
             if buy_signal_stocks:
