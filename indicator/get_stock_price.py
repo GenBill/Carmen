@@ -398,38 +398,43 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
     
     current_et = datetime.now(et_tz)
     
-    # 判断缓存保存时间是否在盘中（9:30-16:30 ET，含盘后30分钟缓冲期）
-    cached_hour_minute = cached_time_et.hour * 60 + cached_time_et.minute
+    # 时间常量
     market_open = 9 * 60 + 30   # 9:30
     market_close = 16 * 60 + 30  # 16:30（盘后30分钟缓冲，因API有5-10分钟延迟）
-    was_cached_during_market = market_open <= cached_hour_minute < market_close
     
-    # 如果缓存时间戳在盘中，使用传统的时间判断（短缓存）
-    if was_cached_during_market:
-        cache_age_minutes = (now - cached_time).total_seconds() / 60
-        return cache_age_minutes < cache_minutes
+    # 判断缓存保存时间是否在盘中
+    cached_hour_minute = cached_time_et.hour * 60 + cached_time_et.minute
+    cached_date_et = cached_time_et.date()
+    was_cached_during_market = (market_open <= cached_hour_minute < market_close and 
+                                 cached_time_et.weekday() < 5)
     
-    # 如果缓存时间戳不在盘中（盘前/盘后/周末），检查数据的最新日期
-    if cached_hist is None or cached_hist.empty:
-        return False
-    
-    # 获取缓存数据的最后交易日
-    last_data_date = cached_hist.index[-1]
-    if last_data_date.tzinfo is None:
-        last_data_date_et = pytz.utc.localize(last_data_date).astimezone(et_tz)
-    else:
-        last_data_date_et = last_data_date.astimezone(et_tz)
-    
-    # 判断当前是否在盘中（含盘后30分钟缓冲期）
+    # 判断当前是否在盘中
     current_hour_minute = current_et.hour * 60 + current_et.minute
     is_market_open_now = (market_open <= current_hour_minute < market_close and 
                           current_et.weekday() < 5)
     
+    # 如果缓存是盘中获取的，无论当前什么时段都需要检查缓存年龄
+    # 因为盘中数据不是最终收盘价，需要刷新获取最终数据
+    if was_cached_during_market:
+        cache_age_minutes = (now - cached_time).total_seconds() / 60
+        return cache_age_minutes < cache_minutes
+    
+    # 以下是盘后/盘前/周末获取的缓存（最终收盘价）
+    if cached_hist is None or cached_hist.empty:
+        return False
+    
+    # 获取缓存数据的最后交易日（只取日期部分，不做时区转换）
+    last_data_date = cached_hist.index[-1]
+    if hasattr(last_data_date, 'date'):
+        last_data_only_date = last_data_date.date()
+    elif hasattr(last_data_date, 'to_pydatetime'):
+        last_data_only_date = last_data_date.to_pydatetime().date()
+    else:
+        last_data_only_date = last_data_date
+    
     if is_market_open_now:
         # 当前在盘中，需要实时数据
-        # 检查数据是否是今天的，且缓存不超过指定时间
         current_date = current_et.date()
-        last_data_only_date = last_data_date_et.date()
         
         if last_data_only_date >= current_date:
             # 数据是今天的，检查缓存年龄
@@ -439,18 +444,17 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
             # 数据不是今天的，需要刷新
             return False
     else:
-        # 当前不在盘中（盘前/盘后/周末），需要最新交易日数据
-        last_data_only_date = last_data_date_et.date()
+        # 当前不在盘中（盘前/盘后/周末）
+        # 缓存也是盘后获取的（最终收盘价），只需检查数据日期
         expected_date = _get_expected_latest_trading_date(current_et)
         
-        # 【关键修复】必须先检查数据日期是否是最新交易日
         if last_data_only_date < expected_date:
-            # 数据不是最新交易日，缓存无效，必须刷新
+            # 数据不是最新交易日，缓存无效
             return False
         
-        # 数据是最新交易日的，再检查缓存年龄
-        cache_age_minutes = (now - cached_time).total_seconds() / 60
-        return cache_age_minutes < cache_minutes
+        # 【关键】盘后获取的缓存 + 当前盘后 = 数据不会再变
+        # 只要数据是最新交易日的，缓存就一直有效
+        return True
 
 
 def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
