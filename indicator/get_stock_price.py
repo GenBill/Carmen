@@ -338,9 +338,27 @@ def _save_cache_to_file(symbol: str, cached_time, hist_data):
         print(f"保存缓存文件失败 {symbol}: {e}")
 
 
+def _get_market_type(symbol: str) -> str:
+    """
+    根据股票代码判断市场类型
+    
+    Args:
+        symbol: 股票代码
+        
+    Returns:
+        str: 'HK' (港股), 'A' (A股), 'US' (美股)
+    """
+    if symbol and symbol.endswith('.HK'):
+        return 'HK'
+    elif symbol and (symbol.endswith('.SS') or symbol.endswith('.SZ')):
+        return 'A'
+    else:
+        return 'US'
+
+
 def _get_expected_latest_trading_date(current_et):
     """
-    计算预期的最新交易日日期（不含节假日，仅排除周末）
+    计算预期的最新交易日日期（美股，不含节假日，仅排除周末）
     
     Args:
         current_et: 美东当前时间 (datetime with timezone)
@@ -367,7 +385,36 @@ def _get_expected_latest_trading_date(current_et):
         return check_date
 
 
-def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry=False):
+def _get_expected_latest_trading_date_hka(current_cst):
+    """
+    计算预期的最新交易日日期（港股/A股，不含节假日，仅排除周末）
+    
+    Args:
+        current_cst: 北京/香港当前时间 (datetime with timezone)
+    
+    Returns:
+        date: 预期的最新交易日日期
+    """
+    current_date = current_cst.date()
+    current_hour_minute = current_cst.hour * 60 + current_cst.minute
+    
+    # 港股/A股收盘时间 16:00 CST
+    market_close_time = 16 * 60  # 16:00
+    is_weekday = current_cst.weekday() < 5  # 周一到周五
+    
+    if is_weekday and current_hour_minute >= market_close_time:
+        # 交易日已收盘 → 数据应该是今天
+        return current_date
+    else:
+        # 盘前/午休 或 周末 → 数据应该是上一个交易日
+        # 回溯找到上一个交易日
+        check_date = current_date - timedelta(days=1)
+        while check_date.weekday() >= 5:  # 跳过周末
+            check_date -= timedelta(days=1)
+        return check_date
+
+
+def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry=False, symbol=None):
     """
     智能缓存有效性检查（基于数据最新日期和市场状态）
     
@@ -380,6 +427,7 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
         cached_hist: 缓存的历史数据
         cache_minutes: 缓存有效期（分钟）
         ignore_expiry: 是否忽略过期（离线模式）
+        symbol: 股票代码（用于判断市场类型）
         
     Returns:
         bool: 缓存是否有效
@@ -388,30 +436,78 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
         return True
     
     now = datetime.now()
-    et_tz = pytz.timezone('America/New_York')
     
-    # 将缓存时间转换为美东时间
-    if cached_time.tzinfo is None:
-        cached_time_et = pytz.utc.localize(cached_time).astimezone(et_tz)
+    # 根据股票代码判断市场类型，使用正确的时区
+    market_type = _get_market_type(symbol) if symbol else 'US'
+    
+    if market_type in ('HK', 'A'):
+        # 港股/A股：使用北京/香港时区
+        cst_tz = pytz.timezone('Asia/Shanghai')
+        
+        # 将缓存时间转换为北京时间
+        if cached_time.tzinfo is None:
+            cached_time_local = pytz.utc.localize(cached_time).astimezone(cst_tz)
+        else:
+            cached_time_local = cached_time.astimezone(cst_tz)
+        
+        current_local = datetime.now(cst_tz)
+        
+        # 港股/A股时间常量（CST）
+        # 早盘：9:30-12:00，午盘：13:00-16:00
+        market_open_am = 9 * 60 + 30   # 9:30
+        market_close_am = 12 * 60      # 12:00
+        market_open_pm = 13 * 60       # 13:00
+        market_close_pm = 16 * 60 + 30 # 16:30（盘后30分钟缓冲）
+        
+        # 判断缓存保存时间是否在盘中
+        cached_hour_minute = cached_time_local.hour * 60 + cached_time_local.minute
+        was_cached_during_market = (
+            ((market_open_am <= cached_hour_minute < market_close_am) or 
+             (market_open_pm <= cached_hour_minute < market_close_pm)) and 
+            cached_time_local.weekday() < 5
+        )
+        
+        # 判断当前是否在盘中
+        current_hour_minute = current_local.hour * 60 + current_local.minute
+        is_market_open_now = (
+            ((market_open_am <= current_hour_minute < market_close_am) or 
+             (market_open_pm <= current_hour_minute < market_close_pm)) and 
+            current_local.weekday() < 5
+        )
+        
+        # 获取预期最新交易日的函数
+        get_expected_date = lambda: _get_expected_latest_trading_date_hka(current_local)
+        current_date = current_local.date()
+        
     else:
-        cached_time_et = cached_time.astimezone(et_tz)
-    
-    current_et = datetime.now(et_tz)
-    
-    # 时间常量
-    market_open = 9 * 60 + 30   # 9:30
-    market_close = 16 * 60 + 30  # 16:30（盘后30分钟缓冲，因API有5-10分钟延迟）
-    
-    # 判断缓存保存时间是否在盘中
-    cached_hour_minute = cached_time_et.hour * 60 + cached_time_et.minute
-    cached_date_et = cached_time_et.date()
-    was_cached_during_market = (market_open <= cached_hour_minute < market_close and 
-                                 cached_time_et.weekday() < 5)
-    
-    # 判断当前是否在盘中
-    current_hour_minute = current_et.hour * 60 + current_et.minute
-    is_market_open_now = (market_open <= current_hour_minute < market_close and 
-                          current_et.weekday() < 5)
+        # 美股：使用美东时区
+        et_tz = pytz.timezone('America/New_York')
+        
+        # 将缓存时间转换为美东时间
+        if cached_time.tzinfo is None:
+            cached_time_local = pytz.utc.localize(cached_time).astimezone(et_tz)
+        else:
+            cached_time_local = cached_time.astimezone(et_tz)
+        
+        current_local = datetime.now(et_tz)
+        
+        # 美股时间常量
+        market_open = 9 * 60 + 30   # 9:30
+        market_close = 16 * 60 + 30  # 16:30（盘后30分钟缓冲）
+        
+        # 判断缓存保存时间是否在盘中
+        cached_hour_minute = cached_time_local.hour * 60 + cached_time_local.minute
+        was_cached_during_market = (market_open <= cached_hour_minute < market_close and 
+                                     cached_time_local.weekday() < 5)
+        
+        # 判断当前是否在盘中
+        current_hour_minute = current_local.hour * 60 + current_local.minute
+        is_market_open_now = (market_open <= current_hour_minute < market_close and 
+                              current_local.weekday() < 5)
+        
+        # 获取预期最新交易日的函数
+        get_expected_date = lambda: _get_expected_latest_trading_date(current_local)
+        current_date = current_local.date()
     
     # 如果缓存是盘中获取的，无论当前什么时段都需要检查缓存年龄
     # 因为盘中数据不是最终收盘价，需要刷新获取最终数据
@@ -434,8 +530,6 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
     
     if is_market_open_now:
         # 当前在盘中，需要实时数据
-        current_date = current_et.date()
-        
         if last_data_only_date >= current_date:
             # 数据是今天的，检查缓存年龄
             cache_age_minutes = (now - cached_time).total_seconds() / 60
@@ -444,9 +538,9 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
             # 数据不是今天的，需要刷新
             return False
     else:
-        # 当前不在盘中（盘前/盘后/周末）
+        # 当前不在盘中（盘前/盘后/周末/午休）
         # 缓存也是盘后获取的（最终收盘价），只需检查数据日期
-        expected_date = _get_expected_latest_trading_date(current_et)
+        expected_date = get_expected_date()
         
         if last_data_only_date < expected_date:
             # 数据不是最新交易日，缓存无效
@@ -476,7 +570,7 @@ def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
     if cache_key in _DATA_CACHE:
         cached_time, cached_hist = _DATA_CACHE[cache_key]
         
-        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry):
+        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry, symbol):
             return cached_hist, "内存"
     
     # 2. 检查文件缓存
@@ -484,7 +578,7 @@ def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
     if file_cache:
         cached_time, cached_hist = file_cache
         
-        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry):
+        if _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry, symbol):
             # 加载到内存缓存
             _DATA_CACHE[cache_key] = (cached_time, cached_hist)
             return cached_hist, "文件"
