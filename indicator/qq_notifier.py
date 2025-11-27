@@ -7,6 +7,10 @@ import os
 import time
 from typing import Optional, Tuple
 
+# 模块级全局缓存：{symbol: last_push_timestamp}
+# 使用全局变量确保跨 QQNotifier 实例共享缓存
+_global_push_cache = {}
+
 
 class QQNotifier:
     """QQ消息推送器"""
@@ -25,8 +29,7 @@ class QQNotifier:
         self.url = f'https://qmsg.zendee.cn/send/{key}'
         # 群消息推送接口（备用）
         # self.url = f'https://qmsg.zendee.cn/group/{key}'
-        # 推送缓存：{symbol: last_push_timestamp}，避免重复推送
-        self.push_cache = {}
+        # 使用全局缓存，避免重复推送（跨实例共享）
         self.cache_hours = 2  # 缓存时间（小时）
         
         # 指数退避重试配置
@@ -103,10 +106,10 @@ class QQNotifier:
         Returns:
             bool: 是否发送成功（如果缓存时间内已推送过，返回False）
         """
-        # 检查缓存，避免缓存时间内重复推送
+        # 检查全局缓存，避免缓存时间内重复推送
         current_time = time.time()
-        if symbol in self.push_cache:
-            last_push_time = self.push_cache[symbol]
+        if symbol in _global_push_cache:
+            last_push_time = _global_push_cache[symbol]
             hours_passed = (current_time - last_push_time) / 3600
             if hours_passed < self.cache_hours:
                 print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
@@ -139,9 +142,9 @@ class QQNotifier:
         msg = "\n".join(msg_parts)
         success = self.send_message(msg)
         
-        # 如果发送成功，更新缓存
+        # 如果发送成功，更新全局缓存
         if success:
-            self.push_cache[symbol] = current_time
+            _global_push_cache[symbol] = current_time
         
         return success
 
