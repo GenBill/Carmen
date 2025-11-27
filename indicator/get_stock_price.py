@@ -338,6 +338,35 @@ def _save_cache_to_file(symbol: str, cached_time, hist_data):
         print(f"保存缓存文件失败 {symbol}: {e}")
 
 
+def _get_expected_latest_trading_date(current_et):
+    """
+    计算预期的最新交易日日期（不含节假日，仅排除周末）
+    
+    Args:
+        current_et: 美东当前时间 (datetime with timezone)
+    
+    Returns:
+        date: 预期的最新交易日日期
+    """
+    current_date = current_et.date()
+    current_hour_minute = current_et.hour * 60 + current_et.minute
+    
+    # 美股收盘时间 16:00 (使用实际收盘时间，不是缓冲时间)
+    market_close_time = 16 * 60  # 16:00
+    is_weekday = current_et.weekday() < 5  # 周一到周五
+    
+    if is_weekday and current_hour_minute >= market_close_time:
+        # 交易日已收盘 → 数据应该是今天
+        return current_date
+    else:
+        # 盘前 或 周末 → 数据应该是上一个交易日
+        # 回溯找到上一个交易日
+        check_date = current_date - timedelta(days=1)
+        while check_date.weekday() >= 5:  # 跳过周末
+            check_date -= timedelta(days=1)
+        return check_date
+
+
 def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry=False):
     """
     智能缓存有效性检查（基于数据最新日期和市场状态）
@@ -410,29 +439,18 @@ def _is_cache_valid_smart(cached_time, cached_hist, cache_minutes, ignore_expiry
             # 数据不是今天的，需要刷新
             return False
     else:
-        # 当前不在盘中（盘前/盘后/周末），只需要最新交易日数据
-        # 先判断缓存获取时段
-        if was_cached_during_market:
-            # 盘中获取的缓存，需要按cache_minutes检查
-            cache_age_minutes = (now - cached_time).total_seconds() / 60
-            return cache_age_minutes < cache_minutes
-        else:
-            # 优先检查缓存年龄。如果缓存很新（在有效期内），直接认为有效
-            # 这解决了盘前（日期变更但未开盘）时，强制刷新刚刚下载的数据的问题
-            cache_age_minutes = (now - cached_time).total_seconds() / 60
-            if cache_age_minutes < cache_minutes:
-                return True
-
-            # 缓存已过期
-            # 数据不是今天的，肯定无效
-            current_date = current_et.date()
-            last_data_only_date = last_data_date_et.date()
-
-            if last_data_only_date < current_date:
-                return False
-            
-            # 数据是今天的，但缓存过期了，也无效
+        # 当前不在盘中（盘前/盘后/周末），需要最新交易日数据
+        last_data_only_date = last_data_date_et.date()
+        expected_date = _get_expected_latest_trading_date(current_et)
+        
+        # 【关键修复】必须先检查数据日期是否是最新交易日
+        if last_data_only_date < expected_date:
+            # 数据不是最新交易日，缓存无效，必须刷新
             return False
+        
+        # 数据是最新交易日的，再检查缓存年龄
+        cache_age_minutes = (now - cached_time).total_seconds() / 60
+        return cache_age_minutes < cache_minutes
 
 
 def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
