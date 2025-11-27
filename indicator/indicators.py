@@ -4,21 +4,74 @@ import pickle
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import pytz
 from datetime import datetime, timedelta
 
 # 长期数据缓存目录（5年历史数据，1天有效期）
 LONGTERM_CACHE_DIR = os.path.join(os.path.dirname(__file__), '.cache_5y')
 
 
+def _get_expected_latest_trading_date_for_symbol(symbol):
+    """
+    根据股票代码判断市场，计算预期的最新交易日
+    
+    Args:
+        symbol: 股票代码 (如 AAPL, 0700.HK, 000001.SZ)
+    
+    Returns:
+        date: 预期的最新交易日日期
+    """
+    # 根据后缀判断市场和时区
+    if '.HK' in symbol or '.SZ' in symbol or '.SS' in symbol:
+        # 港股/A股：使用北京时间
+        tz = pytz.timezone('Asia/Shanghai')
+        market_close_hour = 15  # 15:00 收盘
+    else:
+        # 美股：使用美东时间
+        tz = pytz.timezone('America/New_York')
+        market_close_hour = 16  # 16:00 收盘
+    
+    now = datetime.now(tz)
+    current_date = now.date()
+    is_weekday = now.weekday() < 5
+    
+    if is_weekday and now.hour >= market_close_hour:
+        # 交易日已收盘 → 数据应该是今天
+        return current_date
+    else:
+        # 盘前或周末 → 数据应该是上一个交易日
+        check_date = current_date - timedelta(days=1)
+        while check_date.weekday() >= 5:  # 跳过周末
+            check_date -= timedelta(days=1)
+        return check_date
+
+
 def _load_longterm_cache(symbol):
-    """加载长期数据缓存（1天内有效）"""
+    """
+    加载长期数据缓存（智能检查：文件24小时内有效 + 数据日期必须是最新交易日）
+    """
     cache_path = os.path.join(LONGTERM_CACHE_DIR, f"{symbol}.pkl")
     if os.path.exists(cache_path):
         file_mtime = os.path.getmtime(cache_path)
-        if time.time() - file_mtime < 86400:  # 24小时
+        if time.time() - file_mtime < 86400:  # 24小时内的文件
             try:
                 with open(cache_path, 'rb') as f:
-                    return pickle.load(f)
+                    data = pickle.load(f)
+                
+                # 【关键修复】检查数据日期是否是最新交易日
+                if data is not None and not data.empty:
+                    last_data_date = data.index[-1]
+                    if hasattr(last_data_date, 'date'):
+                        last_data_date = last_data_date.date()
+                    elif hasattr(last_data_date, 'to_pydatetime'):
+                        last_data_date = last_data_date.to_pydatetime().date()
+                    
+                    expected_date = _get_expected_latest_trading_date_for_symbol(symbol)
+                    
+                    if last_data_date >= expected_date:
+                        return data
+                    # 数据日期不是最新交易日，返回 None 强制刷新
+                    return None
             except:
                 pass
     return None
