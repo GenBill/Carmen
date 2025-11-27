@@ -1,18 +1,18 @@
 {
-  "last_update": "2025-11-26T22:14:43.166780",
-  "last_update_readable": "2025-11-26 22:14:43",
-  "content_hash": "69026e04203b32416a3ad34f7b1139a4",
+  "last_update": "2025-11-27T09:57:04.658969",
+  "last_update_readable": "2025-11-27 09:57:04",
+  "content_hash": "249ae1ad5ed0dec7b500d216446cbfc1",
   "html_file": "docs/index_hk.html",
-  "html_file_size": 10835,
+  "html_file_size": 39502,
   "market_status": "港股市场扫描",
-  "update_time": "2025-11-26 22:06:18",
+  "update_time": "2025-11-27 09:28:34",
   "mode": "港股市场模式",
   "stats": {
     "total_scanned": 2680,
-    "success_count": 639,
+    "success_count": 380,
     "signal_count": 0,
     "blacklist_count": 0,
-    "stocks_displayed": 639
+    "stocks_displayed": 380
   },
   "config": {
     "rsi_period": 8,
@@ -90,7 +90,15 @@
       "market_status": "港股市场扫描",
       "stocks_count": 639,
       "signals": 0
+    },
+    {
+      "timestamp": "2025-11-27T09:57:04.658969",
+      "timestamp_readable": "2025-11-27 09:57:04",
+      "content_hash": "249ae1ad5ed0dec7b500d216446cbfc1",
+      "market_status": "港股市场扫描",
+      "stocks_count": 380,
+      "signals": 0
     }
   ],
-  "total_updates": 9
+  "total_updates": 10
 }
