@@ -105,6 +105,9 @@ def carmen_indicator(stock_data):
     rsi_minmax = [35, 65]
     rsi_delta = 5
 
+    # 涨跌 Flag，过滤掉爆量下跌的垃圾股
+    red_flag = stock_data.get('close', 0) > stock_data.get('open', 0)
+
     # Volume 爆量买入，缩量卖出
     volume_state = [False, False]
     if stock_data.get('estimated_volume') and stock_data.get('avg_volume') and stock_data['avg_volume'] > 0:
@@ -170,7 +173,8 @@ def carmen_indicator(stock_data):
     if macd_state_strict[1]: score[1] += 1.0
     if macd_state_easy[0]: score[0] += 0.4
     if macd_state_easy[1]: score[1] += 0.4
-    
+
+    if not red_flag: score[0] = 0.0
     return score
 
 def vegas_indicator(stock_data):
