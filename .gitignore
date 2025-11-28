@@ -19,3 +19,4 @@ gh-pages/
 docs/index*.html
 docs/meta*.json
 .last_run_*
+autotube/.cache/*
