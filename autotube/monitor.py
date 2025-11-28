@@ -12,6 +12,7 @@ import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from openai import OpenAI
 import whisper
+import torch
 
 # 配置日志
 logging.basicConfig(
@@ -162,12 +163,30 @@ def download_audio(video_url: str, output_path: str) -> bool:
 def transcribe_audio(audio_path: str) -> Optional[str]:
     """使用 Whisper 转录音频"""
     try:
-        logger.info("正在加载 Whisper 模型 (base)...")
-        # 使用 base 模型以平衡速度和准确性，可根据显存调整为 small/medium
-        model = whisper.load_model("base")
+        # 检查 CUDA 可用性
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Whisper 将运行在设备: {device.upper()}")
+        
+        logger.info(f"正在加载 Whisper 模型 (medium)... 设备: {device}")
+        # 升级为 large 模型，准确率最高
+        # 注意：large 模型需要约 10GB 显存
+        model = whisper.load_model("medium", device=device)
         
         logger.info(f"正在转录音频: {audio_path}")
-        result = model.transcribe(audio_path, language='zh') # 强制指定中文，提高准确率
+        
+        # 显式使用 no_grad 减少显存占用
+        with torch.no_grad():
+            # fp16=True 在 GPU 上默认开启，能显著提速（除非是古老的 GPU）
+            # beam_size=1 可以牺牲极少量的准确率换取更快的速度
+            # best_of=1 也是同样的道理
+            result = model.transcribe(
+                audio_path, 
+                language='zh',
+                fp16=True,
+                beam_size=5, # 默认是 5，降低它能提速，比如改为 1
+                best_of=5    # 默认是 5
+            ) 
+            
         return result["text"]
     except Exception as e:
         logger.error(f"Whisper 转录失败: {e}")
@@ -233,10 +252,11 @@ def rewrite_text(text: str, api_key: str) -> Optional[str]:
     
     rewrite_prompt = f"""
     以下是一段YouTube直播视频的语音转录文本。
-    该金融博主在开播之前可能会放音乐，因此转录的前几句话可能会出现乱码。
+    该金融博主在开播之前可能会放音乐，正式开播后他会关闭音乐，因此转录的前几句话可能会出现乱码。
     文本可能包含同音字识别错误和断句错误，例如“个股“被识别为“个古“。
     
     你的任务是修复这些转录错误，并严谨记录博主输出的所有信息。
+    记得换行，确保文本有足够的可读性。
     
     原始文本：
     {text[:30000]}
