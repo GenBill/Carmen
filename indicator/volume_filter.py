@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Set, Dict, List
 from tqdm import tqdm
+import yfinance as yf
+import pandas as pd
 
 class VolumeFilter:
     """低成交量股票过滤器"""
@@ -359,13 +361,16 @@ class VolumeFilter:
         
         return [symbol for symbol, _ in sorted_candidates]
     
-    def daily_update_blacklist(self, stock_data_func=None):
+    def daily_update_blacklist(self, stock_data_func=None, batch_size: int = 50, avg_volume_days: int = 8):
         """
         每日更新黑名单：重新验证部分股票，移除满足条件的股票
         每只股票每天只检查一次
+        使用 yf.download 批量下载，多线程加速
         
         Args:
-            stock_data_func: 获取股票数据的函数，如果为None则跳过更新
+            stock_data_func: 获取股票数据的函数（保留参数兼容性，实际不再使用）
+            batch_size: 批量下载时每批股票数量，默认50
+            avg_volume_days: 平均成交量计算天数，默认8
         """
         if not self.blacklist:
             return
@@ -382,64 +387,135 @@ class VolumeFilter:
             return
         
         update_count = min(daily_quota, len(candidates))
+        symbols_to_check = candidates[:update_count]
         
         print(f"🔄 开始每日黑名单更新: 计划更新 {update_count}/{len(self.blacklist)} 只股票 (今日待检查: {len(candidates)})")
         
+        # ========== 批量下载股票数据（多线程加速） ==========
+        stock_data_map = {}  # symbol -> stock_data dict
+        total_batches = (len(symbols_to_check) + batch_size - 1) // batch_size
+        
+        # print(f"📥 批量下载 {len(symbols_to_check)} 只股票数据 (共 {total_batches} 批)")
+        
+        batch_iter = tqdm(
+            range(0, len(symbols_to_check), batch_size),
+            desc="下载数据",
+            total=total_batches,
+            unit="batch",
+            ncols=100
+        )
+        
+        for i in batch_iter:
+            batch = symbols_to_check[i:i + batch_size]
+            if not batch:
+                continue
+            
+            try:
+                # 使用 yf.download 批量下载，自动多线程加速
+                hist_batch = yf.download(
+                    batch, 
+                    period="1mo",  # 黑名单检查只需近期数据计算平均成交量
+                    progress=False, 
+                    auto_adjust=False, 
+                    threads=True, 
+                    group_by='ticker'
+                )
+                
+                if hist_batch.empty:
+                    continue
+                
+                # 处理返回的数据格式
+                if isinstance(hist_batch.columns, pd.MultiIndex):
+                    # MultiIndex：按 ticker 拆分
+                    tickers_in_data = hist_batch.columns.get_level_values(0).unique().tolist()
+                    for symbol in batch:
+                        if symbol in tickers_in_data:
+                            try:
+                                hist = hist_batch[symbol].copy()
+                                if not hist.empty and len(hist) >= avg_volume_days:
+                                    # 计算平均成交量和收盘价
+                                    avg_volume = hist['Volume'].tail(avg_volume_days).mean()
+                                    close_price = hist['Close'].iloc[-1]
+                                    
+                                    # Sanitize NaN
+                                    if pd.isna(avg_volume):
+                                        avg_volume = 0
+                                    if pd.isna(close_price):
+                                        close_price = 0.0
+                                    
+                                    stock_data_map[symbol] = {
+                                        'avg_volume': avg_volume,
+                                        'close': close_price
+                                    }
+                            except Exception:
+                                continue
+                else:
+                    # 单层索引：只有一只股票的情况
+                    if len(batch) == 1:
+                        symbol = batch[0]
+                        if not hist_batch.empty and len(hist_batch) >= avg_volume_days:
+                            avg_volume = hist_batch['Volume'].tail(avg_volume_days).mean()
+                            close_price = hist_batch['Close'].iloc[-1]
+                            
+                            if pd.isna(avg_volume):
+                                avg_volume = 0
+                            if pd.isna(close_price):
+                                close_price = 0.0
+                            
+                            stock_data_map[symbol] = {
+                                'avg_volume': avg_volume,
+                                'close': close_price
+                            }
+            except Exception as e:
+                continue
+        
+        # ========== 处理已下载的数据 ==========
         updated_count = 0
         removed_count = 0
         today = datetime.now().date().isoformat()
 
-        # 使用 tqdm 显示进度条
-        with tqdm(total=update_count, desc="更新黑名单", unit="iter", ncols=100) as pbar:
-            for i, symbol in enumerate(candidates[:update_count]):
-                if stock_data_func is None:
-                    continue
+        with tqdm(total=len(symbols_to_check), desc="更新黑名单", unit="iter", ncols=100) as pbar:
+            for symbol in symbols_to_check:
+                stock_data = stock_data_map.get(symbol)
                 
-                try:
-                    # 重新获取股票数据
-                    stock_data = stock_data_func(symbol)
-                    
-                    # Sanitize stock_data to prevent NaN values in JSON
+                # Sanitize stock_data to prevent NaN values in JSON
+                if stock_data:
+                    val_vol = stock_data.get('avg_volume')
+                    if val_vol is None or (isinstance(val_vol, float) and math.isnan(val_vol)):
+                        stock_data['avg_volume'] = 0
+                        
+                    val_close = stock_data.get('close')
+                    if val_close is None or (isinstance(val_close, float) and math.isnan(val_close)):
+                        stock_data['close'] = 0.0
+                
+                # 使用更严格的移除条件（需要达到2倍阈值）
+                if stock_data and self.should_remove_from_blacklist(stock_data):
+                    # 股票成交量达到移除阈值，从黑名单中移除
+                    volume_usd = stock_data.get('avg_volume', 0) * stock_data.get('close', 0)
+                    self.remove_from_blacklist(symbol)
+                    removed_count += 1
+                    # 更新进度条显示移除信息
+                    pbar.set_postfix_str(f"Removed: {removed_count} | {symbol} ${volume_usd:,.0f}")
+                else:
+                    # 股票仍然不满足条件，更新元数据和检查日期
                     if stock_data:
-                        val_vol = stock_data.get('avg_volume')
-                        if val_vol is None or (isinstance(val_vol, float) and math.isnan(val_vol)):
-                            stock_data['avg_volume'] = 0
-                            
-                        val_close = stock_data.get('close')
-                        if val_close is None or (isinstance(val_close, float) and math.isnan(val_close)):
-                            stock_data['close'] = 0.0
-                    
-                    # 使用更严格的移除条件（需要达到2倍阈值）
-                    if stock_data and self.should_remove_from_blacklist(stock_data):
-                        # 股票成交量达到移除阈值，从黑名单中移除
-                        volume_usd = stock_data.get('avg_volume', 0) * stock_data.get('close', 0)
-                        self.remove_from_blacklist(symbol)
-                        removed_count += 1
-                        # 更新进度条显示移除信息
-                        pbar.set_postfix_str(f"Removed: {removed_count} | {symbol} ${volume_usd:,.0f}")
+                        self.blacklist_metadata[symbol] = {
+                            'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
+                            'last_checked_date': today,  # 更新上次检查日期
+                            'last_checked': datetime.now().isoformat(),  # 详细时间戳
+                            'avg_volume': stock_data.get('avg_volume', 0),
+                            'avg_price': stock_data.get('close', 0),
+                            'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
+                            'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
+                        }
                     else:
-                        # 股票仍然不满足条件，更新元数据和检查日期
-                        if stock_data:
-                            self.blacklist_metadata[symbol] = {
-                                'added_date': self.blacklist_metadata[symbol].get('added_date', datetime.now().isoformat()),
-                                'last_checked_date': today,  # 更新上次检查日期
-                                'last_checked': datetime.now().isoformat(),  # 详细时间戳
-                                'avg_volume': stock_data.get('avg_volume', 0),
-                                'avg_price': stock_data.get('close', 0),
-                                'volume_usd': stock_data.get('avg_volume', 0) * stock_data.get('close', 0),
-                                'reason': f'平均成交量 {stock_data.get("avg_volume", 0):,} 股，成交金额约 ${(stock_data.get("avg_volume", 0) * stock_data.get("close", 0)):,.0f}'
-                            }
-                        else:
-                            # 即使获取数据失败，也标记为已检查（避免重复失败）
-                            if symbol in self.blacklist_metadata:
-                                self.blacklist_metadata[symbol]['last_checked_date'] = today
-                                self.blacklist_metadata[symbol]['last_checked'] = datetime.now().isoformat()
-                    
-                    updated_count += 1
-                    pbar.update(1)
-                    
-                except Exception as e:
-                    continue
+                        # 即使获取数据失败，也标记为已检查（避免重复失败）
+                        if symbol in self.blacklist_metadata:
+                            self.blacklist_metadata[symbol]['last_checked_date'] = today
+                            self.blacklist_metadata[symbol]['last_checked'] = datetime.now().isoformat()
+                
+                updated_count += 1
+                pbar.update(1)
         
         # 统计今天已检查的总数
         checked_today = sum(1 for meta in self.blacklist_metadata.values() 
