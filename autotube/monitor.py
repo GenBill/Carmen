@@ -13,6 +13,10 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, No
 from openai import OpenAI
 import whisper
 import torch
+import warnings
+
+# 抑制 PyTorch TypedStorage 弃用警告
+warnings.filterwarnings("ignore", message=".*TypedStorage is deprecated.*", category=UserWarning)
 
 # 配置日志
 logging.basicConfig(
@@ -167,10 +171,10 @@ def transcribe_audio(audio_path: str) -> Optional[str]:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Whisper 将运行在设备: {device.upper()}")
         
-        logger.info(f"正在加载 Whisper 模型 (medium)... 设备: {device}")
+        logger.info(f"正在加载 Whisper 模型 (large)... 设备: {device}")
         # 升级为 large 模型，准确率最高
         # 注意：large 模型需要约 10GB 显存
-        model = whisper.load_model("medium", device=device)
+        model = whisper.load_model("large", device=device)
         
         logger.info(f"正在转录音频: {audio_path}")
         
