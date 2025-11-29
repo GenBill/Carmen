@@ -164,6 +164,47 @@ def download_audio(video_url: str, output_path: str) -> bool:
         logger.error(f"下载音频失败: {e}")
         return False
 
+def get_whisper_model_size(device: str) -> str:
+    """根据可用显存自动选择 Whisper 模型量级
+    
+    Args:
+        device: 设备类型 ("cuda" 或 "cpu")
+    
+    Returns:
+        模型名称: "large", "medium", "small", "base", "tiny"
+    """
+    if device == "cpu":
+        # CPU 模式使用较小的模型以保证速度
+        logger.info("CPU 模式，使用 base 模型")
+        return "base"
+    
+    try:
+        # 获取 GPU 显存信息（单位：字节）
+        free_memory, total_memory = torch.cuda.mem_get_info(0)
+        free_memory_gb = free_memory / (1024 ** 3)  # 转换为 GB
+        total_memory_gb = total_memory / (1024 ** 3)
+        
+        logger.info(f"GPU 显存: 总计 {total_memory_gb:.2f}GB, 可用 {free_memory_gb:.2f}GB")
+        
+        # 根据可用显存选择模型（保留 1GB 缓冲）
+        if free_memory_gb >= 9:
+            model_size = "large"  # 需要约 10GB
+        elif free_memory_gb >= 4:
+            model_size = "medium"  # 需要约 5GB
+        elif free_memory_gb >= 1.5:
+            model_size = "small"   # 需要约 2GB
+        elif free_memory_gb >= 0.5:
+            model_size = "base"    # 需要约 1GB
+        else:
+            model_size = "tiny"    # 需要约 0.5GB
+        
+        logger.info(f"根据可用显存自动选择模型: {model_size}")
+        return model_size
+        
+    except Exception as e:
+        logger.warning(f"无法获取 GPU 显存信息: {e}，使用 medium 模型作为默认值")
+        return "medium"
+
 def transcribe_audio(audio_path: str) -> Optional[str]:
     """使用 Whisper 转录音频"""
     try:
@@ -171,10 +212,10 @@ def transcribe_audio(audio_path: str) -> Optional[str]:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Whisper 将运行在设备: {device.upper()}")
         
-        logger.info(f"正在加载 Whisper 模型 (large)... 设备: {device}")
-        # 升级为 large 模型，准确率最高
-        # 注意：large 模型需要约 10GB 显存
-        model = whisper.load_model("large", device=device)
+        # 根据显存自动选择模型量级
+        model_size = get_whisper_model_size(device)
+        logger.info(f"正在加载 Whisper 模型 ({model_size})... 设备: {device}")
+        model = whisper.load_model(model_size, device=device)
         
         logger.info(f"正在转录音频: {audio_path}")
         
