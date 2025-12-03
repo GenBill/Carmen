@@ -4,6 +4,7 @@ import glob
 import time
 import logging
 import datetime
+import shutil
 from typing import Optional, Dict, List
 import tempfile
 
@@ -354,21 +355,67 @@ def summarize_text(text: str, api_key: str) -> Optional[str]:
         logger.error(f"DeepSeek API (总结阶段) 调用失败: {e}")
         return None
 
-def clean_old_cache(days: int):
-    """清理过期的缓存文件"""
-    logger.info("正在清理过期缓存...")
-    cutoff_time = time.time() - (days * 86400)
+def find_video_cache_dir(video_id: str) -> Optional[str]:
+    """查找视频的缓存目录（支持新旧两种格式）
     
-    # 遍历 cache 目录下的 json 文件
-    cache_files = glob.glob(os.path.join(CACHE_DIR, "*.json"))
-    for file_path in cache_files:
-        # 检查文件修改时间
-        if os.path.getmtime(file_path) < cutoff_time:
+    新格式: {upload_date}_{video_id} (YYYYMMDD_xxxxx)
+    旧格式: {video_id}
+    """
+    if not os.path.exists(CACHE_DIR):
+        return None
+    
+    for dirname in os.listdir(CACHE_DIR):
+        dir_path = os.path.join(CACHE_DIR, dirname)
+        if not os.path.isdir(dir_path):
+            continue
+        # 新格式: 8位日期 + 下划线 + video_id
+        if len(dirname) > 9 and dirname[8] == '_' and dirname[:8].isdigit():
+            if dirname[9:] == video_id:
+                return dir_path
+        # 旧格式: 直接是 video_id
+        elif dirname == video_id:
+            return dir_path
+    return None
+
+
+def clean_old_cache(days: int):
+    """清理过期的缓存目录（根据视频 upload_date 判断）"""
+    logger.info("正在清理过期缓存...")
+    
+    if not os.path.exists(CACHE_DIR):
+        return
+    
+    cutoff_date = datetime.datetime.now() - datetime.timedelta(days=days)
+    cutoff_str = cutoff_date.strftime('%Y%m%d')
+    
+    for dirname in os.listdir(CACHE_DIR):
+        dir_path = os.path.join(CACHE_DIR, dirname)
+        if not os.path.isdir(dir_path):
+            continue
+        
+        upload_date = None
+        
+        # 新格式: YYYYMMDD_video_id，直接从目录名提取 upload_date
+        if len(dirname) > 9 and dirname[8] == '_' and dirname[:8].isdigit():
+            upload_date = dirname[:8]
+        else:
+            # 旧格式: 从 JSON 文件读取 upload_date
+            json_files = glob.glob(os.path.join(dir_path, "*.json"))
+            if json_files:
+                try:
+                    with open(json_files[0], 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        upload_date = data.get('upload_date')
+                except Exception:
+                    pass
+        
+        # 判断是否过期
+        if upload_date and upload_date < cutoff_str:
             try:
-                os.remove(file_path)
-                logger.info(f"已删除过期缓存: {file_path}")
+                shutil.rmtree(dir_path)
+                logger.info(f"已删除过期缓存目录: {dir_path}")
             except OSError as e:
-                logger.error(f"删除文件失败 {file_path}: {e}")
+                logger.error(f"删除目录失败 {dir_path}: {e}")
 
 def main():
     init_directories()
@@ -386,15 +433,22 @@ def main():
     # 3. 处理每个视频
     for video in videos:
         video_id = video['id']
-        video_dir = os.path.join(CACHE_DIR, video_id)
-        if not os.path.exists(video_dir):
+        upload_date = video['upload_date']  # 格式: 20251203
+        
+        # 检查是否已存在缓存目录（支持新旧格式）
+        existing_dir = find_video_cache_dir(video_id)
+        if existing_dir:
+            summary_path = os.path.join(existing_dir, "summary.txt")
+            if os.path.exists(summary_path):
+                logger.info(f"视频 {video['title']} 已存在最终分析结果，跳过。")
+                continue
+            video_dir = existing_dir  # 使用已有目录
+        else:
+            # 新建目录使用新格式: 20251203_video_id
+            video_dir = os.path.join(CACHE_DIR, f"{upload_date}_{video_id}")
             os.makedirs(video_dir)
-
-        # 标记文件：如果 summary.txt 存在，说明整个流程已完成
+        
         summary_path = os.path.join(video_dir, "summary.txt")
-        if os.path.exists(summary_path):
-            logger.info(f"视频 {video['title']} 已存在最终分析结果，跳过。")
-            continue
             
         logger.info(f"开始处理视频: {video['title']}")
         
