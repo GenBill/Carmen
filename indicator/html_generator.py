@@ -367,33 +367,6 @@ def save_meta_info(report_data: dict, content_hash: str, html_file: str):
         }
     }
     
-    # 如果meta文件已存在，读取历史记录
-    history = []
-    if os.path.exists(meta_file):
-        try:
-            with open(meta_file, 'r', encoding='utf-8') as f:
-                old_meta = json.load(f)
-                history = old_meta.get('update_history', [])
-        except Exception as e:
-            print(f"⚠️ 读取旧meta文件失败: {e}")
-    
-    # 添加当前更新到历史记录（保留最近10条）
-    history.append({
-        'timestamp': meta_info['last_update'],
-        'timestamp_readable': meta_info['last_update_readable'],
-        'content_hash': content_hash,
-        'market_status': meta_info['market_status'],
-        'stocks_count': meta_info['stats']['stocks_displayed'],
-        'signals': meta_info['stats']['signal_count']
-    })
-    
-    # 只保留最近10条记录
-    if len(history) > 10:
-        history = history[-10:]
-    
-    meta_info['update_history'] = history
-    meta_info['total_updates'] = len(history)
-    
     # 保存meta文件
     try:
         with open(meta_file, 'w', encoding='utf-8') as f:
