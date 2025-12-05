@@ -7,7 +7,8 @@ import subprocess
 import os
 from datetime import datetime
 from typing import Optional
-
+import shutil
+import traceback
 
 class GitPublisher:
     """Git自动推送器（独立目录模式）"""
@@ -67,27 +68,41 @@ class GitPublisher:
         """检查gh-pages目录是否存在"""
         return os.path.exists(self.gh_pages_dir) and os.path.isdir(self.gh_pages_dir)
     
-    def _should_copy_file(self, source_file: str, target_file: str) -> bool:
+    def _should_update_by_meta(self, source_meta: str, target_meta: str) -> bool:
         """
-        检查是否应该复制文件
+        通过比较meta文件的last_update时间判断是否需要更新
         
         Args:
-            source_file: 源文件路径
-            target_file: 目标文件路径
+            source_meta: 源meta文件路径
+            target_meta: 目标meta文件路径
             
         Returns:
-            bool: True表示应该复制，False表示不需要复制
+            bool: True表示需要更新，False表示不需要
         """
-        # 如果目标文件不存在，需要复制
-        if not os.path.exists(target_file):
+        import json
+        
+        # 源meta不存在，不需要更新
+        if not os.path.exists(source_meta):
+            return False
+        
+        # 目标meta不存在，需要更新
+        if not os.path.exists(target_meta):
             return True
         
-        # 比较文件修改时间
-        source_mtime = os.path.getmtime(source_file)
-        target_mtime = os.path.getmtime(target_file)
-        
-        # 如果源文件比目标文件新，需要复制
-        return source_mtime > target_mtime
+        try:
+            with open(source_meta, 'r', encoding='utf-8') as f:
+                source_data = json.load(f)
+            with open(target_meta, 'r', encoding='utf-8') as f:
+                target_data = json.load(f)
+            
+            source_time = source_data.get('last_update', '')
+            target_time = target_data.get('last_update', '')
+            
+            # 源时间更新则需要复制
+            return source_time > target_time
+        except Exception:
+            # 解析失败时，默认需要更新
+            return True
     
     def publish(self, commit_message: Optional[str] = None, force_push: Optional[bool] = None) -> bool:
         """
@@ -141,52 +156,30 @@ class GitPublisher:
                 print(f"❌ Git Pull失败: {output}")
                 return False
             
-            # 复制HTML文件
-            import shutil
+            # 复制文件（通过meta时间判断是否需要更新）
+            target_meta = os.path.join(self.target_docs_dir, 'meta.json')
+            target_meta_a = os.path.join(self.target_docs_dir, 'meta_a.json')
+            target_meta_hk = os.path.join(self.target_docs_dir, 'meta_hk.json')
             
-            # 复制美股HTML
-            if os.path.exists(self.html_file):
-                target_html = os.path.join(self.target_docs_dir, 'index.html')
-                if self._should_copy_file(self.html_file, target_html):
-                    shutil.copy2(self.html_file, target_html)
-            
-            # # 复制港A股HTML
-            # if os.path.exists(self.html_hka_file):
-            #     target_html_hka = os.path.join(self.target_docs_dir, 'index_hka.html')
-            #     if self._should_copy_file(self.html_hka_file, target_html_hka):
-            #         shutil.copy2(self.html_hka_file, target_html_hka)
-            
-            # 复制A股HTML
-            if os.path.exists(self.html_a_file):
-                target_html_a = os.path.join(self.target_docs_dir, 'index_a.html')
-                if self._should_copy_file(self.html_a_file, target_html_a):
-                    shutil.copy2(self.html_a_file, target_html_a)
-            
-            # 复制港股HTML
-            if os.path.exists(self.html_hk_file):
-                target_html_hk = os.path.join(self.target_docs_dir, 'index_hk.html')
-                if self._should_copy_file(self.html_hk_file, target_html_hk):
-                    shutil.copy2(self.html_hk_file, target_html_hk)
-            
-            # 复制meta文件（如果存在）
-            if os.path.exists(self.meta_file):
-                target_meta = os.path.join(self.target_docs_dir, 'meta.json')
-                if self._should_copy_file(self.meta_file, target_meta):
+            # 美股
+            if self._should_update_by_meta(self.meta_file, target_meta):
+                if os.path.exists(self.html_file):
+                    shutil.copy2(self.html_file, os.path.join(self.target_docs_dir, 'index.html'))
+                if os.path.exists(self.meta_file):
                     shutil.copy2(self.meta_file, target_meta)
             
-            # if os.path.exists(self.meta_hka_file):
-            #     target_meta_hka = os.path.join(self.target_docs_dir, 'meta_hka.json')
-            #     if self._should_copy_file(self.meta_hka_file, target_meta_hka):
-            #         shutil.copy2(self.meta_hka_file, target_meta_hka)
-
-            if os.path.exists(self.meta_a_file):
-                target_meta_a = os.path.join(self.target_docs_dir, 'meta_a.json')
-                if self._should_copy_file(self.meta_a_file, target_meta_a):
+            # A股
+            if self._should_update_by_meta(self.meta_a_file, target_meta_a):
+                if os.path.exists(self.html_a_file):
+                    shutil.copy2(self.html_a_file, os.path.join(self.target_docs_dir, 'index_a.html'))
+                if os.path.exists(self.meta_a_file):
                     shutil.copy2(self.meta_a_file, target_meta_a)
-
-            if os.path.exists(self.meta_hk_file):
-                target_meta_hk = os.path.join(self.target_docs_dir, 'meta_hk.json')
-                if self._should_copy_file(self.meta_hk_file, target_meta_hk):
+            
+            # 港股
+            if self._should_update_by_meta(self.meta_hk_file, target_meta_hk):
+                if os.path.exists(self.html_hk_file):
+                    shutil.copy2(self.html_hk_file, os.path.join(self.target_docs_dir, 'index_hk.html'))
+                if os.path.exists(self.meta_hk_file):
                     shutil.copy2(self.meta_hk_file, target_meta_hk)
             
             # 添加文件到Git
@@ -233,7 +226,6 @@ class GitPublisher:
             
         except Exception as e:
             print(f"❌ 推送过程出错: {e}")
-            import traceback
             traceback.print_exc()
             return False
         
