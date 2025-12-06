@@ -106,13 +106,15 @@ def carmen_indicator(stock_data):
     rsi_delta = 5
 
     # 涨跌 Flag，过滤掉爆量下跌的垃圾股
-    red_flag = stock_data.get('close', 0) > stock_data.get('open', 0)
+    # red_flag = stock_data.get('close', 0) > stock_data.get('open', 0)
 
     # Volume 爆量买入，缩量卖出
     volume_state = [False, False]
+    volume_state_scale = [0.0, 0.0]
     if stock_data.get('estimated_volume') and stock_data.get('avg_volume') and stock_data['avg_volume'] > 0:
         volume_scale = stock_data['estimated_volume'] / stock_data['avg_volume']
         volume_state = [volume_scale >= volume_minmax[1], volume_scale <= volume_minmax[0]]
+        volume_state_scale = [volume_scale / volume_minmax[1], volume_scale / volume_minmax[0]]
     
     # RSI 超卖买入，超买卖出
     rsi_state = [False, False]
@@ -160,21 +162,42 @@ def carmen_indicator(stock_data):
 
 
     score = [0, 0]
+    vol_flag, rsi_flag, macd_flag = [0, 0], [0, 0], [0, 0]
 
-    if volume_state[0]: score[0] += 1
-    if volume_state[1]: score[1] += 1
+    if volume_state[0]: 
+        score[0] += 1
+        vol_flag[0] = 1
+        if volume_state_scale[0] > 1.5: score[0] += 0.2
+        if volume_state_scale[0] > 2.0: score[0] += 0.2
+    
+    if volume_state[1]: 
+        score[1] += 1
+        vol_flag[1] = 1
+        if volume_state_scale[1] < 0.66: score[1] += 0.2
+        if volume_state_scale[1] < 0.33: score[1] += 0.2
 
-    if rsi_state[0] or rsi_prev_state[0]: score[0] += 1.0
-    if rsi_state[1] or rsi_prev_state[1]: score[1] += 1.0
+    if rsi_state[0] or rsi_prev_state[0]: 
+        score[0] += 1.0
+        rsi_flag[0] = 1
+    if rsi_state[1] or rsi_prev_state[1]: 
+        score[1] += 1.0
+        rsi_flag[1] = 1
+    
     if rsi_state[0] and rsi_prev_state[0]: score[0] += 0.6
     if rsi_state[1] and rsi_prev_state[1]: score[1] += 0.6
+    if rsi_state[0] and macd_state_easy[0]: score[0] += 0.4
+    if rsi_state[1] and macd_state_easy[1]: score[1] += 0.4
 
     if macd_state_strict[0]: score[0] += 1.0
     if macd_state_strict[1]: score[1] += 1.0
+    if macd_state_strict[0] and macd_state_easy[0]: macd_flag[0] = 1
     if macd_state_easy[0]: score[0] += 0.4
     if macd_state_easy[1]: score[1] += 0.4
+    if macd_state_strict[1] and macd_state_easy[1]: macd_flag[1] = 1
 
-    if not red_flag: score[0] = 0.0
+    # if not red_flag: score[0] = 0.0
+    if vol_flag[0]+rsi_flag[0]+macd_flag[0] < 2.0: score[0] = 0.0
+    if vol_flag[1]+rsi_flag[1]+macd_flag[1] < 2.0: score[1] = 0.0
     return score
 
 def vegas_indicator(stock_data):
