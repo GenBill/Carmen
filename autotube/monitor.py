@@ -479,14 +479,16 @@ def main():
         rewritten_text = None
         
         if os.path.exists(refine_path):
-             logger.info(f"发现已重写文本: {refine_path}")
-             with open(refine_path, 'r', encoding='utf-8') as f:
-                 rewritten_text = f.read()
+            logger.info(f"发现已重写文本: {refine_path}")
+            with open(refine_path, 'r', encoding='utf-8') as f:
+                rewritten_text = f.read()
         else:
             rewritten_text = rewrite_text(transcript, api_key)
+            rewritten_text_with_newline = rewritten_text.replace("。", "。\n")
+            rewritten_text_with_newline = rewritten_text_with_newline.replace("\n\n\n", "\n\n")
             if rewritten_text:
                 with open(refine_path, 'w', encoding='utf-8') as f:
-                    f.write(rewritten_text)
+                    f.write(rewritten_text_with_newline)
             else:
                 logger.error(f"重写文本失败: {video['title']}")
                 continue
