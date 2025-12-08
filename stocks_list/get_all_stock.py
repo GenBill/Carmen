@@ -109,7 +109,7 @@ def is_valid_common_stock(symbol: str) -> bool:
     elif '.SS' in symbol:
         return len(symbol) == 6+3
     
-    elif '.SH' in symbol:
+    elif '.SZ' in symbol:
         return len(symbol) == 6+3
     
     # 纯美股的情况
