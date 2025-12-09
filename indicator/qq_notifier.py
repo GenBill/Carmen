@@ -87,6 +87,55 @@ class QQNotifier:
         
         return False
     
+    def send_sell_signal(self, symbol: str, price: float, score: float, backtest_str: str, 
+                       rsi: Optional[float] = None, volume_ratio: Optional[float] = None) -> bool:
+        """
+        发送卖出信号通知（带缓存，避免重复推送）
+        
+        Args:
+            symbol: 股票代码
+            price: 当前价格
+            score: 卖出评分
+            backtest_str: 回测胜率
+            rsi: RSI值（可选）
+            volume_ratio: 量比（可选）
+            
+        Returns:
+            bool: 是否发送成功（如果缓存时间内已推送过，返回False）
+        """
+        # 检查全局缓存，避免缓存时间内重复推送
+        current_time = time.time()
+        if symbol in _global_push_cache:
+            last_push_time = _global_push_cache[symbol]
+            hours_passed = (current_time - last_push_time) / 3600
+            if hours_passed < self.cache_hours:
+                print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
+                return False
+        
+        # 构建消息内容
+        safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
+        msg_parts = [
+            f"🔔 卖出信号提醒",
+            f"股票: {safe_symbol}",
+            f"当前价格: {price:.2f}",
+            f"评分: {score:.2f}",
+            f"回测胜率: {backtest_str[1:-1]}",
+        ]
+        if rsi is not None:
+            msg_parts.append(f"RSI: {rsi:.2f}")
+        
+        if volume_ratio is not None:
+            msg_parts.append(f"量比: {volume_ratio:.1f}%")
+        
+        msg = "\n".join(msg_parts)
+        success = self.send_message(msg)
+        
+        # 如果发送成功，更新全局缓存
+        if success:
+            _global_push_cache[symbol] = current_time
+        
+        return success
+
     def send_buy_signal(self, symbol: str, price: float, score: float, backtest_str: str, 
                        rsi: Optional[float] = None, volume_ratio: Optional[float] = None,
                        max_buy_price: Optional[float] = None, ai_win_rate: Optional[float] = None) -> bool:
