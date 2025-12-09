@@ -114,7 +114,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     batch_download_stocks(
         stock_symbols, 
         use_cache=True, 
-        cache_minutes=60,
+        cache_minutes=20,
         batch_size=50,
         period="1y"
     )
@@ -140,7 +140,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
                 use_cache=True,
-                cache_minutes=60
+                cache_minutes=20
             )
             
             if stock_data:
