@@ -115,7 +115,7 @@ class QQNotifier:
         # 构建消息内容
         safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
         msg_parts = [
-            f"🔔 卖出信号提醒",
+            f"📉 卖出信号提醒",
             f"股票: {safe_symbol}",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
@@ -167,7 +167,7 @@ class QQNotifier:
         # 构建消息内容
         safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
         msg_parts = [
-            f"🔔 买入信号提醒",
+            f"📈 买入信号提醒",
             f"股票: {safe_symbol}",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
