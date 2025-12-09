@@ -159,7 +159,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 backtest_result = None
                 backtest_str = ''
                 confidence = 0.0
-                if score[0] >= 2.4 or score[1] >= 2.4:
+                if score[0] >= 2.0 or score[1] >= 2.0:
                     try:
                         backtest_result = backtest_carmen_indicator(
                             symbol, score, stock_data, 
@@ -182,7 +182,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 confidence = 0.0
                             
                             # 发送QQ推送
-                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
+                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.0:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -284,10 +284,10 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.4 且 胜率>=0.5 的股票并运行AI分析（A股）
+            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票并运行AI分析（A股）
             buy_signal_stocks = [
                 stock for stock in stocks_data_for_html 
-                if stock.get('score_buy', 0) >= 2.4 and stock.get('confidence', 0) >= 0.5
+                if stock.get('score_buy', 0) >= 2.0 and stock.get('confidence', 0) >= 0.5
             ]
             ai_analysis_results = []
             
@@ -401,6 +401,7 @@ if __name__ == "__main__":
     scheduler = MarketScheduler(
         market='A',
         run_nodes_cfg=[
+            {'hour': 11, 'minute': 00},
             {'hour': 11, 'minute': 35},
             {'hour': 14, 'minute': 30},
             {'hour': 15, 'minute': 10}

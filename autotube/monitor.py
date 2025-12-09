@@ -358,7 +358,7 @@ def summarize_text(text: str, api_key: str) -> Optional[str]:
 def find_video_cache_dir(video_id: str) -> Optional[str]:
     """查找视频的缓存目录（支持新旧两种格式）
     
-    新格式: {upload_date}_{video_id} (YYYYMMDD_xxxxx)
+    新格式: {upload_date}-{video_id} (YYYYMMDD_xxxxx)
     旧格式: {video_id}
     """
     if not os.path.exists(CACHE_DIR):
@@ -368,8 +368,8 @@ def find_video_cache_dir(video_id: str) -> Optional[str]:
         dir_path = os.path.join(CACHE_DIR, dirname)
         if not os.path.isdir(dir_path):
             continue
-        # 新格式: 8位日期 + 下划线 + video_id
-        if len(dirname) > 9 and dirname[8] == '_' and dirname[:8].isdigit():
+        # 新格式: 8位日期 + 连接线 + video_id
+        if len(dirname) > 9 and dirname[8] == '-' and dirname[:8].isdigit():
             if dirname[9:] == video_id:
                 return dir_path
         # 旧格式: 直接是 video_id
@@ -395,8 +395,8 @@ def clean_old_cache(days: int):
         
         upload_date = None
         
-        # 新格式: YYYYMMDD_video_id，直接从目录名提取 upload_date
-        if len(dirname) > 9 and dirname[8] == '_' and dirname[:8].isdigit():
+        # 新格式: YYYYMMDD-video_id，直接从目录名提取 upload_date
+        if len(dirname) > 9 and dirname[8] == '-' and dirname[:8].isdigit():
             upload_date = dirname[:8]
         else:
             # 旧格式: 从 JSON 文件读取 upload_date
@@ -445,7 +445,7 @@ def main():
             video_dir = existing_dir  # 使用已有目录
         else:
             # 新建目录使用新格式: 20251203_video_id
-            video_dir = os.path.join(CACHE_DIR, f"{upload_date}_{video_id}")
+            video_dir = os.path.join(CACHE_DIR, f"{upload_date}-{video_id}")
             os.makedirs(video_dir)
         
         summary_path = os.path.join(video_dir, "summary.txt")

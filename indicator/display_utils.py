@@ -262,37 +262,30 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
     # 信号指示
     signal = ""
     if score[0] >= 2 or score[1] >= 2:
-        # 构建买入信号字符串
-        if score[0] < 1.0:
-            str_buy = f"Buy {score[0]:.1f}"
-        elif score[0] < 2.4:
-            str_buy = f"{Colors.RED}Buy {score[0]:.1f}{Colors.RESET}"
-        else:
+        # 构建买卖信号字符串
+        if score[0] >= 2.4:
             str_buy = f"{Colors.RED}{Colors.BOLD}Buy {score[0]:.1f}{Colors.RESET}"
-        
-        # 构建卖出信号字符串
-        if score[1] < 1.0:
-            str_sell = f"Sell {score[1]:.1f}"
-        elif score[1] < 2.4:
-            str_sell = f"{Colors.GREEN}Sell {score[1]:.1f}{Colors.RESET}"
         else:
+            str_buy = f"{Colors.RED}Buy {score[0]:.1f}{Colors.RESET}"
+        if score[1] >= 2.4:
             str_sell = f"{Colors.GREEN}{Colors.BOLD}Sell {score[1]:.1f}{Colors.RESET}"
+        else:
+            str_sell = f"{Colors.GREEN}Sell {score[1]:.1f}{Colors.RESET}"
         
         # 添加回测结果
         if backtest_result:
             # 买入回测结果
-            if 'buy_prob' in backtest_result and score[0] >= 2.4:
+            if 'buy_prob' in backtest_result and score[0] >= 2.0:
                 buy_success, buy_total = backtest_result['buy_prob']
                 str_buy += f" ({buy_success}/{buy_total})"
-            
             # 卖出回测结果
-            if 'sell_prob' in backtest_result and score[1] >= 2.4:
+            if 'sell_prob' in backtest_result and score[1] >= 2.0:
                 sell_success, sell_total = backtest_result['sell_prob']
                 str_sell += f" ({sell_success}/{sell_total})"
         
         signal = f"{str_buy} vs {str_sell}"
     
-    buy_signal = score[0] >= 2.4
+    buy_signal = score[0] >= 2.0
     sell_signal = score[1] >= 2.0 and False # 暂时关闭卖出信号
 
     # 打印信息（所有字段固定宽度对齐）

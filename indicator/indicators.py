@@ -362,7 +362,7 @@ def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, g
         score: 当前Carmen指标分数 [买入分数, 卖出分数]
         stock_data: 当前股票数据
         historical_data: 历史数据DataFrame，如果为None则自动获取
-        gate: 回测阈值，默认2.4
+        gate: 回测阈值，默认2.0
         rsi_period: RSI周期，默认8
         macd_fast: MACD快线周期，默认8
         macd_slow: MACD慢线周期，默认17

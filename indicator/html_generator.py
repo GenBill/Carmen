@@ -401,12 +401,12 @@ def format_signal(score_buy: float, score_sell: float, backtest_str: str = '') -
     
     if score_buy >= 3:
         signals.append(f'<span class="signal-badge signal-buy">Buy {score_buy:.1f}</span>')
-    elif score_buy >= 2.4:
+    elif score_buy >= 2.0:
         signals.append(f'Buy {score_buy:.1f}')
     
     if score_sell >= 3:
         signals.append(f'<span class="signal-badge signal-sell">Sell {score_sell:.1f}</span>')
-    elif score_sell >= 2.4:
+    elif score_sell >= 2.0:
         signals.append(f'Sell {score_sell:.1f}')
     
     if backtest_str:

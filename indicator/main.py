@@ -165,7 +165,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 backtest_result = None
                 backtest_str = ''
                 confidence = 0.0
-                if score[0] >= 2.4 or score[1] >= 2.4:
+                if score[0] >= 2.0 or score[1] >= 2.0:
                     try:
                         backtest_result = backtest_carmen_indicator(
                             symbol, score, stock_data, 
@@ -187,7 +187,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             else:
                                 confidence = 0.0
                             
-                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.4:
+                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.0:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -286,10 +286,10 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.4 且 胜率>=0.5 的股票并运行AI分析
+            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票并运行AI分析
             buy_signal_stocks = [
                 stock for stock in stocks_data_for_html 
-                if stock.get('score_buy', 0) >= 2.4 and stock.get('confidence', 0) >= 0.5
+                if stock.get('score_buy', 0) >= 2.0 and stock.get('confidence', 0) >= 0.5
             ]
             ai_analysis_results = []
             
