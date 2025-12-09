@@ -1,16 +1,16 @@
 {
-  "last_update": "2025-12-09T21:35:42.679271",
-  "last_update_readable": "2025-12-09 21:35:42",
-  "content_hash": "42036c81f07c4c4e4a3cc07caa37b357",
+  "last_update": "2025-12-09T21:43:44.025801",
+  "last_update_readable": "2025-12-09 21:43:44",
+  "content_hash": "68bcc97311b41b82a5aa30c8607f78fa",
   "html_file": "docs/index.html",
   "html_file_size": 16955,
   "market_status": "⏰ 盘前时段",
-  "update_time": "2025-12-09 08:33:32 EST",
+  "update_time": "2025-12-09 08:42:46 EST",
   "mode": "盘前/盘后模式",
   "stats": {
     "total_scanned": 2215,
     "success_count": 2209,
-    "signal_count": 0,
+    "signal_count": 1,
     "blacklist_count": 0,
     "stocks_displayed": 2209
   },
