@@ -229,8 +229,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     failed_count += 1
                 else:
                     # 统计信号 (无论盘中盘后都统计，以便CLI显示)
-                    if score[0] >= 3:
-                         alert_count += 1
+                    if score[0] >= 2.0:
+                        alert_count += 1
 
                     # 仅在非盘中时收集数据用于HTML生成
                     if (not is_open):

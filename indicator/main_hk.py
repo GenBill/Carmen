@@ -222,6 +222,10 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 if not print_success:
                     failed_count += 1
                 else:
+                    # 统计信号 (无论盘中盘后都统计，以便CLI显示)
+                    if score[0] >= 2.0:
+                        alert_count += 1
+                    
                     # 收集数据用于HTML生成
                     price = stock_data.get('close', 0)
                     open_price = stock_data.get('open', 0)
