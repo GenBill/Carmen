@@ -1,18 +1,18 @@
 {
-  "last_update": "2025-12-12T11:54:40.008371",
-  "last_update_readable": "2025-12-12 11:54:40",
-  "content_hash": "b3537755dc3ec77ea5fe8924ff42d028",
+  "last_update": "2025-12-12T14:48:48.894849",
+  "last_update_readable": "2025-12-12 14:48:48",
+  "content_hash": "9f79845e06661598a119235cd70c5fb7",
   "html_file": "docs/index_a.html",
-  "html_file_size": 35762,
+  "html_file_size": 26221,
   "market_status": "A股市场扫描",
-  "update_time": "2025-12-12 11:42:39",
+  "update_time": "2025-12-12 14:34:47",
   "mode": "A股市场模式",
   "stats": {
     "total_scanned": 4572,
-    "success_count": 4554,
-    "signal_count": 12,
+    "success_count": 4552,
+    "signal_count": 9,
     "blacklist_count": 0,
-    "stocks_displayed": 4554
+    "stocks_displayed": 4552
   },
   "config": {
     "rsi_period": 8,
