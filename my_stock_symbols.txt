@@ -36,4 +36,5 @@ GILD
 NOV
 LLY
 GLD
+SLV
 

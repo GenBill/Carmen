@@ -1,4 +1,3 @@
-
 import os
 import re
 import socket
@@ -17,7 +16,10 @@ def get_hostip():
         )
         match = re.search(r'nameserver\s+(.+)', result.stdout)
         if match:
-            return match.group(1).strip()
+            hostip = match.group(1).strip()
+            if hostip == '127.0.0.42':
+                hostip = '127.0.0.1'
+            return hostip
     except Exception:
         pass
     return None
