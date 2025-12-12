@@ -11,4 +11,4 @@ export HTTPS_PROXY="http://${hostip}:7897"
 
 # Node.js 代理配置 (for Gemini CLI etc.)
 export GLOBAL_AGENT_HTTP_PROXY="http://${hostip}:7897"
-export NODE_OPTIONS="--require $(npm root -g)/global-agent/bootstrap.js"
+export NODE_OPTIONS="--require ${NVM_DIR}/versions/node/$(node -v)/lib/node_modules/global-agent/bootstrap.js"
