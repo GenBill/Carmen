@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 CHANNEL_URL = "https://www.youtube.com/@Cash88888"
 DEEPSEEK_TOKEN_PATH = "../agent/deepseek.token" # 相对路径，假设脚本在 autotube 目录下运行
 CACHE_DIR = "autotube/.cache"
-DAYS_TO_MONITOR = 30
+DAYS_TO_MONITOR = 14
 
 def load_api_key(path: str) -> str:
     """加载 DeepSeek API Key"""
@@ -305,8 +305,7 @@ def rewrite_text(text: str, api_key: str) -> Optional[str]:
     记得换行，确保文本有足够的可读性。
     
     原始文本：
-    {text[:30000]}
-    (如果文本过长已截断)
+    {text}
     """
     
     try:
@@ -484,8 +483,9 @@ def main():
                 rewritten_text = f.read()
         else:
             rewritten_text = rewrite_text(transcript, api_key)
-            rewritten_text_with_newline = rewritten_text.replace("。", "。\n")
-            rewritten_text_with_newline = rewritten_text_with_newline.replace("\n\n\n", "\n\n")
+            rewritten_text_with_newline = rewritten_text
+            # rewritten_text_with_newline = rewritten_text.replace("。", "。\n")
+            # rewritten_text_with_newline = rewritten_text_with_newline.replace("\n\n\n", "\n\n")
             if rewritten_text:
                 with open(refine_path, 'w', encoding='utf-8') as f:
                     f.write(rewritten_text_with_newline)

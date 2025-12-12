@@ -2,9 +2,8 @@
 *.pyc
 *.log
 
-agent/deepseek.token
-agent/okx.token
-indicator/qq.token
+agent/*.token
+indicator/*.token
 
 trading_state.json
 low_volume_blacklist.json
@@ -20,3 +19,4 @@ docs/index*.html
 docs/meta*.json
 .last_run_*
 autotube/.cache/*
+autotube/monitor.py
