@@ -8,6 +8,9 @@ import os
 sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from auto_proxy import setup_proxy_if_needed
+setup_proxy_if_needed(7897)
+
 from get_stock_price import get_stock_data, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list
 from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
@@ -175,7 +178,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 buy_success, buy_total = backtest_result['buy_prob']
                             
                             backtest_str = f"({buy_success}/{buy_total})"
-                            if buy_total > 0:
+                            if buy_total > 0 and buy_total > 2:
                                 confidence = (buy_success-1) / buy_total
                             else:
                                 confidence = 0.0

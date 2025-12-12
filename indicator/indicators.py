@@ -198,6 +198,29 @@ def carmen_indicator(stock_data):
     # if not red_flag: score[0] = 0.0
     if vol_flag[0]+rsi_flag[0]+macd_flag[0] < 2.0: score[0] = 0.0
     if vol_flag[1]+rsi_flag[1]+macd_flag[1] < 2.0: score[1] = 0.0
+    
+    # 周线MACD过滤：识别假信号（参考日线斜率判断逻辑）
+    # 当周线MACD即将由正转负时，买入信号归零
+    # 当周线MACD即将由负转正时，卖出信号归零
+    weekly_dif = stock_data.get('weekly_dif')
+    weekly_dea = stock_data.get('weekly_dea')
+    weekly_dif_dea_slope = stock_data.get('weekly_dif_dea_slope')
+    
+    if weekly_dif is not None and weekly_dea is not None and weekly_dif_dea_slope is not None:
+        # 周线MACD即将由正转负：DIF > 0 且斜率为负，预测2周后 DIF 下穿 DEA
+        # 说明多头动能减弱，日线买入信号可能是假信号
+        if (weekly_dif > 0 
+            and weekly_dif_dea_slope < 0 
+            and weekly_dif + 2 * weekly_dif_dea_slope < weekly_dea):
+            score[0] = 0.0
+        
+        # 周线MACD即将由负转正：DIF < 0 且斜率为正，预测2周后 DIF 上穿 DEA
+        # 说明空头动能减弱，日线卖出信号可能是假信号
+        if (weekly_dif < 0 
+            and weekly_dif_dea_slope > 0 
+            and weekly_dif + 2 * weekly_dif_dea_slope > weekly_dea):
+            score[1] = 0.0
+    
     return score
 
 def vegas_indicator(stock_data):
@@ -266,8 +289,20 @@ def _calculate_historical_indicators(historical_data, rsi_period=8, macd_fast=8,
     dif_series = exp1 - exp2
     dea_series = dif_series.ewm(span=macd_signal, adjust=False).mean()
     
-    # 计算MACD斜率
-    dif_dea_slope_series = dif_series.diff() - dea_series.diff()
+    # 计算MACD斜率（使用3天加权平均）
+    beta = 0.618
+    weights = [beta, (1-beta)*beta, (1-beta)*(1-beta)]
+    dif_slope_1 = dif_series.diff()      # d[-1] - d[-2]
+    dif_slope_2 = dif_series.diff().shift(1)  # d[-2] - d[-3]
+    dif_slope_3 = dif_series.diff().shift(2)  # d[-3] - d[-4]
+    dif_slope_weighted = weights[0] * dif_slope_1 + weights[1] * dif_slope_2 + weights[2] * dif_slope_3
+    
+    dea_slope_1 = dea_series.diff()
+    dea_slope_2 = dea_series.diff().shift(1)
+    dea_slope_3 = dea_series.diff().shift(2)
+    dea_slope_weighted = weights[0] * dea_slope_1 + weights[1] * dea_slope_2 + weights[2] * dea_slope_3
+    
+    dif_dea_slope_series = dif_slope_weighted - dea_slope_weighted
     
     # 计算成交量比率
     volume_series = historical_data['Volume']

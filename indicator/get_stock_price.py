@@ -102,14 +102,28 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
     dea = dif.ewm(span=signal, adjust=False).mean()  # DEA线（DIF的信号线）
     histogram = dif - dea
     
-    # 计算DIF斜率（当日DIF - 前一日DIF）
-    dif_slope, dea_slope, dif_dea_slope = None, None, None
-    if len(dif) >= 2 and not pd.isna(dif.iloc[-1]) and not pd.isna(dif.iloc[-2]):
-        dif_slope = dif.iloc[-1] - dif.iloc[-2]
-    if len(dea) >= 2 and not pd.isna(dea.iloc[-1]) and not pd.isna(dea.iloc[-2]):
-        dea_slope = dea.iloc[-1] - dea.iloc[-2]
-    if dif_slope != None and dea_slope != None:
-        dif_dea_slope = round(dif_slope - dea_slope, 2)
+    # 计算DIF斜率（使用3天加权平均，黄金分割指数衰减）
+    dif_dea_slope = None
+    if len(dif) >= 4 and len(dea) >= 4:
+        # 检查最近4个数据点是否有效（需要4个点来计算3个斜率）
+        dif_valid = all(not pd.isna(dif.iloc[i]) for i in range(-4, 0))
+        dea_valid = all(not pd.isna(dea.iloc[i]) for i in range(-4, 0))
+        
+        if dif_valid and dea_valid:
+            # 3天斜率：d[-1]-d[-2], d[-2]-d[-3], d[-3]-d[-4]
+            beta = 0.618
+            weights = [beta, (1-beta)*beta, (1-beta)*(1-beta)]
+            dif_slope = (
+                weights[0] * (dif.iloc[-1] - dif.iloc[-2]) +
+                weights[1] * (dif.iloc[-2] - dif.iloc[-3]) +
+                weights[2] * (dif.iloc[-3] - dif.iloc[-4])
+            )
+            dea_slope = (
+                weights[0] * (dea.iloc[-1] - dea.iloc[-2]) +
+                weights[1] * (dea.iloc[-2] - dea.iloc[-3]) +
+                weights[2] * (dea.iloc[-3] - dea.iloc[-4])
+            )
+            dif_dea_slope = round(dif_slope - dea_slope, 2)
     
     return {
         'dif': round(dif.iloc[-1], 2) if not pd.isna(dif.iloc[-1]) else None,
@@ -663,6 +677,31 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]):
         ema_144_prev = ema_144_series.iloc[-2]
     
+    # 计算周线MACD（用于过滤日线假信号）
+    weekly_dif = None
+    weekly_dea = None
+    weekly_dif_dea_slope = None
+    
+    try:
+        # 将日线数据聚合为周线数据
+        weekly_data = hist.resample('W').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna()
+        
+        # 至少需要34周数据才能计算稳定的周线MACD (26+9)*1.3
+        if len(weekly_data) >= 34:
+            # 计算周线MACD（使用标准参数：12, 26, 9）
+            weekly_macd = calculate_macd(weekly_data['Close'], fast=12, slow=26, signal=9)
+            weekly_dif = weekly_macd['dif']
+            weekly_dea = weekly_macd['dea']
+            weekly_dif_dea_slope = weekly_macd['dif_dea_slope']
+    except Exception:
+        pass  # 周线MACD计算失败不影响主流程
+    
     return {
         'symbol': symbol,
         'date': trading_date,
@@ -680,7 +719,10 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'ema_12': round(ema_12, 2) if ema_12 else None,
         'ema_144': round(ema_144, 2) if ema_144 else None,
         'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
-        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None
+        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None,
+        'weekly_dif': weekly_dif,
+        'weekly_dea': weekly_dea,
+        'weekly_dif_dea_slope': weekly_dif_dea_slope
     }
 
 

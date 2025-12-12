@@ -4,6 +4,9 @@ import os
 sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from auto_proxy import setup_proxy_if_needed
+setup_proxy_if_needed(7897)
+
 from main import run_scheduler
 from get_stock_price import clear_cache
 
