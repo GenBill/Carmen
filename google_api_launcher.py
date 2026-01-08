@@ -39,7 +39,12 @@ def call_gemini(prompt_text, client=None):
     response = chat.send_message(message)
     return response.text, client
 
-def call_banana(prompt_text, image_path_list, client=None, output_path="gemini_studio/output.png"):
+def call_banana(prompt_text, image_path_list, client=None, output_path="gemini_studio/output.png", 
+                image_size="2K", system_instruction=None):
+    """
+    image_size: 支持 1K, 2K, 4K
+    system_instruction: 系统提示词，用于设定模型行为
+    """
     if client == None:
         client = genai.Client()
     chat = client.chats.create(
@@ -47,7 +52,11 @@ def call_banana(prompt_text, image_path_list, client=None, output_path="gemini_s
         config=types.GenerateContentConfig(
             response_modalities=['TEXT', 'IMAGE'],
             tools=[{"google_search": {}}],
-            safety_settings=NSFW_SETTING
+            safety_settings=NSFW_SETTING,
+            system_instruction=system_instruction,
+            image_config=types.ImageConfig(
+                image_size=image_size,
+            ),
         )
     )
     
