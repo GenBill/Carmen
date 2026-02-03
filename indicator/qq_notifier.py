@@ -34,7 +34,7 @@ class QQNotifier:
         
         # 指数退避重试配置
         self.max_retries = 3  # 最大重试次数
-        self.initial_wait = 0.5  # 初始等待时间（秒）
+        self.initial_wait = 1.0  # 初始等待时间（秒）
         self.max_wait = 30  # 最大等待时间（秒）
         self.backoff_multiplier = 2  # 退避倍数
     

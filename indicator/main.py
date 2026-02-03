@@ -309,7 +309,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
     
     # 显示统计
     success_count = len(stock_symbols) - failed_count
-    capture_output(f"⚠️  本轮查询: 成功 {success_count} | 失败 {failed_count}")
+    capture_output(f"⚠️ 本轮查询: 成功 {success_count} | 失败 {failed_count}")
     capture_output(f"🔔 本次扫描发现 {alert_count} 个信号！")
     print_watchlist_summary()
 

@@ -7,3 +7,7 @@ pytz
 openai
 Pillow
 google-genai
+
+ddgs
+langchain_openai
+openpyxl

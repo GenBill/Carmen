@@ -291,7 +291,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     
     # 显示统计
     success_count = len(stock_symbols) - failed_count
-    capture_output(f"⚠️  本轮查询: 成功 {success_count} | 失败 {failed_count}")
+    capture_output(f"⚠️ 本轮查询: 成功 {success_count} | 失败 {failed_count}")
     capture_output(f"🔔 本次扫描发现 {alert_count} 个信号！")
     print_watchlist_summary()
 
