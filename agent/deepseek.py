@@ -146,6 +146,8 @@ def get_stock_financials(symbol: str) -> str:
             return f"未找到 {symbol} 的财务数据"
         
         result = f"**{symbol} - {info.get('longName', 'N/A')} 财务数据**\n\n"
+        result += f"交易所: {info.get('fullExchangeName', info.get('exchange', 'N/A'))}\n"
+        result += f"货币: {info.get('currency', 'N/A')}\n"
         result += f"行业: {info.get('industry', 'N/A')}\n"
         result += f"市值: ${info.get('marketCap', 0):,.0f}\n"
         result += f"企业价值: ${info.get('enterpriseValue', 0):,.0f}\n"
@@ -311,6 +313,9 @@ class DeepSeekAPI:
 - search_company_news: 搜索公司最新新闻和事件
 - search_web: 搜索公司信息、行业分析、政策新闻等
 
+重要提示：
+对于中国股票（A股/港股），yfinance 可能返回英文名。请务必先使用 search_web 搜索该代码对应的中文简称（例如搜索 '0700.HK 中文名'），然后使用中文名进行新闻和信息搜索，以获得更准确的中文资讯。
+
 如果需要补充新闻、政策或事件信息来增强分析，请主动使用工具检索。"""
         else:
             tool_instruction = """
@@ -324,7 +329,9 @@ class DeepSeekAPI:
 - calculate_technical_indicators: 计算技术指标
 
 分析原则：
-1. 先收集信息（新闻、价格、财务数据、技术指标）
+1. 收集信息：
+   - 获取价格、财务数据和技术指标。
+   - 【关键】对于中国股票（A股/港股），yfinance 往往只提供英文名。请先使用 search_web 搜索代码对应的中文简称（如 "0700.HK 中文名"），获得中文名后，再用中文名搜索新闻和深度分析，以确保信息质量。
 2. 综合多维度数据进行分析
 3. 给出明确的投资建议（买入/持有/卖出）和理由
 4. 提示风险点"""

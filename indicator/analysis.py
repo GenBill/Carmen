@@ -270,101 +270,255 @@ def refine_ai_analysis(ai_output: str, market: str = "US") -> dict:
         
     Returns:
         dict: 包含提炼后的信息，格式为 {
-            'max_buy_price': float or None,  # 最高买入价
-            'win_rate': float or None,  # 胜率（0-1之间）
-            'refined_text': str  # 提炼后的文本
+            'min_buy_price': float or None,  # 最低买入价（买入区间下限）
+            'max_buy_price': float or None,  # 最高买入价（买入区间上限）
+            'buy_time': str or None,         # 买入时间建议
+            'target_price': float or None,   # 目标价/止盈位
+            'stop_loss': float or None,      # 止损位
+            'win_rate': float or None,       # 胜率（0-1之间）
+            'refined_text': str              # 提炼后的文本
         }
     """
-    # 构建提炼提示词
+    # 构建提炼提示词 - 要求AI提取更多字段并使用固定格式
     refine_prompt = f"""
-请从以下股票分析报告中，提炼出最关键的信息，并以简洁的格式输出：
+请从以下股票分析报告中，提炼出最关键的交易信息。如果有多空双方博弈，请你只保留综合裁决的结果。
 
 {ai_output}
 
-请提取以下信息：
-1. **最高买入价**：从分析中找出建议的最高买入价格（如果有多个价格区间，取上限）
-2. **预估胜率**：从分析中找出预估的短线胜率（如果是百分比，转换为0-1之间的小数）
+请严格按照以下格式输出（每行一个，如果信息不存在则填写"无"）：
+买入区间: [最低价]-[最高价]
+买入时间: [具体时间建议]
+目标价位: [价格]
+止损位: [价格]
+预估胜率: [百分比数字]%
 
-请以以下格式输出（每行一个）：
-最高买入价: [价格]
-预估胜率: [0-1之间的小数]
+注意：
+- 价格只填数字，不要带货币符号
+- 买入区间用"-"连接最低和最高价格，如 "10.5-11.2"
+- 胜率用百分比数字，如 "65%"
+- 如果原文没有明确给出某项信息，填写"无"
 
-然后简要总结关键信息（不超过3句话）。
+最后用一句话总结核心建议。
 """
     
     # 调用简易AI进行提炼（使用chat模型，更快更便宜）
     try:
         deepseek = DeepSeekAPI(
-            system_prompt="你是一个信息提炼助手，擅长从长文本中提取关键信息。",
-            model_type="deepseek-chat"  # 使用chat模型，更快
+            system_prompt="你是一个信息提炼助手，擅长从长文本中提取关键交易信息，并按固定格式输出。",
+            model_type="deepseek-chat"
         )
-        refined_output = deepseek(refine_prompt)
+        refined_output = deepseek(refine_prompt, agent_mode=False, enable_debate=False)
         
         # 解析提炼后的信息
         import re
-        max_buy_price = None
-        win_rate = None
         
-        # 提取最高买入价 - 更精确的正则表达式
-        price_patterns = [
-            r'最高买入价[：:]\s*\$?([\d.]+)',  # 最高买入价: $123.45 或 最高买入价: 123.45
-            r'买入价[：:]\s*\$?([\d.]+)',     # 买入价: $123.45
-            r'最高.*?([\d.]+)\s*[元美元]',     # 最高123.45元
-            r'建议.*?([\d.]+)\s*[元美元]',     # 建议123.45元
+        result = {
+            'min_buy_price': None,
+            'max_buy_price': None,
+            'buy_time': None,
+            'target_price': None,
+            'stop_loss': None,
+            'win_rate': None,
+            'refined_text': refined_output
+        }
+        
+        # ===== 提取买入区间 =====
+        # 支持格式：**理想买入区间**: $31.50 - $32.00、买入区间: 10.5-11.2 等
+        buy_range_patterns = [
+            # **理想买入区间**: $31.50 - $32.00（Markdown格式）
+            r'\*{0,2}理想买入区间\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            # **买入区间**: $31.50 - $32.00
+            r'\*{0,2}买入区间\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            # 买入价格区间: $10.5-$11.2
+            r'\*{0,2}买入价格?区间\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            # 建议买入: 10.5-11.2
+            r'\*{0,2}建议买入\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            # 买入点: 10.5-11.2
+            r'\*{0,2}买入点\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            # 最佳买入区间: $31.50-$31.80
+            r'\*{0,2}最佳买入区间\*{0,2}[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
         ]
         
-        for pattern in price_patterns:
+        for pattern in buy_range_patterns:
+            match = re.search(pattern, refined_output, re.IGNORECASE)
+            if match:
+                try:
+                    result['min_buy_price'] = float(match.group(1))
+                    result['max_buy_price'] = float(match.group(2))
+                    break
+                except:
+                    pass
+        
+        # 如果没找到区间，尝试单独找最高/最低买入价
+        if result['max_buy_price'] is None:
+            max_price_patterns = [
+                r'\*{0,2}最高买入价\*{0,2}[：:]\s*\$?([\d.]+)',
+                r'\*{0,2}买入上限\*{0,2}[：:]\s*\$?([\d.]+)',
+                r'\*{0,2}上限\*{0,2}[：:]\s*\$?([\d.]+)',
+                # 激进买入: 当前价$32.40附近
+                r'\*{0,2}激进买入\*{0,2}[：:].{0,10}\$?([\d.]+)',
+            ]
+            for pattern in max_price_patterns:
+                match = re.search(pattern, refined_output, re.IGNORECASE)
+                if match:
+                    try:
+                        result['max_buy_price'] = float(match.group(1))
+                        break
+                    except:
+                        pass
+        
+        if result['min_buy_price'] is None:
+            min_price_patterns = [
+                r'\*{0,2}最低买入价\*{0,2}[：:]\s*\$?([\d.]+)',
+                r'\*{0,2}买入下限\*{0,2}[：:]\s*\$?([\d.]+)',
+                r'\*{0,2}下限\*{0,2}[：:]\s*\$?([\d.]+)',
+            ]
+            for pattern in min_price_patterns:
+                match = re.search(pattern, refined_output, re.IGNORECASE)
+                if match:
+                    try:
+                        result['min_buy_price'] = float(match.group(1))
+                        break
+                    except:
+                        pass
+        
+        # ===== 提取买入时间 =====
+        # 支持格式：**买入时间**: 建议明日开盘后30分钟内观察
+        buy_time_patterns = [
+            r'\*{0,2}买入时间\*{0,2}[：:]\s*([^\n*]+)',
+            r'\*{0,2}建仓时机\*{0,2}[：:]\s*([^\n*]+)',
+            r'\*{0,2}入场时间\*{0,2}[：:]\s*([^\n*]+)',
+            r'\*{0,2}建仓时机建议\*{0,2}[：:]*\s*([^\n*]+)',
+            # 建议明日/今日/开盘等
+            r'建议\s*(明日|今日|周[一二三四五六日]).{0,30}(开盘|观察|买入)',
+        ]
+        
+        for pattern in buy_time_patterns:
+            match = re.search(pattern, refined_output, re.IGNORECASE)
+            if match:
+                buy_time = match.group(1).strip() if match.lastindex else match.group(0).strip()
+                # 过滤掉"无"或空值，以及只包含标点的情况
+                if buy_time and buy_time != '无' and len(buy_time) > 2 and any(c.isalnum() for c in buy_time):
+                    # 中文括号转英文括号，减少字符长度
+                    buy_time = buy_time.replace('（', '(').replace('）', ')')
+                    result['buy_time'] = buy_time[:50]  # 限制长度
+                    break
+        
+        # ===== 提取目标价/止盈位 =====
+        # 支持格式：**短线目标1**: $33.50 - $34.00、**第一止盈**: $33.50
+        target_patterns = [
+            # 短线目标1: $33.50 - $34.00（取第一个价格）
+            r'\*{0,2}短线目标1?\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}第一止盈\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}第一目标\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}目标价位?\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}止盈位?\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}目标\*{0,2}[：:]\s*\$?([\d.]+)',
+        ]
+        
+        for pattern in target_patterns:
             match = re.search(pattern, refined_output, re.IGNORECASE)
             if match:
                 try:
                     price = float(match.group(1))
-                    if max_buy_price is None or price > max_buy_price:
-                        max_buy_price = price
+                    if price > 0:
+                        result['target_price'] = price
+                        break
                 except:
                     pass
         
-        # 提取胜率 - 更精确的正则表达式
+        # ===== 提取止损位 =====
+        # 支持格式：**严格止损**: $31.00、**止损位**: $30.00
+        stop_loss_patterns = [
+            r'\*{0,2}严格止损\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}止损位?\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}止损\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}止损价\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}风险控制\*{0,2}[：:]\s*\$?([\d.]+)',
+            r'\*{0,2}宽松止损\*{0,2}[：:]\s*\$?([\d.]+)',
+        ]
+        
+        for pattern in stop_loss_patterns:
+            match = re.search(pattern, refined_output, re.IGNORECASE)
+            if match:
+                try:
+                    price = float(match.group(1))
+                    if price > 0:
+                        result['stop_loss'] = price
+                        break
+                except:
+                    pass
+        
+        # ===== 提取胜率 =====
+        # 支持格式：**约60-65%**、预估胜率: 65%、胜率约65%
         rate_patterns = [
-            r'胜率[：:]\s*([\d.]+)\s*%',      # 胜率: 65%
-            r'胜率[：:]\s*([\d.]+)\s*$',      # 胜率: 0.65
-            r'成功率[：:]\s*([\d.]+)\s*%',    # 成功率: 65%
-            r'预估胜率[：:]\s*([\d.]+)\s*%',  # 预估胜率: 65%
-            r'([\d.]+)\s*%.*?胜',             # 65%胜率
+            # **约60-65%**（区间形式，取中间值）
+            r'\*{0,2}约?([\d.]+)\s*[-~到至]\s*([\d.]+)\s*%\*{0,2}',
+            # 预估胜率: 65%
+            r'\*{0,2}预估.{0,3}胜率\*{0,2}[：:]*\s*约?([\d.]+)\s*%',
+            r'\*{0,2}胜率\*{0,2}[：:]\s*约?([\d.]+)\s*%',
+            r'\*{0,2}成功率\*{0,2}[：:]\s*约?([\d.]+)\s*%',
+            r'\*{0,2}概率\*{0,2}[：:]\s*约?([\d.]+)\s*%',
+            r'约?([\d.]+)\s*%\s*的?胜率',
+            r'胜率.{0,5}约?([\d.]+)\s*%',
+            # 约60-65%（不带星号）
+            r'约([\d.]+)\s*[-~到至]\s*([\d.]+)\s*%',
         ]
         
         for pattern in rate_patterns:
             match = re.search(pattern, refined_output, re.IGNORECASE)
             if match:
                 try:
-                    rate = float(match.group(1))
+                    # 检查是否是区间形式（有两个捕获组）
+                    if match.lastindex and match.lastindex >= 2:
+                        # 区间形式，取中间值
+                        rate1 = float(match.group(1))
+                        rate2 = float(match.group(2))
+                        rate = (rate1 + rate2) / 2
+                    else:
+                        rate = float(match.group(1))
+                    
                     # 如果是百分比形式（>1），转换为小数
                     if rate > 1:
                         rate = rate / 100
                     # 确保在0-1之间
                     if 0 <= rate <= 1:
-                        win_rate = rate
+                        result['win_rate'] = rate
                         break
                 except:
                     pass
         
         # 如果没有找到百分比形式，尝试找小数形式
-        if win_rate is None:
-            decimal_match = re.search(r'胜率[：:]\s*([01]\.\d+)', refined_output, re.IGNORECASE)
-            if decimal_match:
-                try:
-                    win_rate = float(decimal_match.group(1))
-                except:
-                    pass
+        if result['win_rate'] is None:
+            decimal_patterns = [
+                r'\*{0,2}胜率\*{0,2}[：:]\s*([01]\.\d+)',
+                r'\*{0,2}概率\*{0,2}[：:]\s*([01]\.\d+)',
+            ]
+            for pattern in decimal_patterns:
+                match = re.search(pattern, refined_output, re.IGNORECASE)
+                if match:
+                    try:
+                        result['win_rate'] = float(match.group(1))
+                        break
+                    except:
+                        pass
         
-        return {
-            'max_buy_price': max_buy_price,
-            'win_rate': win_rate,
-            'refined_text': refined_output
-        }
+        # 打印提取结果用于调试
+        extracted_count = sum(1 for v in [result['min_buy_price'], result['max_buy_price'], 
+                                          result['buy_time'], result['target_price'], 
+                                          result['stop_loss'], result['win_rate']] if v is not None)
+        print(f"📊 AI提炼完成: 成功提取 {extracted_count}/6 个字段")
+        
+        return result
+        
     except Exception as e:
         print(f"⚠️  AI提炼失败: {e}")
         return {
+            'min_buy_price': None,
             'max_buy_price': None,
+            'buy_time': None,
+            'target_price': None,
+            'stop_loss': None,
             'win_rate': None,
             'refined_text': ''
         }

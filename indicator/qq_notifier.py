@@ -138,7 +138,10 @@ class QQNotifier:
 
     def send_buy_signal(self, symbol: str, price: float, score: float, backtest_str: str, 
                        rsi: Optional[float] = None, volume_ratio: Optional[float] = None,
-                       max_buy_price: Optional[float] = None, ai_win_rate: Optional[float] = None) -> bool:
+                       min_buy_price: Optional[float] = None, max_buy_price: Optional[float] = None,
+                       buy_time: Optional[str] = None, target_price: Optional[float] = None,
+                       stop_loss: Optional[float] = None, ai_win_rate: Optional[float] = None,
+                       refined_text: Optional[str] = None) -> bool:
         """
         发送买入信号通知（带缓存，避免重复推送）
         
@@ -146,11 +149,16 @@ class QQNotifier:
             symbol: 股票代码
             price: 当前价格
             score: 买入评分
+            backtest_str: 回测胜率
             rsi: RSI值（可选）
             volume_ratio: 量比（可选）
-            backtest_str: 回测胜率（可选）
+            min_buy_price: AI建议的最低买入价（可选）
             max_buy_price: AI建议的最高买入价（可选）
+            buy_time: AI建议的买入时间（可选）
+            target_price: AI建议的目标价/止盈位（可选）
+            stop_loss: AI建议的止损位（可选）
             ai_win_rate: AI预估的胜率（可选，0-1之间）
+            refined_text: AI提炼的完整文本（可选）
             
         Returns:
             bool: 是否发送成功（如果缓存时间内已推送过，返回False）
@@ -174,11 +182,28 @@ class QQNotifier:
             f"回测胜率: {backtest_str[1:-1]}",
         ]
         
-        # 添加AI提炼的信息
-        if max_buy_price is not None:
-            msg_parts.append(f"AI买入价: {max_buy_price:.2f}")
-            msg_parts.append(f"最高买入价: {max_buy_price*1.02:.2f}")
+        # 添加AI提炼的完整信息
+        # 买入区间
+        if min_buy_price is not None and max_buy_price is not None:
+            msg_parts.append(f"买入区间: {min_buy_price:.2f}-{max_buy_price:.2f}")
+        elif max_buy_price is not None:
+            msg_parts.append(f"最高买入价: {max_buy_price:.2f}")
+        elif min_buy_price is not None:
+            msg_parts.append(f"最低买入价: {min_buy_price:.2f}")
         
+        # 买入时间
+        if buy_time is not None:
+            msg_parts.append(f"买入时间: {buy_time}")
+        
+        # 目标价/止盈位
+        if target_price is not None:
+            msg_parts.append(f"目标价位: {target_price:.2f}")
+        
+        # 止损位
+        if stop_loss is not None:
+            msg_parts.append(f"止损位: {stop_loss:.2f}")
+        
+        # AI预估胜率
         if ai_win_rate is not None:
             msg_parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
         
@@ -189,6 +214,16 @@ class QQNotifier:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
         
         msg = "\n".join(msg_parts)
+        
+        # # 在控制台打印完整的AI分析信息
+        # self._print_buy_signal_summary(
+        #     symbol=symbol, price=price, score=score, backtest_str=backtest_str,
+        #     min_buy_price=min_buy_price, max_buy_price=max_buy_price,
+        #     buy_time=buy_time, target_price=target_price, stop_loss=stop_loss,
+        #     ai_win_rate=ai_win_rate, rsi=rsi, volume_ratio=volume_ratio,
+        #     refined_text=refined_text
+        # )
+        
         success = self.send_message(msg)
         
         # 如果发送成功，更新全局缓存
@@ -196,6 +231,76 @@ class QQNotifier:
             _global_push_cache[symbol] = current_time
         
         return success
+    
+    def _print_buy_signal_summary(self, symbol: str, price: float, score: float, backtest_str: str,
+                                   min_buy_price: Optional[float], max_buy_price: Optional[float],
+                                   buy_time: Optional[str], target_price: Optional[float],
+                                   stop_loss: Optional[float], ai_win_rate: Optional[float],
+                                   rsi: Optional[float], volume_ratio: Optional[float],
+                                   refined_text: Optional[str] = None):
+        """在控制台打印买入信号的完整AI分析摘要"""
+        print(f"\n{'='*80}")
+        print(f"🤖 AI分析摘要 - {symbol}")
+        print(f"{'='*80}")
+        print(f"📊 当前价格: {price:.2f}  |  评分: {score:.2f}  |  回测: {backtest_str}")
+        
+        # 显示AI提炼的字段（标注缺失项）
+        fields = []
+        
+        # 买入区间
+        if min_buy_price is not None and max_buy_price is not None:
+            fields.append(f"✅ 买入区间: {min_buy_price:.2f} - {max_buy_price:.2f}")
+        elif max_buy_price is not None:
+            fields.append(f"⚠️  买入区间: ? - {max_buy_price:.2f} (缺少下限)")
+        elif min_buy_price is not None:
+            fields.append(f"⚠️  买入区间: {min_buy_price:.2f} - ? (缺少上限)")
+        else:
+            fields.append(f"❌ 买入区间: 未提取到")
+        
+        # 买入时间
+        if buy_time is not None:
+            fields.append(f"✅ 买入时间: {buy_time}")
+        else:
+            fields.append(f"❌ 买入时间: 未提取到")
+        
+        # 目标价
+        if target_price is not None:
+            fields.append(f"✅ 目标价位: {target_price:.2f}")
+        else:
+            fields.append(f"❌ 目标价位: 未提取到")
+        
+        # 止损位
+        if stop_loss is not None:
+            fields.append(f"✅ 止损位: {stop_loss:.2f}")
+        else:
+            fields.append(f"❌ 止损位: 未提取到")
+        
+        # AI胜率
+        if ai_win_rate is not None:
+            fields.append(f"✅ AI预估胜率: {ai_win_rate*100:.1f}%")
+        else:
+            fields.append(f"❌ AI预估胜率: 未提取到")
+        
+        for field in fields:
+            print(field)
+        
+        # RSI和量比（补充信息）
+        extra_info = []
+        if rsi is not None:
+            extra_info.append(f"RSI: {rsi:.2f}")
+        if volume_ratio is not None:
+            extra_info.append(f"量比: {volume_ratio:.1f}%")
+        if extra_info:
+            print(f"📈 {' | '.join(extra_info)}")
+        
+        # 输出AI分析的完整文字内容
+        if refined_text:
+            print(f"\n{'─'*80}")
+            print(f"📝 AI分析原文:")
+            print(f"{'─'*80}")
+            print(refined_text)
+        
+        print(f"{'='*80}\n")
 
 
 def load_qq_token(token_path: str = None) -> Tuple[str, str]:

@@ -8,6 +8,9 @@ import os
 sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+import warnings
+warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
+
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
@@ -21,6 +24,8 @@ from git_publisher import GitPublisher
 from alert_system import add_to_watchlist, print_watchlist_summary
 from qq_notifier import QQNotifier, load_qq_token
 from scheduler import MarketScheduler
+from concurrent.futures import ThreadPoolExecutor
+from async_ai import process_ai_task
 
 import time
 import pytz
@@ -80,6 +85,10 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     
     # 初始化QQ推送器
     qq_notifier = QQNotifier(key=qq_key, qq=qq_number) if (enable_qq_notify and qq_key and qq_number) else None
+    
+    # 初始化线程池（限制并发数，避免API速率限制）
+    executor = ThreadPoolExecutor(max_workers=3)
+    ai_futures = []  # 存储 (stock_data_dict, future) 元组
     
     # 清空输出缓冲区
     clear_output_buffer()
@@ -183,7 +192,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             else:
                                 confidence = 0.0
                             
-                            # 发送QQ推送
+                            # 发送QQ推送（使用后台线程，不阻塞扫描）
                             if qq_notifier and confidence >= 0.5 and score[0] >= 2.0:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
@@ -191,28 +200,18 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 avg_volume = stock_data.get('avg_volume', 1)
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
                                 
-                                # 进行AI分析和提炼
-                                max_buy_price = None
-                                ai_win_rate = None
-                                try:
-                                    from analysis import analyze_stock_with_ai, refine_ai_analysis
-                                    ai_analysis = analyze_stock_with_ai(symbol, market="HKA")
-                                    refined_info = refine_ai_analysis(ai_analysis, market="HKA")
-                                    max_buy_price = refined_info.get('max_buy_price')
-                                    ai_win_rate = refined_info.get('win_rate')
-                                except Exception as e:
-                                    print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
+                                print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
                                 
-                                qq_notifier.send_buy_signal(
-                                    symbol=symbol,
-                                    price=price,
-                                    score=score[0],
-                                    backtest_str=backtest_str, 
-                                    rsi=rsi,
-                                    volume_ratio=volume_ratio,
-                                    max_buy_price=max_buy_price,
-                                    ai_win_rate=ai_win_rate
+                                # 提交后台任务
+                                future = executor.submit(
+                                    process_ai_task,
+                                    symbol, "HKA", qq_notifier,
+                                    price, score[0], backtest_str, rsi, volume_ratio
                                 )
+                                
+                                # 将Future保存到stock_data，以便后续HTML生成时获取结果
+                                stock_data['_ai_future'] = future
+                                
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
@@ -268,7 +267,11 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                         'score_sell': score[1],
                         'backtest_str': backtest_str,
                         'confidence': confidence,
-                        'is_watchlist': False
+                        'is_watchlist': False,
+                        # 保存Future供后续获取结果
+                        '_ai_future': stock_data.get('_ai_future'),
+                        '_ai_analysis': None, # 暂时为空
+                        '_refined_info': {}   # 暂时为空
                     })
                 
                 flush_output()
@@ -300,12 +303,34 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     # 保存黑名单（如果有新增）
     volume_filter.save_blacklist()
     
+    # 等待所有后台AI任务完成并回填数据
+    pending_ai_stocks = [s for s in stocks_data_for_html if s.get('_ai_future')]
+    if pending_ai_stocks:
+        print(f"\n⏳ 等待 {len(pending_ai_stocks)} 个后台AI任务完成...")
+        for stock in pending_ai_stocks:
+            try:
+                future = stock.get('_ai_future')
+                symbol = stock['symbol']
+                # 获取结果（如果未完成会阻塞等待）
+                ai_analysis, refined_info = future.result()
+                
+                # 回填数据
+                stock['_ai_analysis'] = ai_analysis
+                stock['_refined_info'] = refined_info
+                
+                print(f"✅ {symbol} 后台AI分析完成")
+            except Exception as e:
+                print(f"⚠️ 获取 {stock.get('symbol')} AI结果失败: {e}")
+    
+    # 关闭线程池
+    executor.shutdown(wait=True)
+    
     # 生成HTML报告并推送到GitHub Pages
     if git_publisher and stocks_data_for_html:
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票并运行AI分析（港股）
+            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票，复用已有的AI分析结果
             buy_signal_stocks = [
                 stock for stock in stocks_data_for_html 
                 if stock.get('score_buy', 0) >= 2.0 and stock.get('confidence', 0) >= 0.5
@@ -313,14 +338,24 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
             ai_analysis_results = []
             
             if buy_signal_stocks:
-                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，开始AI分析...")
+                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，准备AI分析结果...")
                 from analysis import analyze_stock_with_ai
                 
                 for stock in buy_signal_stocks:
                     symbol = stock['symbol']
                     try:
-                        # 使用HKA模式进行分析
-                        analysis_result = analyze_stock_with_ai(symbol, market="HKA")
+                        # 优先复用QQ推送时已保存的原始AI分析结果（避免重复API调用）
+                        # 注意：网页端使用原始分析结果，不使用refine版本
+                        cached_analysis = stock.get('_ai_analysis')
+                        
+                        if cached_analysis:
+                            # 使用缓存的原始分析结果（与QQ推送同源）
+                            analysis_result = cached_analysis
+                            print(f"✅ {symbol} 复用已有AI原始分析结果")
+                        else:
+                            # 没有缓存，需要新调用API
+                            print(f"🆕 {symbol} 无缓存，调用AI分析...")
+                            analysis_result = analyze_stock_with_ai(symbol, market="HKA")
                         
                         ai_analysis_results.append({
                             'symbol': symbol,

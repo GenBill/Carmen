@@ -3,6 +3,9 @@ import os
 sys.path.append('..')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+import warnings
+warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
+
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
@@ -197,17 +200,19 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 avg_volume = stock_data.get('avg_volume', 1)
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
                                 
-                                # 进行AI分析和提炼
-                                max_buy_price = None
-                                ai_win_rate = None
+                                # 进行AI分析和提炼（提取完整字段，结果会被保存供HTML复用）
+                                ai_analysis = None
+                                refined_info = {}
                                 try:
                                     from analysis import analyze_stock_with_ai, refine_ai_analysis
                                     ai_analysis = analyze_stock_with_ai(symbol, market="US")
                                     refined_info = refine_ai_analysis(ai_analysis, market="US")
-                                    max_buy_price = refined_info.get('max_buy_price')
-                                    ai_win_rate = refined_info.get('win_rate')
                                 except Exception as e:
                                     print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
+                                
+                                # 保存AI分析结果到stock_data，供后续HTML生成复用
+                                stock_data['_ai_analysis'] = ai_analysis
+                                stock_data['_refined_info'] = refined_info
                                 
                                 qq_notifier.send_buy_signal(
                                     symbol=symbol,
@@ -216,8 +221,13 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     backtest_str=backtest_str, 
                                     rsi=rsi,
                                     volume_ratio=volume_ratio,
-                                    max_buy_price=max_buy_price,
-                                    ai_win_rate=ai_win_rate
+                                    min_buy_price=refined_info.get('min_buy_price'),
+                                    max_buy_price=refined_info.get('max_buy_price'),
+                                    buy_time=refined_info.get('buy_time'),
+                                    target_price=refined_info.get('target_price'),
+                                    stop_loss=refined_info.get('stop_loss'),
+                                    ai_win_rate=refined_info.get('win_rate'),
+                                    refined_text=refined_info.get('refined_text')
                                 )
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 price = stock_data.get('close', 0)
@@ -276,7 +286,10 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             'score_sell': score[1],
                             'backtest_str': backtest_str,
                             'confidence': confidence,
-                            'is_watchlist': is_watchlist
+                            'is_watchlist': is_watchlist,
+                            # 保存AI分析结果供HTML复用（避免重复API调用）
+                            '_ai_analysis': stock_data.get('_ai_analysis'),
+                            '_refined_info': stock_data.get('_refined_info')
                         })
                 
                 flush_output()
@@ -305,7 +318,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票并运行AI分析
+            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票，复用已有的AI分析结果
             buy_signal_stocks = [
                 stock for stock in stocks_data_for_html 
                 if stock.get('score_buy', 0) >= 2.0 and stock.get('confidence', 0) >= 0.5
@@ -313,13 +326,25 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
             ai_analysis_results = []
             
             if buy_signal_stocks:
-                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，开始AI分析...")
+                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，准备AI分析结果...")
                 from analysis import analyze_stock_with_ai
                 
                 for stock in buy_signal_stocks:
                     symbol = stock['symbol']
                     try:
-                        analysis_result = analyze_stock_with_ai(symbol, market="US")
+                        # 优先复用QQ推送时已保存的原始AI分析结果（避免重复API调用）
+                        # 注意：网页端使用原始分析结果，不使用refine版本
+                        cached_analysis = stock.get('_ai_analysis')
+                        
+                        if cached_analysis:
+                            # 使用缓存的原始分析结果（与QQ推送同源）
+                            analysis_result = cached_analysis
+                            print(f"✅ {symbol} 复用已有AI原始分析结果")
+                        else:
+                            # 没有缓存，需要新调用API
+                            print(f"🆕 {symbol} 无缓存，调用AI分析...")
+                            analysis_result = analyze_stock_with_ai(symbol, market="US")
+                        
                         ai_analysis_results.append({
                             'symbol': symbol,
                             'analysis': analysis_result,
