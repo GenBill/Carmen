@@ -39,6 +39,52 @@ def call_gemini(prompt_text, client=None):
     response = chat.send_message(message)
     return response.text, client
 
+def call_gemini_img(prompt_text, image_path_list, client=None, model="gemini-2.5-flash"):
+    """
+    专门用于图像理解的函数，仅返回文本。
+    """
+    if client == None:
+        client = genai.Client()
+    
+    # 构造多模态消息序列：[图像1标签, 图像1数据, 图像2标签, 图像2数据, ..., 指令]
+    message = []
+    for i, image_path in enumerate(image_path_list):
+        message.append(f"这是图像 {i+1}：")
+        image = Image.open(image_path)
+        message.append(image)
+    
+    message.append(f"\n请根据以上图像执行指令：{prompt_text}")
+
+    response = client.models.generate_content(
+        model=model,
+        contents=message,
+        config=types.GenerateContentConfig(
+            safety_settings=NSFW_SETTING,
+            response_modalities=['TEXT'],
+        )
+    )
+    return response.text, client
+
+def call_gemini_chat(prompt_text, chat=None, client=None, model="gemini-2.5-flash"):
+    """
+    支持连续对话的聊天接口。
+    """
+    if client is None:
+        client = genai.Client()
+    
+    if chat is None:
+        chat = client.chats.create(
+            model=model,
+            config=types.GenerateContentConfig(
+                response_modalities=['TEXT'],
+                tools=[{"google_search": {}}],
+                safety_settings=NSFW_SETTING
+            )
+        )
+    
+    response = chat.send_message(prompt_text)
+    return response.text, chat, client
+
 def call_banana(prompt_text, image_path_list, client=None, output_path="gemini_studio/output.png", 
                 image_size="2K", system_instruction=None):
     """

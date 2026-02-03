@@ -201,31 +201,45 @@ def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, p
     return daily_data, hourly_data
 
 
+# 美股短线分析师角色定义
+SYSTEM_PROMPT_US = """你是一位专业的股票技术分析师。
+用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
+用户通常会在信号触发后的夜盘/盘前买入，并在下一个盘中时段卖出。特殊情况下，用户会额外持有2-3天。
+用户对于此类投机仓位不会超过5%，风险在可控范围内。
+你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
+并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？"""
+
+# 港A股短线分析师角色定义
+SYSTEM_PROMPT_HKA = """你是一位专业的股票技术分析师。
+用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
+用户通常会在信号触发后的第二天买入，并在下一天卖出。特殊情况下，用户会额外持有2-3天。
+用户对于此类投机仓位不会超过5%，风险在可控范围内。
+你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
+并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？"""
+
+
 def call_deepseek_api_US(prompt: str) -> str:
-    deepseek = DeepSeekAPI(
-        system_prompt = """你是一位专业的股票技术分析师。
-        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
-        用户通常会在信号触发后的夜盘/盘前买入，并在下一个盘中时段卖出。特殊情况下，用户会额外持有2-3天。
-        用户对于此类投机仓位不会超过5%，风险在可控范围内。
-        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
-        并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？
-        """, 
-        model_type = "deepseek-reasoner"
+    """美股分析 - 使用 Agent 模式，注入预处理数据，仅使用搜索工具补充新闻"""
+    deepseek = DeepSeekAPI(model_type="deepseek-chat")
+    # 将角色定义和预处理数据作为 injection_prompt 注入
+    # Agent 会使用搜索工具补充新闻、政策等信息
+    injection = f"{SYSTEM_PROMPT_US}\n\n{prompt}"
+    return deepseek.agent_call(
+        user_prompt="请基于以上数据进行分析，并适当搜索最新新闻和政策来增强分析",
+        injection_prompt=injection,
+        tools_mode="search_only"
     )
-    return deepseek(prompt)
 
 def call_deepseek_api_HKA(prompt: str) -> str:
-    deepseek = DeepSeekAPI(
-        system_prompt = """你是一位专业的股票技术分析师。
-        用户通过成交量、RSI、MACD情况筛选出了一些短线操作机会。
-        用户通常会在信号触发后的第二天买入，并在下一天卖出。特殊情况下，用户会额外持有2-3天。
-        用户对于此类投机仓位不会超过5%，风险在可控范围内。
-        你的任务是基于用户提供的数据，判断该短线操作机会的成功率，并给出买入/卖出、止盈/止损的价格区间。
-        并提醒用户：什么情况下可以继续看涨并继续持有？或是当日卖出止盈？
-        """, 
-        model_type = "deepseek-reasoner"
+    """港A股分析 - 使用 Agent 模式，注入预处理数据，仅使用搜索工具补充新闻"""
+    deepseek = DeepSeekAPI(model_type="deepseek-chat")
+    # 将角色定义和预处理数据作为 injection_prompt 注入
+    injection = f"{SYSTEM_PROMPT_HKA}\n\n{prompt}"
+    return deepseek.agent_call(
+        user_prompt="请基于以上数据进行分析，并适当搜索最新新闻和政策来增强分析",
+        injection_prompt=injection,
+        tools_mode="search_only"
     )
-    return deepseek(prompt)
 
 def call_deepseek_api(prompt: str, market: str = "US") -> str:
     """
