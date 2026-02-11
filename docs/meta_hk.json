@@ -1,18 +1,18 @@
 {
-  "last_update": "2026-02-10T16:22:22.514077",
-  "last_update_readable": "2026-02-10 16:22:22",
-  "content_hash": "fb65359d906a5014ac8a44f2c7d12b2c",
+  "last_update": "2026-02-11T15:37:53.995506",
+  "last_update_readable": "2026-02-11 15:37:53",
+  "content_hash": "6927423635c3fd1c37aa8b15151e0dc7",
   "html_file": "docs/index_hk.html",
-  "html_file_size": 6751,
+  "html_file_size": 6957,
   "market_status": "港股市场扫描",
-  "update_time": "2026-02-10 16:16:49",
+  "update_time": "2026-02-11 15:32:54",
   "mode": "港股市场模式",
   "stats": {
     "total_scanned": 2715,
-    "success_count": 679,
-    "signal_count": 0,
+    "success_count": 678,
+    "signal_count": 1,
     "blacklist_count": 0,
-    "stocks_displayed": 679
+    "stocks_displayed": 678
   },
   "config": {
     "rsi_period": 8,
