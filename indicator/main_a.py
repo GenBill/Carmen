@@ -16,7 +16,7 @@ setup_proxy_if_needed(7897)
 
 from get_stock_price import get_stock_data, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list
-from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
+from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, should_filter_stock
 from html_generator import generate_html_report, prepare_report_data
@@ -164,7 +164,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
                 score_vegas = vegas_indicator(stock_data)
-                score = [score_carmen[0] * score_vegas[0], score_carmen[1] * score_vegas[1]]
+                score_silver = silver_indicator(stock_data)
+                score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
                 
                 # 进行回测
                 backtest_result = None
