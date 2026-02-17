@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="5eb0eb540a18425055dc90606cf998dd">
+    <meta data-hash="b6e0f23efb1e31a175f7cb967911505e">
     <title>Carmen Stock Scanner - 美股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -154,13 +154,13 @@
         <!-- AI分析结果部分 -->
         
         
-        <div class="upload-time">📤 上传时间: 2026-02-17 05:37:41</div>
+        <div class="upload-time">📤 上传时间: 2026-02-17 21:14:33</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `🌙 盘后时段（缓存缓冲） | 盘前/盘后模式 | 2026-02-16 16:19:47 EST
-查询 2140 只股票 | RSI8 | MACD(8,17,9) | 缓存1029分钟
+        const terminalOutput = `⏰ 盘前时段 | 盘前/盘后模式 | 2026-02-17 08:07:54 EST
+查询 2142 只股票 | RSI8 | MACD(8,17,9) | 缓存80分钟
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
@@ -198,7 +198,7 @@ SLV    |  $69.72 [92m -2.09%[0m | 量比:[92m    61.0%[0m | RSI:  37.9 [91m
 QQQ    | $601.92 [91m +0.25%[0m | 量比:[97m    95.2%[0m | RSI:  35.6 [97m→[0m 37.4 | DIF:[92m -4.47[0m DEA:[92m -2.80[0m 斜率: [92m-0.12[0m | 
 GLD    | $462.62 [91m +0.63%[0m | 量比:[92m    72.9%[0m | RSI:  48.2 [91m↑[0m 54.5 | DIF:[91m  4.95[0m DEA:[91m  6.79[0m 斜率: [91m+0.13[0m | 
 ========================================================================================================================
-⚠️ 本轮查询: 成功 2125 | 失败 15
+⚠️ 本轮查询: 成功 2109 | 失败 33
 🔔 本次扫描发现 0 个信号！`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
