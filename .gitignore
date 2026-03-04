@@ -21,3 +21,4 @@ docs/meta*.json
 autotube/.cache/*
 autotube/monitor.py
 gemini_studio/*
+autotube/*cookies.txt

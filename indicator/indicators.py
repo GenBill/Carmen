@@ -87,6 +87,46 @@ def _save_longterm_cache(symbol, data):
     except:
         pass
 
+def silver_indicator(stock_data):
+    """
+    Silver 指标：检测近90日内是否存在5日EMA上穿60日EMA的买入信号
+    
+    Args:
+        stock_data: 包含股票数据和历史EMA序列的字典
+        
+    Returns:
+        float: 1.0 表示有信号，0.0 表示无信号
+    """
+    if not stock_data:
+        return 0.0
+        
+    # 直接从 stock_data 中获取历史 EMA 数据
+    # 这些数据应该在 get_stock_price.py 中被计算并放入 stock_data
+    ema_5_hist = stock_data.get('ema_5_hist', [])
+    ema_60_hist = stock_data.get('ema_60_hist', [])
+    
+    # 确保有足够的数据进行比较
+    if not ema_5_hist or not ema_60_hist:
+        return 0.0
+        
+    # 取两个列表的最小长度，确保对齐
+    min_len = min(len(ema_5_hist), len(ema_60_hist))
+    if min_len < 2:
+        return 0.0
+        
+    e5 = ema_5_hist[-min_len:]
+    e60 = ema_60_hist[-min_len:]
+    
+    # 遍历检查金叉 (上穿)
+    # 定义：前一天 EMA5 <= EMA60，且当天 EMA5 > EMA60
+    for i in range(1, len(e5)):
+        # 检查 i 时刻是否发生上穿
+        if e5[i] > e60[i] and e5[i-1] <= e60[i-1]:
+            return 1.0
+            
+    return 0.0
+
+
 def carmen_indicator(stock_data):
     """
     Carmen 综合指标评分系统

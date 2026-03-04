@@ -35,8 +35,9 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True   # 是否启用GitHub Pages自动推送
     GITHUB_BRANCH = 'gh-pages'   # GitHub Pages分支名
     
-    # QQ推送配置
-    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
+    # 消息推送配置（二选一，Telegram 优先）
+    ENABLE_QQ_NOTIFY = False     # 是否启用QQ推送（已被腾讯限制）
+    ENABLE_TELEGRAM_NOTIFY = True  # 是否启用Telegram推送（推荐）
     
     # 启动时清空旧缓存
     CLEAR_CACHE_ON_START = False  # 设为True可清空启动时的缓存
@@ -67,7 +68,8 @@ if __name__ == "__main__":
             intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
             enable_github_pages=ENABLE_GITHUB_PAGES,
             github_branch=GITHUB_BRANCH,
-            enable_qq_notify=ENABLE_QQ_NOTIFY
+            enable_qq_notify=ENABLE_QQ_NOTIFY,
+            enable_telegram_notify=ENABLE_TELEGRAM_NOTIFY
         )
     except KeyboardInterrupt:
         print('\n\n👋 程序已被用户中断，正在退出...')

@@ -11,3 +11,5 @@ google-genai
 ddgs
 langchain_openai
 openpyxl
+akshare
+beautifulsoup4

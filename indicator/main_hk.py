@@ -16,13 +16,14 @@ setup_proxy_if_needed(7897)
 
 from get_stock_price import get_stock_data, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list
-from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
+from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, should_filter_stock
 from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
 from alert_system import add_to_watchlist, print_watchlist_summary
 from qq_notifier import QQNotifier, load_qq_token
+from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from concurrent.futures import ThreadPoolExecutor
 from async_ai import process_ai_task
@@ -62,7 +63,8 @@ def get_stock_list_from_csv(stock_path: str):
 def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv', 
              rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
              avg_volume_days=8, enable_github_pages=True, github_branch='gh-pages',
-             enable_qq_notify=False, qq_key='', qq_number=''):
+             enable_qq_notify=False, qq_key='', qq_number='',
+             enable_telegram_notify=False, telegram_bot_token='', telegram_chat_id=''):
     """
     港股市场扫描主函数
     
@@ -78,13 +80,21 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
         enable_qq_notify: 是否启用QQ推送，默认False
         qq_key: Qmsg酱的KEY，在Qmsg酱官网登录后，在控制台可以获取KEY
         qq_number: 接收消息的QQ号
+        enable_telegram_notify: 是否启用Telegram推送，默认False（可替代QQ）
+        telegram_bot_token: Telegram Bot API Token
+        telegram_chat_id: 接收消息的 Chat ID
     """
     
     # 初始化Git推送器
     git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
     
-    # 初始化QQ推送器
-    qq_notifier = QQNotifier(key=qq_key, qq=qq_number) if (enable_qq_notify and qq_key and qq_number) else None
+    # 初始化消息推送器：优先 Telegram，否则 QQ
+    if enable_telegram_notify and telegram_bot_token and telegram_chat_id:
+        qq_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
+    elif enable_qq_notify and qq_key and qq_number:
+        qq_notifier = QQNotifier(key=qq_key, qq=qq_number)
+    else:
+        qq_notifier = None
     
     # 初始化线程池（限制并发数，避免API速率限制）
     executor = ThreadPoolExecutor(max_workers=3)
@@ -164,7 +174,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
                 score_vegas = vegas_indicator(stock_data)
-                score = [score_carmen[0] * score_vegas[0], score_carmen[1] * score_vegas[1]]
+                score_silver = silver_indicator(stock_data)
+                score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
                 
                 # 进行回测
                 backtest_result = None
@@ -440,17 +451,21 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True
     GITHUB_BRANCH = 'gh-pages'
     
-    # QQ推送配置
-    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
-    # 从token文件读取QQ配置
+    # 消息推送配置（二选一，Telegram 优先）
+    ENABLE_QQ_NOTIFY = False
+    ENABLE_TELEGRAM_NOTIFY = True
+    try:
+        TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_token()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"⚠️  无法加载Telegram token: {e}")
+        print("⚠️  Telegram推送功能已禁用")
+        ENABLE_TELEGRAM_NOTIFY = False
+        TELEGRAM_TOKEN = ''
+        TELEGRAM_CHAT_ID = ''
     try:
         QQ_KEY, QQ_NUMBER = load_qq_token()
     except (FileNotFoundError, ValueError) as e:
-        print(f"⚠️  无法加载QQ token: {e}")
-        print("⚠️  QQ推送功能已禁用")
-        ENABLE_QQ_NOTIFY = False
-        QQ_KEY = ''
-        QQ_NUMBER = ''
+        QQ_KEY, QQ_NUMBER = '', ''
     
     # 初始化调度器
     # 港股运行节点: 12:05(午休), 15:30(收盘前30分钟), 16:10(收盘)
@@ -477,7 +492,10 @@ if __name__ == "__main__":
                     github_branch=GITHUB_BRANCH,
                     enable_qq_notify=ENABLE_QQ_NOTIFY,
                     qq_key=QQ_KEY,
-                    qq_number=QQ_NUMBER
+                    qq_number=QQ_NUMBER,
+                    enable_telegram_notify=ENABLE_TELEGRAM_NOTIFY,
+                    telegram_bot_token=TELEGRAM_TOKEN,
+                    telegram_chat_id=TELEGRAM_CHAT_ID
                 )
 
         except KeyboardInterrupt:

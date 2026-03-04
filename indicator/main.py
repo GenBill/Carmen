@@ -11,7 +11,7 @@ setup_proxy_if_needed(7897)
 
 from stocks_list.get_all_stock import get_stock_list
 from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
-from indicators import carmen_indicator, vegas_indicator, backtest_carmen_indicator
+from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from market_hours import get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
@@ -19,6 +19,7 @@ from volume_filter import get_volume_filter, filter_low_volume_stocks, should_fi
 from html_generator import generate_html_report, prepare_report_data
 from git_publisher import GitPublisher
 from qq_notifier import QQNotifier, load_qq_token
+from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 
 import time
@@ -33,7 +34,8 @@ def flush_output():
 def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
          avg_volume_days=8, use_cache=True, cache_minutes=5, offline_mode=False, 
          intraday_use_all_stocks=False, enable_github_pages=True, github_branch='gh-pages',
-         enable_qq_notify=False, qq_key='', qq_number=''):
+         enable_qq_notify=False, qq_key='', qq_number='',
+         enable_telegram_notify=False, telegram_bot_token='', telegram_chat_id=''):
     """
     美股市场扫描主函数
     
@@ -53,13 +55,21 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
         enable_qq_notify: 是否启用QQ推送，默认False
         qq_key: Qmsg酱的KEY
         qq_number: 接收消息的QQ号
+        enable_telegram_notify: 是否启用Telegram推送，默认False（可替代QQ）
+        telegram_bot_token: Telegram Bot API Token
+        telegram_chat_id: 接收消息的 Chat ID
     """
     
     # 初始化Git推送器
     git_publisher = GitPublisher(gh_pages_dir=github_branch, force_push=True) if enable_github_pages else None
     
-    # 初始化QQ推送器
-    qq_notifier = QQNotifier(key=qq_key, qq=qq_number) if (enable_qq_notify and qq_key and qq_number) else None
+    # 初始化消息推送器：优先 Telegram，否则 QQ（两者接口兼容）
+    if enable_telegram_notify and telegram_bot_token and telegram_chat_id:
+        qq_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
+    elif enable_qq_notify and qq_key and qq_number:
+        qq_notifier = QQNotifier(key=qq_key, qq=qq_number)
+    else:
+        qq_notifier = None
     
     # 获取市场状态
     market_status = get_market_status()
@@ -165,7 +175,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
                 score_vegas = vegas_indicator(stock_data)
-                score = [score_carmen[0] * score_vegas[0], score_carmen[1] * score_vegas[1]]
+                score_silver = silver_indicator(stock_data)
+                score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
 
                 # 进行回测
                 backtest_result = None
@@ -412,7 +423,8 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
                   use_cache=True, cache_minutes=5, 
                   offline_mode=False, intraday_use_all_stocks=False,
                   enable_github_pages=True, github_branch='gh-pages',
-                  enable_qq_notify=True, qq_key='', qq_number=''):
+                  enable_qq_notify=True, qq_key='', qq_number='',
+                  enable_telegram_notify=False, telegram_bot_token='', telegram_chat_id=''):
     """
     运行美股扫描调度器 (混合模式)
     """
@@ -429,6 +441,18 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
             enable_qq_notify = False
             qq_key = ''
             qq_number = ''
+    # 如果开启Telegram通知但没提供token/chat_id，尝试加载
+    if enable_telegram_notify and (not telegram_bot_token or not telegram_chat_id):
+        try:
+            loaded_token, loaded_chat_id = load_telegram_token()
+            telegram_bot_token = telegram_bot_token or loaded_token
+            telegram_chat_id = telegram_chat_id or loaded_chat_id
+        except (FileNotFoundError, ValueError) as e:
+            print(f"⚠️  无法加载Telegram token: {e}")
+            print("⚠️  Telegram推送功能已禁用")
+            enable_telegram_notify = False
+            telegram_bot_token = ''
+            telegram_chat_id = ''
 
     # 美股运行节点 (ET): 
     # 08:00 (盘前 - 全市场扫描)
@@ -478,7 +502,10 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
                     github_branch=github_branch,
                     enable_qq_notify=enable_qq_notify,
                     qq_key=qq_key,
-                    qq_number=qq_number
+                    qq_number=qq_number,
+                    enable_telegram_notify=enable_telegram_notify,
+                    telegram_bot_token=telegram_bot_token,
+                    telegram_chat_id=telegram_chat_id
                 )
             
             # 基础轮询间隔
@@ -517,8 +544,9 @@ if __name__ == "__main__":
     ENABLE_GITHUB_PAGES = True
     GITHUB_BRANCH = 'gh-pages'
     
-    # QQ推送配置
-    ENABLE_QQ_NOTIFY = True      # 是否启用QQ推送
+    # 消息推送配置（二选一，Telegram 优先）
+    ENABLE_QQ_NOTIFY = False     # 是否启用QQ推送（已被腾讯限制）
+    ENABLE_TELEGRAM_NOTIFY = True  # 是否启用Telegram推送（推荐）
 
     run_scheduler(
         stock_path=STOCK_PATH,
@@ -533,5 +561,6 @@ if __name__ == "__main__":
         intraday_use_all_stocks=INTRADAY_USE_ALL_STOCKS,
         enable_github_pages=ENABLE_GITHUB_PAGES,
         github_branch=GITHUB_BRANCH,
-        enable_qq_notify=ENABLE_QQ_NOTIFY
+        enable_qq_notify=ENABLE_QQ_NOTIFY,
+        enable_telegram_notify=ENABLE_TELEGRAM_NOTIFY
     )

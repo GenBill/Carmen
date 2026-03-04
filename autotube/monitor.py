@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 CHANNEL_URL = "https://www.youtube.com/@Cash88888"
 DEEPSEEK_TOKEN_PATH = "../agent/deepseek.token" # 相对路径，假设脚本在 autotube 目录下运行
 CACHE_DIR = "autotube/.cache"
+COOKIES_PATH = "autotube/www.youtube.com_cookies.txt" # YouTube Cookies 文件路径
+USE_BROWSER_COOKIES = False           # 是否直接从浏览器获取 Cookies
+BROWSER_NAME = "chrome"               # 浏览器名称 (chrome, edge, firefox 等)
 DAYS_TO_MONITOR = 14
 
 def load_api_key(path: str) -> str:
@@ -78,11 +81,23 @@ def get_video_list(channel_url: str, days: int) -> List[Dict]:
         'extract_flat': False, 
         'playlistend': 20,    
         'ignoreerrors': True,
-        # 既然都有警告，不如完全禁用警告输出，只关注我们需要的元数据
-        # 我们只拿 id 和 title，不需要视频流，所以这些下载相关的警告可以安全忽略
         'noprogress': True,
         'no_warnings': True, 
+        'source_address': '0.0.0.0', 
+        'cachedir': False,           
+        'check_formats': False,      
+        'ignore_no_formats_error': True, 
+        'extractor_args': {'youtube': {'player_client': ['ios']}}, # 仅使用 ios 客户端，绕过机器人检测
     }
+
+    if USE_BROWSER_COOKIES:
+        ydl_opts['cookiesfrombrowser'] = (BROWSER_NAME,)
+        logger.info(f"正在尝试从浏览器 {BROWSER_NAME} 获取 Cookies...")
+    elif os.path.exists(COOKIES_PATH):
+        ydl_opts['cookiefile'] = COOKIES_PATH
+        logger.info(f"使用 Cookie 文件: {COOKIES_PATH}")
+    else:
+        logger.warning("未配置 Cookies，可能会遇到登录限制。")
 
     # 明确扫描 视频 和 直播 两个 Tab
     target_urls = [
@@ -157,7 +172,16 @@ def download_audio(video_url: str, output_path: str) -> bool:
             'outtmpl': output_path,
             'quiet': True,
             'no_warnings': True,
+            'source_address': '0.0.0.0', 
+            'cachedir': False,           
+            'nocheckcertificates': True, # 额外安全性
+            'extractor_args': {'youtube': {'player_client': ['ios']}}, # 仅使用 ios 客户端，绕过机器人检测
         }
+        
+        if USE_BROWSER_COOKIES:
+            ydl_opts['cookiesfrombrowser'] = (BROWSER_NAME,)
+        elif os.path.exists(COOKIES_PATH):
+            ydl_opts['cookiefile'] = COOKIES_PATH
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
         return True
@@ -242,19 +266,22 @@ def get_transcript(video_id: str, video_url: str, save_dir: str = None) -> Optio
     """获取视频字幕文本 (优先 API，失败则使用 Whisper)"""
     # 1. 尝试 YouTube 原生字幕
     try:
-        if hasattr(YouTubeTranscriptApi, 'list_transcripts'):
-            try:
-                ts_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                try:
-                    t = ts_list.find_transcript(['zh-Hans', 'zh-Hant', 'zh', 'en'])
-                except:
-                    t = ts_list.find_generated_transcript(['zh-Hans', 'zh-Hant', 'zh', 'en'])
-                return " ".join([i['text'] for i in t.fetch()])
-            except Exception:
-                pass # 继续尝试下面的方法
-
-        transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-Hans', 'zh-Hant', 'zh', 'en'])
-        return " ".join([t['text'] for t in transcript_data])
+        # 兼容性处理：判断是使用官方版 (类方法) 还是 v1.2.3 (实例方法)
+        if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-Hans', 'zh-Hant', 'zh', 'en'])
+        else:
+            # v1.2.3 版本的处理
+            api = YouTubeTranscriptApi()
+            transcript_data = api.fetch(video_id, languages=['zh-Hans', 'zh-Hant', 'zh', 'en'])
+        
+        # 兼容性处理：结果可能是 dict 列表或对象列表
+        texts = []
+        for t in transcript_data:
+            if isinstance(t, dict):
+                texts.append(t.get('text', ''))
+            else:
+                texts.append(getattr(t, 'text', ''))
+        return " ".join(texts)
 
     except (TranscriptsDisabled, NoTranscriptFound, Exception) as e:
         logger.warning(f"无法获取原生字幕 ({e})，尝试下载音频并使用 Whisper 转录...")

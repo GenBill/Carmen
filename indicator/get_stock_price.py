@@ -663,19 +663,33 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
     
     # 计算 EMA 指标（获取完整序列以便提取前一日数据）
+    ema_5_series = calculate_ema(hist['Close'], period=5, return_series=True)
     ema_12_series = calculate_ema(hist['Close'], period=12, return_series=True)
+    ema_60_series = calculate_ema(hist['Close'], period=60, return_series=True)
     ema_144_series = calculate_ema(hist['Close'], period=144, return_series=True)
     
+    ema_5 = ema_5_series.iloc[-1] if not pd.isna(ema_5_series.iloc[-1]) else None
     ema_12 = ema_12_series.iloc[-1] if not pd.isna(ema_12_series.iloc[-1]) else None
+    ema_60 = ema_60_series.iloc[-1] if not pd.isna(ema_60_series.iloc[-1]) else None
     ema_144 = ema_144_series.iloc[-1] if not pd.isna(ema_144_series.iloc[-1]) else None
     
     # 获取前一日 EMA 数据
+    ema_5_prev = None
     ema_12_prev = None
+    ema_60_prev = None
     ema_144_prev = None
+    if len(ema_5_series) >= 2 and not pd.isna(ema_5_series.iloc[-2]):
+        ema_5_prev = ema_5_series.iloc[-2]
     if len(ema_12_series) >= 2 and not pd.isna(ema_12_series.iloc[-2]):
         ema_12_prev = ema_12_series.iloc[-2]
+    if len(ema_60_series) >= 2 and not pd.isna(ema_60_series.iloc[-2]):
+        ema_60_prev = ema_60_series.iloc[-2]
     if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]):
         ema_144_prev = ema_144_series.iloc[-2]
+    
+    # 提取最近 90 天的 EMA 数据 (用于 silver_indicator)
+    ema_5_hist = ema_5_series.iloc[-90:].tolist() if not ema_5_series.empty else []
+    ema_60_hist = ema_60_series.iloc[-90:].tolist() if not ema_60_series.empty else []
     
     # 计算周线MACD（用于过滤日线假信号）
     weekly_dif = None
@@ -716,13 +730,19 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'dea': macd_data['dea'],
         'macd_histogram': macd_data['histogram'],
         'dif_dea_slope': macd_data['dif_dea_slope'],
+        'ema_5': round(ema_5, 2) if ema_5 else None,
         'ema_12': round(ema_12, 2) if ema_12 else None,
+        'ema_60': round(ema_60, 2) if ema_60 else None,
         'ema_144': round(ema_144, 2) if ema_144 else None,
+        'ema_5_prev': round(ema_5_prev, 2) if ema_5_prev else None,
         'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
+        'ema_60_prev': round(ema_60_prev, 2) if ema_60_prev else None,
         'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None,
+        'ema_5_hist': ema_5_hist,
+        'ema_60_hist': ema_60_hist,
         'weekly_dif': weekly_dif,
         'weekly_dea': weekly_dea,
-        'weekly_dif_dea_slope': weekly_dif_dea_slope
+        'weekly_dif_dea_slope': weekly_dif_dea_slope,
     }
 
 

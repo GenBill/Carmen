@@ -1,5 +1,6 @@
 from openai import OpenAI
 from datetime import datetime
+import json
 import pytz
 from typing import Optional, List, Dict, Any
 
@@ -12,6 +13,187 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import yfinance as yf
 import pandas as pd
 from ddgs import DDGS
+
+# A 股数据（akshare，与 basic_analysis 共用逻辑，避免重复）
+try:
+    import akshare as ak
+    import requests
+    from bs4 import BeautifulSoup
+    import re
+    _AKSHARE_AVAILABLE = True
+except ImportError:
+    _AKSHARE_AVAILABLE = False
+
+
+# ============== A 股数据获取（与 basic_analysis 共用，以 akshare 为准） ==============
+
+def _is_a_share(symbol: str) -> bool:
+    """判断是否为 A 股代码（6 位数字或 .SS/.SZ 后缀）"""
+    s = str(symbol).strip().upper()
+    if s.endswith(".SS") or s.endswith(".SZ"):
+        return len(s) >= 8
+    if s.isdigit() and len(s) == 6:
+        return True
+    return False
+
+
+def _normalize_a_share_code(symbol: str) -> str:
+    """提取 A 股 6 位代码"""
+    s = str(symbol).strip()
+    if s.endswith(".SS") or s.endswith(".SZ"):
+        return s[:6]
+    return s if s.isdigit() and len(s) == 6 else ""
+
+
+def _to_yfinance_a_share(symbol: str) -> str:
+    """转换为 yfinance 所需格式（如 300935.SZ）"""
+    code = _normalize_a_share_code(symbol)
+    if not code:
+        return symbol
+    return f"{code}.SZ" if code.startswith(("0", "3")) else f"{code}.SS"
+
+
+def _fetch_a_share_holder_count(code: str) -> str:
+    """从 akshare 获取最新股东户数"""
+    if not _AKSHARE_AVAILABLE:
+        return "N/A"
+    try:
+        df = ak.stock_zh_a_gdhs_detail_em(symbol=code)
+        if df.empty or len(df) < 1:
+            return "N/A"
+        latest = df.iloc[-1]
+        count = latest.get("股东户数-本次", latest.get("股东户数", "N/A"))
+        if pd.isna(count):
+            return "N/A"
+        cnt = float(count)
+        return f"{cnt/10000:.2f}万" if cnt >= 10000 else f"{int(cnt)}"
+    except Exception:
+        return "N/A"
+
+
+def _fetch_a_share_profit_forecast(code: str) -> str:
+    """从 akshare 获取最新业绩预告"""
+    if not _AKSHARE_AVAILABLE:
+        return "暂无"
+    dates = ["20241231", "20240930", "20240630", "20231231"]
+    for date in dates:
+        try:
+            df = ak.stock_yjyg_em(date=date)
+            if df.empty:
+                continue
+            col_code = "股票代码" if "股票代码" in df.columns else "代码"
+            if col_code not in df.columns:
+                continue
+            sub = df[df[col_code].astype(str) == str(code)]
+            if sub.empty:
+                continue
+            row = sub.iloc[0]
+            pred = row.get("预测指标", row.get("业绩变动", ""))
+            change = row.get("业绩变动", row.get("业绩变动幅度", ""))
+            return f"{pred}: {change}"[:80]
+        except Exception:
+            continue
+    return "暂无"
+
+
+def _fetch_a_share_concepts(code: str) -> list:
+    """从东方财富页面提取概念标签"""
+    if not _AKSHARE_AVAILABLE:
+        return []
+    try:
+        prefix = "sz" if code.startswith("3") or code.startswith("0") else "sh"
+        url = f"https://quote.eastmoney.com/{prefix}{code}.html"
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tags = soup.find_all("span", class_="tag")
+        return [t.get_text(strip=True) for t in tags if t.get_text(strip=True)][:5]
+    except Exception:
+        return []
+
+
+def fetch_a_share_data(code: str, name: str = None) -> Dict[str, Any]:
+    """
+    获取 A 股完整基本面数据（akshare 为准）。
+    供 basic_analysis 和 Agent 工具复用，避免重复载入。
+    """
+    if not _AKSHARE_AVAILABLE:
+        return {}
+    try:
+        spot = ak.stock_zh_a_spot_em()
+        match = spot[spot["代码"] == code]
+        if match.empty:
+            return {}
+        current = match.iloc[0]
+        price = current["最新价"]
+        change = current["涨跌幅"]
+        turnover = current["换手率"]
+        vol_ratio_raw = current.get("量比")
+        vol_ratio = round(float(vol_ratio_raw), 2) if pd.notna(vol_ratio_raw) else "N/A"
+
+        if vol_ratio == "N/A":
+            try:
+                hist = ak.stock_zh_a_hist(
+                    symbol=code,
+                    period="daily",
+                    start_date=(datetime.now() - pd.Timedelta(days=90)).strftime("%Y%m%d"),
+                )
+                hist = hist.sort_values("日期")
+                if len(hist) >= 5:
+                    roll_mean = hist["成交量"].rolling(5).mean().iloc[-1]
+                    vol_ratio = round(hist["成交量"].iloc[-1] / roll_mean, 2) if roll_mean and roll_mean > 0 else "N/A"
+            except Exception:
+                pass
+
+        roe, pe, pb, revenue_growth = "N/A", "N/A", "N/A", "N/A"
+        try:
+            financials = ak.stock_financial_analysis_indicator(symbol=code)
+            if not financials.empty:
+                latest_fin = financials.iloc[-1]
+                roe = latest_fin.get("ROE", "N/A")
+                pe = latest_fin.get("PE", "N/A")
+                pb = latest_fin.get("PB", "N/A")
+                revenue_growth = latest_fin.get("营业总收入同比增长率", "N/A")
+        except Exception:
+            pass
+
+        if pe == "N/A" and pd.notna(current.get("市盈率-动态")):
+            pe = current["市盈率-动态"]
+        if pb == "N/A" and pd.notna(current.get("市净率")):
+            pb = current["市净率"]
+
+        industry = "N/A"
+        try:
+            info_df = ak.stock_individual_info_em(symbol=code)
+            if not info_df.empty:
+                info = dict(zip(info_df["item"], info_df["value"]))
+                industry = info.get("行业", "N/A")
+        except Exception:
+            pass
+
+        holders = _fetch_a_share_holder_count(code)
+        forecast = _fetch_a_share_profit_forecast(code)
+        concepts = _fetch_a_share_concepts(code)
+        if not concepts:
+            concepts = [industry] if industry != "N/A" else []
+
+        return {
+            "代码": code,
+            "名称": name or current["名称"],
+            "最新价": price,
+            "涨跌幅": change,
+            "换手率": turnover,
+            "量比": vol_ratio,
+            "ROE": roe,
+            "PE": pe,
+            "PB": pb,
+            "营收同比增长": revenue_growth,
+            "行业": industry,
+            "股东户数": holders,
+            "概念": concepts[:5],
+            "最新预告": forecast,
+        }
+    except Exception:
+        return {}
 
 
 # ============== 工具定义 ==============
@@ -84,16 +266,26 @@ def search_web(query: str, max_results: int = 5) -> str:
 
 
 @tool
-def get_stock_price(symbol: str, period: str = "1mo") -> str:
-    """获取股票的历史价格数据和当前价格。
+def get_stock_data_comprehensive(symbol: str, period: str = "1mo") -> str:
+    """获取股票完整数据（价格+财务+基本面）。A 股优先使用 akshare（含股东户数、业绩预告、行业、概念），港股/美股使用 yfinance。一次调用即可，避免重复获取。
     
     Args:
-        symbol: 股票代码，如 "AAPL", "0700.HK", "600519.SS"
-        period: 时间范围，可选值: "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"
+        symbol: 股票代码，如 "AAPL", "0700.HK", "600519", "300935.SZ"
+        period: 时间范围（仅港股/美股生效），可选: "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"
     """
     try:
+        if _is_a_share(symbol):
+            code = _normalize_a_share_code(symbol)
+            if not code:
+                return f"无效的 A 股代码: {symbol}"
+            data = fetch_a_share_data(code)
+            if not data:
+                return f"未找到 A 股 {symbol} 的数据"
+            return f"**{data.get('名称', '')} ({data.get('代码', '')}) A 股数据**\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
+    
         stock = yf.Ticker(symbol)
         hist = stock.history(period=period)
+        info = stock.info
         
         if hist.empty:
             return f"未找到股票 {symbol} 的数据，请检查代码是否正确"
@@ -104,7 +296,6 @@ def get_stock_price(symbol: str, period: str = "1mo") -> str:
         low = hist['Low'].iloc[-1]
         volume = hist['Volume'].iloc[-1]
         
-        # 计算涨跌幅
         if len(hist) > 1:
             prev_close = hist['Close'].iloc[-2]
             change = ((current_price - prev_close) / prev_close) * 100
@@ -112,7 +303,6 @@ def get_stock_price(symbol: str, period: str = "1mo") -> str:
         else:
             change_str = "N/A"
         
-        # 计算周期内表现
         period_start = hist['Close'].iloc[0]
         period_change = ((current_price - period_start) / period_start) * 100
         period_change_str = f"+{period_change:.2f}%" if period_change > 0 else f"{period_change:.2f}%"
@@ -126,45 +316,24 @@ def get_stock_price(symbol: str, period: str = "1mo") -> str:
         result += f"日涨跌: {change_str}\n"
         result += f"周期涨跌 ({period}): {period_change_str}\n"
         
+        if info and info.get('symbol'):
+            result += f"\n**财务数据**\n"
+            result += f"交易所: {info.get('fullExchangeName', info.get('exchange', 'N/A'))}\n"
+            result += f"货币: {info.get('currency', 'N/A')}\n"
+            result += f"行业: {info.get('industry', 'N/A')}\n"
+            result += f"市值: ${info.get('marketCap', 0):,.0f}\n"
+            result += f"市盈率 (PE): {info.get('trailingPE', 'N/A')}\n"
+            result += f"市净率 (PB): {info.get('priceToBook', 'N/A')}\n"
+            result += f"每股收益 (EPS): ${info.get('trailingEps', 'N/A')}\n"
+            result += f"股息率: {info.get('dividendYield', 0) * 100 if info.get('dividendYield') else 0:.2f}%\n"
+            result += f"52周最高: ${info.get('fiftyTwoWeekHigh', 'N/A')}\n"
+            result += f"52周最低: ${info.get('fiftyTwoWeekLow', 'N/A')}\n"
+            if info.get('longBusinessSummary'):
+                result += f"\n**业务简介:**\n{info.get('longBusinessSummary', 'N/A')[:500]}...\n"
+        
         return result
     except Exception as e:
         return f"获取股票数据失败: {str(e)}"
-
-
-@tool
-def get_stock_financials(symbol: str) -> str:
-    """获取公司的财务数据，包括市值、PE、EPS等关键指标。
-    
-    Args:
-        symbol: 股票代码，如 "AAPL", "0700.HK", "600519.SS"
-    """
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        
-        if not info or 'symbol' not in info:
-            return f"未找到 {symbol} 的财务数据"
-        
-        result = f"**{symbol} - {info.get('longName', 'N/A')} 财务数据**\n\n"
-        result += f"交易所: {info.get('fullExchangeName', info.get('exchange', 'N/A'))}\n"
-        result += f"货币: {info.get('currency', 'N/A')}\n"
-        result += f"行业: {info.get('industry', 'N/A')}\n"
-        result += f"市值: ${info.get('marketCap', 0):,.0f}\n"
-        result += f"企业价值: ${info.get('enterpriseValue', 0):,.0f}\n"
-        result += f"市盈率 (PE): {info.get('trailingPE', 'N/A')}\n"
-        result += f"远期市盈率: {info.get('forwardPE', 'N/A')}\n"
-        result += f"市净率 (PB): {info.get('priceToBook', 'N/A')}\n"
-        result += f"每股收益 (EPS): ${info.get('trailingEps', 'N/A')}\n"
-        result += f"股息率: {info.get('dividendYield', 0) * 100 if info.get('dividendYield') else 0:.2f}%\n"
-        result += f"52周最高: ${info.get('fiftyTwoWeekHigh', 'N/A')}\n"
-        result += f"52周最低: ${info.get('fiftyTwoWeekLow', 'N/A')}\n"
-        result += f"50日均线: ${info.get('fiftyDayAverage', 'N/A')}\n"
-        result += f"200日均线: ${info.get('twoHundredDayAverage', 'N/A')}\n"
-        result += f"\n**业务简介:**\n{info.get('longBusinessSummary', 'N/A')[:500]}...\n"
-        
-        return result
-    except Exception as e:
-        return f"获取财务数据失败: {str(e)}"
 
 
 @tool
@@ -172,11 +341,12 @@ def calculate_technical_indicators(symbol: str, period: str = "3mo") -> str:
     """计算股票的技术指标，包括 MA、RSI、MACD、布林带等。
     
     Args:
-        symbol: 股票代码
+        symbol: 股票代码，如 "AAPL", "0700.HK", "300935"
         period: 数据周期，建议至少 "3mo" 以获得足够数据计算指标
     """
     try:
-        stock = yf.Ticker(symbol)
+        yf_symbol = _to_yfinance_a_share(symbol) if _is_a_share(symbol) else symbol
+        stock = yf.Ticker(yf_symbol)
         df = stock.history(period=period)
         
         if df.empty or len(df) < 20:
@@ -219,8 +389,33 @@ def calculate_technical_indicators(symbol: str, period: str = "3mo") -> str:
         # RSI 解读
         rsi_signal = "超买 ⚠️" if rsi_value > 70 else ("超卖 ⚠️" if rsi_value < 30 else "正常")
         
-        # MACD 解读
-        macd_signal = "金叉/多头 🟢" if macd.iloc[-1] > signal.iloc[-1] else "死叉/空头 🔴"
+        # MACD 金叉/死叉：比较前后两根 K 线判断是否已发生穿越
+        macd_now, signal_now = macd.iloc[-1], signal.iloc[-1]
+        macd_prev, signal_prev = macd.iloc[-2], signal.iloc[-2]
+        ema12_now, ema26_now = ema12.iloc[-1], ema26.iloc[-1]
+        golden_cross = macd_prev <= signal_prev and macd_now > signal_now
+        death_cross = macd_prev >= signal_prev and macd_now < signal_now
+
+        # 预期金叉/死叉：按下一日收盘价=当前价估算 MACD、信号线，判断是否将发生穿越
+        close_next = current_price
+        alpha12, alpha26, alpha9 = 2 / 13, 2 / 27, 2 / 10
+        ema12_next = alpha12 * close_next + (1 - alpha12) * ema12_now
+        ema26_next = alpha26 * close_next + (1 - alpha26) * ema26_now
+        macd_next = ema12_next - ema26_next
+        signal_next = alpha9 * macd_next + (1 - alpha9) * signal_now
+        expect_golden = macd_now < signal_now and macd_next > signal_next
+        expect_death = macd_now > signal_now and macd_next < signal_next
+
+        if golden_cross:
+            macd_signal = "金叉（MACD上穿信号线）🟢"
+        elif death_cross:
+            macd_signal = "死叉（MACD下穿信号线）🔴"
+        elif expect_golden:
+            macd_signal = "预期金叉（明日MACD将上穿信号线）🟢"
+        elif expect_death:
+            macd_signal = "预期死叉（明日MACD将下穿信号线）🔴"
+        else:
+            macd_signal = "MACD 在信号线上方-偏多" if macd_now > signal_now else "MACD 在信号线下方-偏空"
         
         result = f"**{symbol} 技术指标分析**\n\n"
         result += f"当前价格: ${current_price:.2f}\n\n"
@@ -250,12 +445,12 @@ def calculate_technical_indicators(symbol: str, period: str = "3mo") -> str:
 # ============== Agent 工具列表 ==============
 
 # 全部工具（独立调用时使用）
+# 使用 get_stock_data_comprehensive 替代 get_stock_price + get_stock_financials，避免重复载入
 FULL_TOOLS = [
     get_current_time,
     search_company_news,
     search_web,
-    get_stock_price,
-    get_stock_financials,
+    get_stock_data_comprehensive,
     calculate_technical_indicators,
 ]
 
@@ -324,14 +519,14 @@ class DeepSeekAPI:
 - get_current_time: 获取当前时间，了解市场状态
 - search_company_news: 搜索公司最新新闻
 - search_web: 搜索公司信息、行业分析等
-- get_stock_price: 获取股票价格数据
-- get_stock_financials: 获取公司财务数据
-- calculate_technical_indicators: 计算技术指标
+- get_stock_data_comprehensive: 获取股票完整数据（价格+财务+基本面），一次调用即可，A 股含股东户数、业绩预告、行业、概念
+- calculate_technical_indicators: 计算技术指标（MA、RSI、MACD、布林带）
 
 分析原则：
 1. 收集信息：
-   - 获取价格、财务数据和技术指标。
-   - 【关键】对于中国股票（A股/港股），yfinance 往往只提供英文名。请先使用 search_web 搜索代码对应的中文简称（如 "0700.HK 中文名"），获得中文名后，再用中文名搜索新闻和深度分析，以确保信息质量。
+   - 优先调用 get_stock_data_comprehensive 获取完整数据，无需再单独获取价格和财务。
+   - 如需技术指标，再调用 calculate_technical_indicators。
+   - 【关键】对于中国股票（A股/港股），请先使用 search_web 搜索代码对应的中文简称（如 "0700.HK 中文名"），再用中文名搜索新闻和深度分析。
 2. 综合多维度数据进行分析
 3. 给出明确的投资建议（买入/持有/卖出）和理由
 4. 提示风险点"""
@@ -585,10 +780,12 @@ if __name__ == "__main__":
 
     print('Token Test OK!')
     
-    # 测试 Agent 模式
-    response = deepseek("分析一下 Tesla 公司 TSLA 的股票，给出投资建议", agent_mode=True, enable_debate=True)
-    print(response)
-    
-    # 测试辩论模式
-    response = deepseek("分析 腾讯 0700.HK 是否值得投资", agent_mode=True, enable_debate=False)
+    # 测试 Agent 辩论模式
+    # response = deepseek("分析一下 Tesla 公司 TSLA 的股票，给出投资建议", agent_mode=True, enable_debate=True)
+    # print(response)
+
+    # response = deepseek("分析 腾讯 0700.HK 是否值得投资", agent_mode=True, enable_debate=False)
+    # print(response)
+
+    response = deepseek("分析一下 A股股票603090，给出投资建议", agent_mode=True, enable_debate=True)
     print(response)
