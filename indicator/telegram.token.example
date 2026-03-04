@@ -1,0 +1,6 @@
+# Telegram Bot 配置示例
+# 复制为 telegram.token，填入两行：
+# 第1行: Bot Token（从 @BotFather 获取）
+# 第2行: Chat ID（与 Bot 对话后，访问 https://api.telegram.org/bot<TOKEN>/getUpdates 可查看）
+YOUR_BOT_TOKEN
+YOUR_CHAT_ID
