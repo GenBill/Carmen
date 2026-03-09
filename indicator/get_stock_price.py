@@ -719,6 +719,7 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     return {
         'symbol': symbol,
         'date': trading_date,
+        'hist': hist,
         'open': round(last_trading_day['Open'], 2),
         'close': round(last_trading_day['Close'], 2),
         'volume': int(current_volume),
