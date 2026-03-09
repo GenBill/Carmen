@@ -177,10 +177,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 score_vegas = vegas_indicator(stock_data)
                 score_silver = silver_indicator(stock_data)
                 score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
-                # 碗口形态二次过滤
+                # 碗口形态标记（不过滤，仅在输出中标注）
                 bowl_score = bowl_rebound_indicator(stock_data)
-                if score[0] >= 2.0 and bowl_score < 0.5:
-                    score[0] = 0.0  # 形态不达标，买入信号归零
                 
                 # 进行回测
                 backtest_result = None
@@ -251,7 +249,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 
                 # 打印股票信息
                 is_watchlist = symbol in watchlist_stocks
-                print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result)
+                print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result, bowl_score=bowl_score)
                 
                 if not print_success:
                     failed_count += 1
