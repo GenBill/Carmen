@@ -207,7 +207,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 confidence = 0.0
                             
                             # 发送QQ推送（使用后台线程，不阻塞扫描）
-                            if qq_notifier and confidence >= 0.5 and score[0] >= 2.0:
+                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
