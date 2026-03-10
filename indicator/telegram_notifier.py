@@ -106,6 +106,8 @@ class TelegramNotifier:
             msg_parts.append(f"RSI: {rsi:.2f}")
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
+        if bowl_score is not None:
+            msg_parts.append(f"碗口指标: {bowl_score:.2f}")
 
         msg = "\n".join(msg_parts)
         success = self.send_message(msg)
@@ -130,6 +132,7 @@ class TelegramNotifier:
         stop_loss: Optional[float] = None,
         ai_win_rate: Optional[float] = None,
         refined_text: Optional[str] = None,
+        bowl_score: Optional[float] = None,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         current_time = time.time()
@@ -168,6 +171,8 @@ class TelegramNotifier:
             msg_parts.append(f"RSI: {rsi:.2f}")
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
+        if bowl_score is not None:
+            msg_parts.append(f"碗口指标: {bowl_score:.2f}")
 
         msg = "\n".join(msg_parts)
         success = self.send_message(msg)

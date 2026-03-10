@@ -1,6 +1,6 @@
 import traceback
 
-def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi, volume_ratio):
+def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi, volume_ratio, bowl_score=None):
     """
     后台执行AI分析并发送通知
     """
@@ -28,7 +28,8 @@ def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi
                 target_price=refined_info.get('target_price'),
                 stop_loss=refined_info.get('stop_loss'),
                 ai_win_rate=refined_info.get('win_rate'),
-                refined_text=refined_info.get('refined_text')
+                refined_text=refined_info.get('refined_text'),
+                bowl_score=bowl_score
             )
             
         return ai_analysis, refined_info

@@ -171,33 +171,37 @@ def carmen_indicator(stock_data):
             and stock_data['rsi_prev'] >= rsi_minmax[1],  # 反转下跌
         ]
     
-    # MACD 金叉买入，死叉卖出
+    # MACD 金叉买入，死叉卖出 (捕捉金叉/死叉前后2日信号)
     macd_state_strict = [False, False]
     if (stock_data['dif'] != None and stock_data['dif_dea_slope'] != None and stock_data['dea'] != None):
+        # 买入：斜率为正 且 (处于金叉左侧即将交叉 OR 处于金叉右侧刚刚交叉)
         macd_state_strict[0] = (
-            stock_data['dif'] > 0
-            and stock_data['dif_dea_slope'] > 0
-            and stock_data['dif'] < stock_data['dea']
-            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea']
+            stock_data['dif_dea_slope'] > 0
+            and (
+                (stock_data['dif'] < stock_data['dea'] and stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea'])
+                or
+                (stock_data['dif'] >= stock_data['dea'] and stock_data['dif'] - 2*stock_data['dif_dea_slope'] < stock_data['dea'])
+            )
         )
+        # 卖出：斜率为负 且 (处于死叉左侧即将交叉 OR 处于死叉右侧刚刚交叉)
         macd_state_strict[1] = (
-            stock_data['dif'] < 0
-            and stock_data['dif_dea_slope'] < 0
-            and stock_data['dif'] < stock_data['dea']
-            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea']
+            stock_data['dif_dea_slope'] < 0
+            and (
+                (stock_data['dif'] > stock_data['dea'] and stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea'])
+                or
+                (stock_data['dif'] <= stock_data['dea'] and stock_data['dif'] - 2*stock_data['dif_dea_slope'] > stock_data['dea'])
+            )
         )
     
     macd_state_easy = [False, False]
     if (stock_data['dif'] != None and stock_data['dif_dea_slope'] != None and stock_data['dea'] != None):
         macd_state_easy[0] = (
-            stock_data['dif'] > 0
-            and stock_data['dif_dea_slope'] > 0
-            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea']
+            stock_data['dif_dea_slope'] > 0
+            and (stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea'])
         )
         macd_state_easy[1] = (
-            stock_data['dif'] < 0
-            and stock_data['dif_dea_slope'] < 0
-            and stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea']
+            stock_data['dif_dea_slope'] < 0
+            and (stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea'])
         )
 
 

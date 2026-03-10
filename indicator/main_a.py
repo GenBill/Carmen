@@ -220,7 +220,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol, "HKA", qq_notifier,
-                                    price, score[0], backtest_str, rsi, volume_ratio
+                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score
                                 )
                                 
                                 # 将Future保存到stock_data
