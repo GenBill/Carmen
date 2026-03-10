@@ -241,7 +241,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     target_price=refined_info.get('target_price'),
                                     stop_loss=refined_info.get('stop_loss'),
                                     ai_win_rate=refined_info.get('win_rate'),
-                                    refined_text=refined_info.get('refined_text')
+                                    refined_text=refined_info.get('refined_text'),
+                                    bowl_score=bowl_score
                                 )
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 price = stock_data.get('close', 0)
