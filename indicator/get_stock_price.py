@@ -698,15 +698,18 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         volume_ma_structure.append('30>60')
 
     volume_ma_crosses = []
-    if volume_ma5_prev is not None and volume_ma10_prev is not None and volume_ma5 is not None and volume_ma10 is not None:
-        if volume_ma5_prev <= volume_ma10_prev and volume_ma5 > volume_ma10:
-            volume_ma_crosses.append('5上穿10')
-    if volume_ma10_prev is not None and volume_ma30_prev is not None and volume_ma10 is not None and volume_ma30 is not None:
-        if volume_ma10_prev <= volume_ma30_prev and volume_ma10 > volume_ma30:
-            volume_ma_crosses.append('10上穿30')
-    if volume_ma30_prev is not None and volume_ma60_prev is not None and volume_ma30 is not None and volume_ma60 is not None:
-        if volume_ma30_prev <= volume_ma60_prev and volume_ma30 > volume_ma60:
-            volume_ma_crosses.append('30上穿60')
+    volume_pairs = [
+        ('5', volume_ma5_prev, volume_ma5, '10', volume_ma10_prev, volume_ma10),
+        ('5', volume_ma5_prev, volume_ma5, '30', volume_ma30_prev, volume_ma30),
+        ('5', volume_ma5_prev, volume_ma5, '60', volume_ma60_prev, volume_ma60),
+        ('10', volume_ma10_prev, volume_ma10, '30', volume_ma30_prev, volume_ma30),
+        ('10', volume_ma10_prev, volume_ma10, '60', volume_ma60_prev, volume_ma60),
+        ('30', volume_ma30_prev, volume_ma30, '60', volume_ma60_prev, volume_ma60),
+    ]
+    for short_label, short_prev, short_now, long_label, long_prev, long_now in volume_pairs:
+        if short_prev is not None and long_prev is not None and short_now is not None and long_now is not None:
+            if short_prev <= long_prev and short_now > long_now:
+                volume_ma_crosses.append(f'{short_label}上穿{long_label}')
 
     current_volume_vs_ma = []
     current_volume_multiple_vs_ma = {}

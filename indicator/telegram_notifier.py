@@ -53,6 +53,7 @@ class TelegramNotifier:
                     "chat_id": self.chat_id,
                     "text": msg,
                     "disable_web_page_preview": True,
+                    "parse_mode": "Markdown",
                 }
                 response = requests.post(self.api_url, data=data, timeout=10)
                 response.raise_for_status()
@@ -143,9 +144,11 @@ class TelegramNotifier:
                 return False
 
         safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
+        pure_symbol = symbol.replace('.SS', '').replace('.SZ', '').replace('.HK', '')
         msg_parts = [
             "📈 买入信号提醒",
             f"股票: {safe_symbol}",
+            f"代码: `{pure_symbol}`",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
             f"回测胜率: {backtest_str[1:-1]}",
