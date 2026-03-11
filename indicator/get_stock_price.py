@@ -713,7 +713,7 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
 
     current_volume_vs_ma = []
     current_volume_multiple_vs_ma = {}
-    volume_spike_threshold = 5.0
+    volume_spike_threshold = 4.0
     for label, ma_value in [('5', volume_ma5), ('10', volume_ma10), ('30', volume_ma30), ('60', volume_ma60)]:
         if ma_value and ma_value > 0:
             multiple = float(estimated_volume) / float(ma_value)

@@ -207,7 +207,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             else:
                                 confidence = 0.0
                             
-                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
+                            build_strength = (stock_data.get('volume_ma_info') or {}).get('build_position_strength', 0)
+                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)) and build_strength >= 2:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -245,6 +246,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     bowl_score=bowl_score,
                                     volume_ma_info=stock_data.get('volume_ma_info')
                                 )
+                            elif qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
+                                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 推送与AI分析")
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
                                 pass
@@ -274,6 +277,9 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                         
                         change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
                         volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
+                        build_strength = (stock_data.get('volume_ma_info') or {}).get('build_position_strength', 0)
+                        if stock_data.get('volume_ma_info') and build_strength < 2:
+                            continue
                         
                         stocks_data_for_html.append({
                             'symbol': symbol,

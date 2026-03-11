@@ -206,8 +206,9 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             else:
                                 confidence = 0.0
                             
-                            # 发送QQ推送（使用后台线程，不阻塞扫描）
-                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
+                            # 发送Telegram推送（使用后台线程，不阻塞扫描）
+                            build_strength = (stock_data.get('volume_ma_info') or {}).get('build_position_strength', 0)
+                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)) and build_strength >= 2:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -225,6 +226,9 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 
                                 # 将Future保存到stock_data，以便后续HTML生成时获取结果
                                 stock_data['_ai_future'] = future
+                                
+                            elif qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
+                                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 推送与后台AI分析")
                                 
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
@@ -253,6 +257,9 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     
                     change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
+                    build_strength = (stock_data.get('volume_ma_info') or {}).get('build_position_strength', 0)
+                    if stock_data.get('volume_ma_info') and build_strength < 2:
+                        continue
                     
                     stocks_data_for_html.append({
                         'symbol': symbol,

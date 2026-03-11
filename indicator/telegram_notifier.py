@@ -5,6 +5,8 @@ Telegram 消息推送模块
 import requests
 import os
 import time
+import html
+import json
 from typing import Optional, Tuple, Dict
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
@@ -32,12 +34,13 @@ class TelegramNotifier:
         self.max_wait = 30
         self.backoff_multiplier = 2
 
-    def send_message(self, msg: str) -> bool:
+    def send_message(self, msg: str, reply_markup: Optional[Dict] = None) -> bool:
         """
         发送 Telegram 消息（带指数退避重试机制）
 
         Args:
             msg: 要发送的消息内容
+            reply_markup: 可选按钮/键盘配置
 
         Returns:
             bool: 是否发送成功
@@ -53,8 +56,10 @@ class TelegramNotifier:
                     "chat_id": self.chat_id,
                     "text": msg,
                     "disable_web_page_preview": True,
-                    "parse_mode": "Markdown",
+                    "parse_mode": "HTML",
                 }
+                if reply_markup:
+                    data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
                 response = requests.post(self.api_url, data=data, timeout=10)
                 response.raise_for_status()
 
@@ -95,7 +100,7 @@ class TelegramNotifier:
                 print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
                 return False
 
-        safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
+        safe_symbol = html.escape(symbol.replace('.SS', '[SS]').replace('.SZ', '[SZ]').replace('.HK', '[HK]'))
         msg_parts = [
             "📉 卖出信号提醒",
             f"股票: {safe_symbol}",
@@ -143,12 +148,12 @@ class TelegramNotifier:
                 print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
                 return False
 
-        safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
-        pure_symbol = symbol.replace('.SS', '').replace('.SZ', '').replace('.HK', '')
+        safe_symbol = html.escape(symbol.replace('.SS', '[SS]').replace('.SZ', '[SZ]').replace('.HK', '[HK]'))
+        pure_symbol = html.escape(symbol.replace('.SS', '').replace('.SZ', '').replace('.HK', ''))
         msg_parts = [
             "📈 买入信号提醒",
             f"股票: {safe_symbol}",
-            f"代码: `{pure_symbol}`",
+            f"代码: <code>{pure_symbol}</code>",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
             f"回测胜率: {backtest_str[1:-1]}",
@@ -180,8 +185,12 @@ class TelegramNotifier:
             golden_crosses = volume_ma_info.get('golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
             current_multiple_vs_ma = volume_ma_info.get('current_multiple_vs_ma') or {}
-            volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 5.0)
+            volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 4.0)
             build_strength = volume_ma_info.get('build_position_strength', 0)
+
+            if build_strength < 2:
+                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 买入推送")
+                return False
 
             if golden_crosses:
                 compact_crosses = []
@@ -210,7 +219,12 @@ class TelegramNotifier:
                 msg_parts.append("建仓强度: 暂不明显")
 
         msg = "\n".join(msg_parts)
-        success = self.send_message(msg)
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "🤖 AI分析", "callback_data": f"ai_analysis:{symbol}"}
+            ]]
+        }
+        success = self.send_message(msg, reply_markup=reply_markup)
 
         if success:
             _global_push_cache[symbol] = current_time

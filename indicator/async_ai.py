@@ -6,6 +6,11 @@ def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi
     """
     try:
         from analysis import analyze_stock_with_ai, refine_ai_analysis
+
+        build_strength = (volume_ma_info or {}).get('build_position_strength', 0)
+        if volume_ma_info and build_strength < 2:
+            print(f"⏭️  {symbol} 建仓强度暂不明显，跳过后台AI分析与通知")
+            return None, {}
         
         # 1. 执行AI分析
         ai_analysis = analyze_stock_with_ai(symbol, market=market)
