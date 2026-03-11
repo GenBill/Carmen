@@ -220,28 +220,15 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol, "HKA", qq_notifier,
-                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score
+                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info')
                                 )
                                 
                                 # 将Future保存到stock_data，以便后续HTML生成时获取结果
                                 stock_data['_ai_future'] = future
                                 
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
-                                price = stock_data.get('close', 0)
-                                rsi = stock_data.get('rsi')
-                                estimated_volume = stock_data.get('estimated_volume', 0)
-                                avg_volume = stock_data.get('avg_volume', 1)
-                                volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
-                                
-                                # 卖出果断，别分析了，直接发送！
-                                qq_notifier.send_sell_signal(
-                                    symbol=symbol,
-                                    price=price,
-                                    score=score[1],
-                                    backtest_str=backtest_str, 
-                                    rsi=rsi,
-                                    volume_ratio=volume_ratio,
-                                )
+                                # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
+                                pass
                     
                     except Exception as e:
                         print(f"⚠️  处理 {symbol} 回测时出错:")

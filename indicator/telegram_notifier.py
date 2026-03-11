@@ -5,7 +5,7 @@ Telegram 消息推送模块
 import requests
 import os
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
 _global_push_cache = {}
@@ -106,8 +106,6 @@ class TelegramNotifier:
             msg_parts.append(f"RSI: {rsi:.2f}")
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
-        if bowl_score is not None:
-            msg_parts.append(f"碗口指标: {bowl_score:.2f}")
 
         msg = "\n".join(msg_parts)
         success = self.send_message(msg)
@@ -133,6 +131,7 @@ class TelegramNotifier:
         ai_win_rate: Optional[float] = None,
         refined_text: Optional[str] = None,
         bowl_score: Optional[float] = None,
+        volume_ma_info: Optional[Dict] = None,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         current_time = time.time()
@@ -173,6 +172,39 @@ class TelegramNotifier:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
         if bowl_score is not None:
             msg_parts.append(f"碗口指标: {bowl_score:.2f}")
+
+        if volume_ma_info:
+            golden_crosses = volume_ma_info.get('golden_crosses') or []
+            current_above_ma = volume_ma_info.get('current_above_ma') or []
+            current_multiple_vs_ma = volume_ma_info.get('current_multiple_vs_ma') or {}
+            volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 5.0)
+            build_strength = volume_ma_info.get('build_position_strength', 0)
+
+            if golden_crosses:
+                compact_crosses = []
+                for cross in golden_crosses:
+                    compact_crosses.append(cross.replace('上穿', 'x'))
+                msg_parts.append(f"量能金叉: {' / '.join(compact_crosses)}")
+            else:
+                msg_parts.append("量能金叉: 暂无")
+
+            if current_above_ma:
+                detail = ", ".join(
+                    f"{label}日({current_multiple_vs_ma.get(label, 0):.2f}x)"
+                    for label in current_above_ma
+                )
+                msg_parts.append(f"异常爆量: 现量≥{volume_spike_threshold:.1f}x {detail}")
+            else:
+                msg_parts.append("异常爆量: 暂无")
+
+            if build_strength >= 6:
+                msg_parts.append("建仓强度: 很强")
+            elif build_strength >= 4:
+                msg_parts.append("建仓强度: 中等偏强")
+            elif build_strength >= 2:
+                msg_parts.append("建仓强度: 初步抬升")
+            else:
+                msg_parts.append("建仓强度: 暂不明显")
 
         msg = "\n".join(msg_parts)
         success = self.send_message(msg)

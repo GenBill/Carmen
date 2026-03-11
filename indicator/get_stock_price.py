@@ -635,6 +635,43 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     if pd.isna(avg_volume):
         avg_volume = 0
 
+    # 成交量均线（使用 SMA，较 EMA 更稳，适合观察主力建仓/放量结构）
+    hist_excluding_today = hist.iloc[:-1] if len(hist) > 1 else hist.iloc[:0]
+
+    def _safe_volume_sma(window: int):
+        if hist_excluding_today.empty:
+            return None
+        series = hist_excluding_today['Volume'].tail(window)
+        if series.empty:
+            return None
+        value = series.mean()
+        if pd.isna(value):
+            return None
+        return float(value)
+
+    volume_ma5 = _safe_volume_sma(5)
+    volume_ma10 = _safe_volume_sma(10)
+    volume_ma30 = _safe_volume_sma(30)
+    volume_ma60 = _safe_volume_sma(60)
+
+    hist_excluding_today_prev = hist.iloc[:-2] if len(hist) > 2 else hist.iloc[:0]
+
+    def _safe_prev_volume_sma(window: int):
+        if hist_excluding_today_prev.empty:
+            return None
+        series = hist_excluding_today_prev['Volume'].tail(window)
+        if series.empty:
+            return None
+        value = series.mean()
+        if pd.isna(value):
+            return None
+        return float(value)
+
+    volume_ma5_prev = _safe_prev_volume_sma(5)
+    volume_ma10_prev = _safe_prev_volume_sma(10)
+    volume_ma30_prev = _safe_prev_volume_sma(30)
+    volume_ma60_prev = _safe_prev_volume_sma(60)
+
     # 当日成交量
     current_volume = last_trading_day['Volume']
     if pd.isna(current_volume):
@@ -651,6 +688,49 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_A)
     else:
         estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
+
+    volume_ma_structure = []
+    if volume_ma5 and volume_ma10 and volume_ma5 > volume_ma10:
+        volume_ma_structure.append('5>10')
+    if volume_ma10 and volume_ma30 and volume_ma10 > volume_ma30:
+        volume_ma_structure.append('10>30')
+    if volume_ma30 and volume_ma60 and volume_ma30 > volume_ma60:
+        volume_ma_structure.append('30>60')
+
+    volume_ma_crosses = []
+    if volume_ma5_prev is not None and volume_ma10_prev is not None and volume_ma5 is not None and volume_ma10 is not None:
+        if volume_ma5_prev <= volume_ma10_prev and volume_ma5 > volume_ma10:
+            volume_ma_crosses.append('5上穿10')
+    if volume_ma10_prev is not None and volume_ma30_prev is not None and volume_ma10 is not None and volume_ma30 is not None:
+        if volume_ma10_prev <= volume_ma30_prev and volume_ma10 > volume_ma30:
+            volume_ma_crosses.append('10上穿30')
+    if volume_ma30_prev is not None and volume_ma60_prev is not None and volume_ma30 is not None and volume_ma60 is not None:
+        if volume_ma30_prev <= volume_ma60_prev and volume_ma30 > volume_ma60:
+            volume_ma_crosses.append('30上穿60')
+
+    current_volume_vs_ma = []
+    current_volume_multiple_vs_ma = {}
+    volume_spike_threshold = 5.0
+    for label, ma_value in [('5', volume_ma5), ('10', volume_ma10), ('30', volume_ma30), ('60', volume_ma60)]:
+        if ma_value and ma_value > 0:
+            multiple = float(estimated_volume) / float(ma_value)
+            current_volume_multiple_vs_ma[label] = round(multiple, 2)
+            if multiple >= volume_spike_threshold:
+                current_volume_vs_ma.append(label)
+
+    volume_ma_info = {
+        'current_volume': float(estimated_volume),
+        'ma5': volume_ma5,
+        'ma10': volume_ma10,
+        'ma30': volume_ma30,
+        'ma60': volume_ma60,
+        'volume_structure': volume_ma_structure,
+        'golden_crosses': volume_ma_crosses,
+        'current_above_ma': current_volume_vs_ma,
+        'current_multiple_vs_ma': current_volume_multiple_vs_ma,
+        'volume_spike_threshold': volume_spike_threshold,
+        'build_position_strength': len(volume_ma_structure) + len(volume_ma_crosses) + len(current_volume_vs_ma),
+    }
     
     # 计算 RSI（获取完整序列以便提取前一日数据）
     rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
@@ -725,6 +805,11 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'volume': int(current_volume),
         'estimated_volume': estimated_volume,
         'avg_volume': int(avg_volume),
+        'volume_ma5': round(volume_ma5, 2) if volume_ma5 else None,
+        'volume_ma10': round(volume_ma10, 2) if volume_ma10 else None,
+        'volume_ma30': round(volume_ma30, 2) if volume_ma30 else None,
+        'volume_ma60': round(volume_ma60, 2) if volume_ma60 else None,
+        'volume_ma_info': volume_ma_info,
         'rsi': round(rsi, 2) if rsi else None,
         'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
         'dif': macd_data['dif'],

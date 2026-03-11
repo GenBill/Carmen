@@ -141,7 +141,7 @@ def carmen_indicator(stock_data):
         return [0, 0]
     
     # state[0] Buy, state[1] Sell
-    volume_minmax = [0.6, 2.0]
+    volume_minmax = [0.6, 2.5]
     rsi_minmax = [35, 65]
     rsi_delta = 5
 

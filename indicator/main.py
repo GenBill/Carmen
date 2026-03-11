@@ -242,24 +242,12 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     stop_loss=refined_info.get('stop_loss'),
                                     ai_win_rate=refined_info.get('win_rate'),
                                     refined_text=refined_info.get('refined_text'),
-                                    bowl_score=bowl_score
+                                    bowl_score=bowl_score,
+                                    volume_ma_info=stock_data.get('volume_ma_info')
                                 )
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
-                                price = stock_data.get('close', 0)
-                                rsi = stock_data.get('rsi')
-                                estimated_volume = stock_data.get('estimated_volume', 0)
-                                avg_volume = stock_data.get('avg_volume', 1)
-                                volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
-                                
-                                # 卖出果断，别分析了，直接发送！
-                                qq_notifier.send_sell_signal(
-                                    symbol=symbol,
-                                    price=price,
-                                    score=score[1],
-                                    backtest_str=backtest_str, 
-                                    rsi=rsi,
-                                    volume_ratio=volume_ratio,
-                                )
+                                # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
+                                pass
                     
                     except Exception as e:
                         print(f"⚠️  处理 {symbol} 回测时出错:")
