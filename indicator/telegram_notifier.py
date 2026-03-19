@@ -182,23 +182,25 @@ class TelegramNotifier:
             msg_parts.append(f"碗口指标: {bowl_score:.2f}")
 
         if volume_ma_info:
-            golden_crosses = volume_ma_info.get('golden_crosses') or []
+            recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
             current_multiple_vs_ma = volume_ma_info.get('current_multiple_vs_ma') or {}
             volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 4.0)
             build_strength = volume_ma_info.get('build_position_strength', 0)
+            has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
+            recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
-            if build_strength < 2:
-                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 买入推送")
+            if (not has_recent_golden_cross) or build_strength < 2:
+                print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓强度不足，跳过 Telegram 买入推送")
                 return False
 
-            if golden_crosses:
+            if recent_golden_crosses:
                 compact_crosses = []
-                for cross in golden_crosses:
+                for cross in recent_golden_crosses:
                     compact_crosses.append(cross.replace('上穿', 'x'))
-                msg_parts.append(f"量能金叉: {' / '.join(compact_crosses)}")
+                msg_parts.append(f"近{recent_cross_window_days}日量能金叉: {' / '.join(compact_crosses)}")
             else:
-                msg_parts.append("量能金叉: 暂无")
+                msg_parts.append(f"近{recent_cross_window_days}日量能金叉: 暂无")
 
             if current_above_ma:
                 detail = ", ".join(

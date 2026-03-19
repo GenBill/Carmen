@@ -672,6 +672,11 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     volume_ma30_prev = _safe_prev_volume_sma(30)
     volume_ma60_prev = _safe_prev_volume_sma(60)
 
+    volume_sma5_series = hist_excluding_today['Volume'].rolling(window=5, min_periods=5).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
+    volume_sma10_series = hist_excluding_today['Volume'].rolling(window=10, min_periods=10).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
+    volume_sma30_series = hist_excluding_today['Volume'].rolling(window=30, min_periods=30).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
+    volume_sma60_series = hist_excluding_today['Volume'].rolling(window=60, min_periods=60).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
+
     # 当日成交量
     current_volume = last_trading_day['Volume']
     if pd.isna(current_volume):
@@ -698,18 +703,35 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         volume_ma_structure.append('30>60')
 
     volume_ma_crosses = []
+    recent_volume_ma_crosses = []
+    recent_cross_window_days = 7
     volume_pairs = [
-        ('5', volume_ma5_prev, volume_ma5, '10', volume_ma10_prev, volume_ma10),
-        ('5', volume_ma5_prev, volume_ma5, '30', volume_ma30_prev, volume_ma30),
-        ('5', volume_ma5_prev, volume_ma5, '60', volume_ma60_prev, volume_ma60),
-        ('10', volume_ma10_prev, volume_ma10, '30', volume_ma30_prev, volume_ma30),
-        ('10', volume_ma10_prev, volume_ma10, '60', volume_ma60_prev, volume_ma60),
-        ('30', volume_ma30_prev, volume_ma30, '60', volume_ma60_prev, volume_ma60),
+        ('5', volume_ma5_prev, volume_ma5, '10', volume_ma10_prev, volume_ma10, volume_sma5_series, volume_sma10_series),
+        ('5', volume_ma5_prev, volume_ma5, '30', volume_ma30_prev, volume_ma30, volume_sma5_series, volume_sma30_series),
+        ('5', volume_ma5_prev, volume_ma5, '60', volume_ma60_prev, volume_ma60, volume_sma5_series, volume_sma60_series),
+        ('10', volume_ma10_prev, volume_ma10, '30', volume_ma30_prev, volume_ma30, volume_sma10_series, volume_sma30_series),
+        ('10', volume_ma10_prev, volume_ma10, '60', volume_ma60_prev, volume_ma60, volume_sma10_series, volume_sma60_series),
+        ('30', volume_ma30_prev, volume_ma30, '60', volume_ma60_prev, volume_ma60, volume_sma30_series, volume_sma60_series),
     ]
-    for short_label, short_prev, short_now, long_label, long_prev, long_now in volume_pairs:
+    for short_label, short_prev, short_now, long_label, long_prev, long_now, short_series, long_series in volume_pairs:
+        cross_name = f'{short_label}上穿{long_label}'
         if short_prev is not None and long_prev is not None and short_now is not None and long_now is not None:
             if short_prev <= long_prev and short_now > long_now:
-                volume_ma_crosses.append(f'{short_label}上穿{long_label}')
+                volume_ma_crosses.append(cross_name)
+
+        if not short_series.empty and not long_series.empty:
+            pair_df = pd.DataFrame({'short': short_series, 'long': long_series}).dropna()
+            if len(pair_df) >= 2:
+                recent_pair_df = pair_df.tail(recent_cross_window_days + 1)
+                crossed_recently = False
+                for idx in range(1, len(recent_pair_df)):
+                    prev_row = recent_pair_df.iloc[idx - 1]
+                    curr_row = recent_pair_df.iloc[idx]
+                    if prev_row['short'] <= prev_row['long'] and curr_row['short'] > curr_row['long']:
+                        crossed_recently = True
+                        break
+                if crossed_recently:
+                    recent_volume_ma_crosses.append(cross_name)
 
     current_volume_vs_ma = []
     current_volume_multiple_vs_ma = {}
@@ -729,10 +751,13 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'ma60': volume_ma60,
         'volume_structure': volume_ma_structure,
         'golden_crosses': volume_ma_crosses,
+        'recent_golden_crosses': recent_volume_ma_crosses,
+        'recent_cross_window_days': recent_cross_window_days,
+        'has_recent_golden_cross': len(recent_volume_ma_crosses) > 0,
         'current_above_ma': current_volume_vs_ma,
         'current_multiple_vs_ma': current_volume_multiple_vs_ma,
         'volume_spike_threshold': volume_spike_threshold,
-        'build_position_strength': len(volume_ma_structure) + len(volume_ma_crosses) + len(current_volume_vs_ma),
+        'build_position_strength': len(volume_ma_structure) + len(recent_volume_ma_crosses) + len(current_volume_vs_ma),
     }
     
     # 计算 RSI（获取完整序列以便提取前一日数据）

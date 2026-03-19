@@ -257,8 +257,10 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     
                     change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
-                    build_strength = (stock_data.get('volume_ma_info') or {}).get('build_position_strength', 0)
-                    if stock_data.get('volume_ma_info') and build_strength < 2:
+                    volume_ma_info = stock_data.get('volume_ma_info') or {}
+                    build_strength = volume_ma_info.get('build_position_strength', 0)
+                    has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
+                    if volume_ma_info and (not has_recent_golden_cross or build_strength < 2):
                         continue
                     
                     stocks_data_for_html.append({
