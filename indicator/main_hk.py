@@ -228,7 +228,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 stock_data['_ai_future'] = future
                                 
                             elif qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
-                                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 推送与后台AI分析")
+                                print(f"⏭️  {symbol} build_strength={build_strength}，不满足“很强(>=6)”，跳过 Telegram 推送与后台AI分析")
                                 
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
@@ -426,6 +426,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
         except Exception as e:
             print(f"⚠️  生成HTML或推送时出错: {e}")
             traceback.print_exc()
+
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 def flush_output():

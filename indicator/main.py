@@ -247,7 +247,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     volume_ma_info=stock_data.get('volume_ma_info')
                                 )
                             elif qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
-                                print(f"⏭️  {symbol} 建仓强度暂不明显，跳过 Telegram 推送与AI分析")
+                                print(f"⏭️  {symbol} build_strength={build_strength}，不满足“很强(>=6)”，跳过 Telegram 推送与AI分析")
                             elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
                                 pass
