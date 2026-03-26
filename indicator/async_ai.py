@@ -9,7 +9,7 @@ def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi
 
         build_strength = (volume_ma_info or {}).get('build_position_strength', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
-        if volume_ma_info and (not has_recent_golden_cross or build_strength < 4):
+        if volume_ma_info and (not has_recent_golden_cross or build_strength < 6):
             print(f"⏭️  {symbol} 近7日内未出现量能金叉或建仓强度不足，跳过后台AI分析与通知")
             return None, {}
         

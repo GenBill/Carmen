@@ -190,7 +190,7 @@ class TelegramNotifier:
             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
-            if (not has_recent_golden_cross) or build_strength < 4:
+            if (not has_recent_golden_cross) or build_strength < 6:
                 print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓强度不足，跳过 Telegram 买入推送")
                 return False
 
