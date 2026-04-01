@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="9efc575179319126b1c2db7bb8ae363e">
+    <meta data-hash="44aee36c09ccfd9959973d921f4531c6">
     <title>Carmen Stock Scanner - 港股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -154,13 +154,13 @@
         <!-- AI分析结果部分 -->
         
         
-        <div class="upload-time">📤 上传时间: 2026-03-31 16:21:12</div>
+        <div class="upload-time">📤 上传时间: 2026-04-01 12:12:19</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ 港股市场扫描 | 2026-03-31 16:14:15 CST
-查询 2722 只股票 | RSI8 | MACD(8,17,9) | 港股市场
+        const terminalOutput = `⏰ 港股市场扫描 | 2026-04-01 12:11:39 CST
+查询 2724 只股票 | RSI8 | MACD(8,17,9) | 港股市场
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       | 碗口 
@@ -173,10 +173,10 @@
 1810.HK |  $31.72 [92m -2.04%[0m | 量比:[92m    63.1%[0m | RSI:  39.9 [92m↓[0m 35.1 | DIF:[92m -0.56[0m DEA:[92m -0.40[0m 斜率: [92m-0.02[0m |  [93m[碗外][0m
 9988.HK | $119.50 [92m -1.08%[0m | 量比:[92m    53.3%[0m | RSI:  34.1 [97m→[0m 32.8 | DIF:[92m -4.44[0m DEA:[92m -4.33[0m 斜率: [92m-0.08[0m | [91mBuy 0.0[0m vs [92m[1mSell 2.4[0m (31/49) [93m[碗外][0m
 ========================================================================================================================
-⚠️ 本轮查询: 成功 671 | 失败 2051
+⚠️ 本轮查询: 成功 671 | 失败 2053
 🔔 本次扫描发现 0 个信号！
 
-📋 黑名单摘要: 6705 只股票 | 最近7天新增: 33 | 今日已检查: 1 | 平均成交金额: $2,172,347 | 移除阈值: $20,000,000 (2.0x)`;
+📋 黑名单摘要: 6705 只股票 | 最近7天新增: 33 | 今日已检查: 0 | 平均成交金额: $2,172,347 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
     </script>
