@@ -1,18 +1,18 @@
 {
-  "last_update": "2026-04-07T20:08:13.662254",
-  "last_update_readable": "2026-04-07 20:08:13",
-  "content_hash": "0114c54a2feca087a455dada38c8e315",
+  "last_update": "2026-04-08T04:15:44.684803",
+  "last_update_readable": "2026-04-08 04:15:44",
+  "content_hash": "623c068dd42c2eef6b4087cd21c45c3a",
   "html_file": "docs/index.html",
-  "html_file_size": 14665,
-  "market_status": "⏰ 盘前时段",
-  "update_time": "2026-04-07 08:05:49 EDT",
+  "html_file_size": 9537,
+  "market_status": "🌙 盘后时段（缓存缓冲）",
+  "update_time": "2026-04-07 16:14:29 EDT",
   "mode": "盘前/盘后模式",
   "stats": {
-    "total_scanned": 2104,
-    "success_count": 2096,
-    "signal_count": 2,
+    "total_scanned": 2099,
+    "success_count": 2081,
+    "signal_count": 1,
     "blacklist_count": 0,
-    "stocks_displayed": 210
+    "stocks_displayed": 209
   },
   "config": {
     "rsi_period": 8,
