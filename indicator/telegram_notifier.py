@@ -184,14 +184,12 @@ class TelegramNotifier:
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
-            current_multiple_vs_ma = volume_ma_info.get('current_multiple_vs_ma') or {}
-            volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 4.0)
-            build_strength = volume_ma_info.get('build_position_strength', 0)
+            position_build_score = volume_ma_info.get('position_build_score', 0)
             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
-            if (not has_recent_golden_cross) or build_strength < 6:
-                print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓强度不足，跳过 Telegram 买入推送")
+            if (not has_recent_golden_cross) or position_build_score < 6:
+                print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<6)，跳过 Telegram 买入推送")
                 return False
 
             if recent_golden_crosses:
@@ -202,23 +200,7 @@ class TelegramNotifier:
             else:
                 msg_parts.append(f"近{recent_cross_window_days}日量能金叉: 暂无")
 
-            if current_above_ma:
-                detail = ", ".join(
-                    f"{label}日({current_multiple_vs_ma.get(label, 0):.2f}x)"
-                    for label in current_above_ma
-                )
-                msg_parts.append(f"异常爆量: 现量≥{volume_spike_threshold:.1f}x {detail}")
-            else:
-                msg_parts.append("异常爆量: 暂无")
-
-            if build_strength >= 6:
-                msg_parts.append("建仓强度: 很强")
-            elif build_strength >= 4:
-                msg_parts.append("建仓强度: 中等偏强")
-            elif build_strength >= 2:
-                msg_parts.append("建仓强度: 初步抬升")
-            else:
-                msg_parts.append("建仓强度: 暂不明显")
+            msg_parts.append(f"建仓评分: {position_build_score:.1f}")
 
         msg = "\n".join(msg_parts)
         reply_markup = {

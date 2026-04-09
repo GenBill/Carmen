@@ -208,9 +208,9 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             
                             # 发送Telegram推送（使用后台线程，不阻塞扫描）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
-                            build_strength = volume_ma_info.get('build_position_strength', 0)
+                            position_build_score = volume_ma_info.get('position_build_score', 0)
                             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)) and has_recent_golden_cross and build_strength >= 6:
+                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)) and has_recent_golden_cross and position_build_score >= 6:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -260,9 +260,9 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
                     volume_ma_info = stock_data.get('volume_ma_info') or {}
-                    build_strength = volume_ma_info.get('build_position_strength', 0)
+                    position_build_score = volume_ma_info.get('position_build_score', 0)
                     has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                    if volume_ma_info and (not has_recent_golden_cross or build_strength < 6):
+                    if volume_ma_info and (not has_recent_golden_cross or position_build_score < 6):
                         continue
                     
                     stocks_data_for_html.append({

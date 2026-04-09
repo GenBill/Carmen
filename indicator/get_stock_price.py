@@ -733,15 +733,43 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
                 if crossed_recently:
                     recent_volume_ma_crosses.append(cross_name)
 
+    recent_cross_weights = {
+        '5上穿10': 1.0,
+        '5上穿30': 1.0,
+        '5上穿60': 1.0,
+        '10上穿30': 1.5,
+        '10上穿60': 1.5,
+        '30上穿60': 2.0,
+    }
+    recent_golden_cross_score = round(
+        sum(recent_cross_weights.get(cross, 0.0) for cross in recent_volume_ma_crosses),
+        2,
+    )
+
     current_volume_vs_ma = []
     current_volume_multiple_vs_ma = {}
     volume_spike_threshold = 4.0
+    volume_spike_weights = {
+        '5': 0.2,
+        '10': 0.5,
+        '30': 1.0,
+        '60': 2.0,
+    }
+    current_volume_spike_score = 0.0
     for label, ma_value in [('5', volume_ma5), ('10', volume_ma10), ('30', volume_ma30), ('60', volume_ma60)]:
         if ma_value and ma_value > 0:
             multiple = float(estimated_volume) / float(ma_value)
             current_volume_multiple_vs_ma[label] = round(multiple, 2)
             if multiple >= volume_spike_threshold:
                 current_volume_vs_ma.append(label)
+                current_volume_spike_score += volume_spike_weights.get(label, 0.0)
+
+    current_volume_spike_score = round(current_volume_spike_score, 2)
+    volume_structure_score = float(len(volume_ma_structure))
+    position_build_score = round(
+        volume_structure_score + recent_golden_cross_score + current_volume_spike_score,
+        2,
+    )
 
     volume_ma_info = {
         'current_volume': float(estimated_volume),
@@ -750,14 +778,19 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'ma30': volume_ma30,
         'ma60': volume_ma60,
         'volume_structure': volume_ma_structure,
+        'volume_structure_score': volume_structure_score,
         'golden_crosses': volume_ma_crosses,
         'recent_golden_crosses': recent_volume_ma_crosses,
         'recent_cross_window_days': recent_cross_window_days,
+        'recent_cross_weights': recent_cross_weights,
+        'recent_golden_cross_score': recent_golden_cross_score,
         'has_recent_golden_cross': len(recent_volume_ma_crosses) > 0,
         'current_above_ma': current_volume_vs_ma,
         'current_multiple_vs_ma': current_volume_multiple_vs_ma,
         'volume_spike_threshold': volume_spike_threshold,
-        'build_position_strength': len(volume_ma_structure) + len(recent_volume_ma_crosses) + len(current_volume_vs_ma),
+        'volume_spike_weights': volume_spike_weights,
+        'current_volume_spike_score': current_volume_spike_score,
+        'position_build_score': position_build_score,
     }
     
     # 计算 RSI（获取完整序列以便提取前一日数据）

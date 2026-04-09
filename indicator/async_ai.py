@@ -7,10 +7,10 @@ def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi
     try:
         from analysis import analyze_stock_with_ai, refine_ai_analysis
 
-        build_strength = (volume_ma_info or {}).get('build_position_strength', 0)
+        position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
-        if volume_ma_info and (not has_recent_golden_cross or build_strength < 6):
-            print(f"⏭️  {symbol} build_strength={build_strength}，不满足“很强(>=6)”或近7日无量能金叉，跳过后台AI分析与通知")
+        if volume_ma_info and (not has_recent_golden_cross or position_build_score < 6):
+            print(f"⏭️  {symbol} position_build_score={position_build_score}，不满足“建仓评分>=6”或近7日无量能金叉，跳过后台AI分析与通知")
             return None, {}
         
         # 1. 执行AI分析
