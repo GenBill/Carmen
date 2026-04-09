@@ -177,8 +177,9 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 score_vegas = vegas_indicator(stock_data)
                 score_silver = silver_indicator(stock_data)
                 score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
-                # 碗口形态标记（不过滤，仅在输出中标注）
-                bowl_score = bowl_rebound_indicator(stock_data)
+                # 碗口指标已临时停用，跳过计算以节省算力
+                # bowl_score = bowl_rebound_indicator(stock_data)
+                bowl_score = None
                 
                 # 进行回测
                 backtest_result = None

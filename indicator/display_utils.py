@@ -250,7 +250,7 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
         score: Carmen指标分数 [买入分数, 卖出分数]
         is_watchlist_stock: 是否是自选股列表中的股票（自选股始终显示）
         backtest_result: 回测结果字典，格式为 {'buy_prob': (成功次数, 总次数), 'sell_prob': (成功次数, 总次数)}
-        bowl_score: 碗口反弹指标分数（None 则不显示标签）
+        bowl_score: 碗口反弹指标分数（当前已停用，传 None）
         
     Returns:
         bool: True表示已打印，False表示数据无效已跳过
@@ -317,10 +317,7 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
     should_print = is_watchlist_stock or buy_signal or sell_signal
     
     if should_print:
-        bowl_tag = format_bowl_tag(bowl_score) if bowl_score is not None else ""
         line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}"
-        if bowl_tag:
-            line += f" {bowl_tag}"
         capture_output(line)
     return True
 
@@ -328,5 +325,5 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
 def print_header():
     """打印表头"""
     capture_output(f"\n{'='*120}")
-    capture_output(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前 → 今)':^17}|{'MACD指标':^33}|{'信号':^16}|{'碗口':^4}")
+    capture_output(f"{'股票':^5}|{'价格涨跌幅':^12}|{'量比':^14}|{'RSI (前 → 今)':^17}|{'MACD指标':^33}|{'信号':^16}")
     capture_output(f"{'='*120}")
