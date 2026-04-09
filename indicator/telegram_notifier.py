@@ -178,8 +178,6 @@ class TelegramNotifier:
             msg_parts.append(f"RSI: {rsi:.2f}")
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
-        if bowl_score is not None:
-            msg_parts.append(f"碗口指标: {bowl_score:.2f}")
 
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
