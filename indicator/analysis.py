@@ -50,7 +50,7 @@ def calculate_data_hash(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.D
     data_str = f"{hash_version}_{symbol}_{json.dumps(latest_daily, sort_keys=True)}_{json.dumps(latest_hourly, sort_keys=True)}"
     return hashlib.md5(data_str.encode()).hexdigest()
 
-def load_analysis_cache(symbol: str) -> Optional[Dict]:
+def load_analysis_cache(symbol: str, current_price: float = None) -> Optional[Dict]:
     """加载分析缓存"""
     try:
         cache_file = get_cache_file_path(symbol)
@@ -60,39 +60,67 @@ def load_analysis_cache(symbol: str) -> Optional[Dict]:
         with open(cache_file, 'r', encoding='utf-8') as f:
             cache_data = json.load(f)
         
+        if cache_data.get('symbol') != symbol:
+            print(f"⚠️ {symbol} 缓存symbol不匹配({cache_data.get('symbol')})，判定为脏缓存，跳过")
+            return None
+
         # 检查缓存是否过期
         cache_time = datetime.fromisoformat(cache_data['timestamp'])
         if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
             return None
 
-        # 脏缓存保护: 若分析文案中的价格量级与symbol当前市场常识明显错乱，直接作废
+        # 脏缓存保护: 若分析文案中的价格与当前价格体系明显错乱，直接作废
         analysis_text = cache_data.get('analysis', '')
-        if symbol.endswith(('.SS', '.SZ')):
-            import re
-            price_patterns = [
-                r'当前价格[：:]\s*\$?([\d.]+)',
-                r'当前价格\$([\d.]+)',
-                r'当前价[：:]\s*\$?([\d.]+)',
-                r'当前价格([\d.]+)',
-            ]
-            suspicious_patterns = [
-                r'EMA\(20\)：([\d.]+)，EMA\(50\)：([\d.]+)',
-                r'理想买入价[：:]\s*([\d.]+)-([\d.]+)',
-                r'第一止盈[：:]\s*([\d.]+)元',
-            ]
-            for pattern in price_patterns:
-                m = re.search(pattern, analysis_text)
-                if m:
-                    cached_price = float(m.group(1))
-                    if cached_price < 5:
-                        print(f"⚠️ {symbol} 缓存分析价格异常({cached_price})，判定为脏缓存，跳过")
-                        return None
-                    break
-            for pattern in suspicious_patterns:
-                m = re.search(pattern, analysis_text)
-                if m and float(m.group(1)) < 5:
-                    print(f"⚠️ {symbol} 缓存分析区间/均线价格异常({m.group(1)})，判定为脏缓存，跳过")
+        import re
+
+        price_patterns = [
+            r'当前价格[：:]\s*\$?([\d.]+)',
+            r'当前价格\$([\d.]+)',
+            r'当前价[：:]\s*\$?([\d.]+)',
+            r'当前价格([\d.]+)',
+        ]
+        suspicious_patterns = [
+            r'EMA\(20\)[=：:]\s*\$?([\d.]+)',
+            r'EMA\(50\)[=：:]\s*\$?([\d.]+)',
+            r'买入价格区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            r'买入区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+            r'目标价位?[：:]\s*\$?([\d.]+)',
+            r'止损位?[：:]\s*\$?([\d.]+)',
+            r'第一止盈[：:]\s*\$?([\d.]+)',
+        ]
+
+        def _price_deviation_too_large(price_value: float, live_price: float, tolerance: float = 0.2) -> bool:
+            if live_price is None or live_price <= 0 or price_value is None or price_value <= 0:
+                return False
+            lower = live_price * (1 - tolerance)
+            upper = live_price * (1 + tolerance)
+            return price_value < lower or price_value > upper
+
+        for pattern in price_patterns:
+            m = re.search(pattern, analysis_text)
+            if m:
+                cached_price = float(m.group(1))
+                if cached_price < 5:
+                    print(f"⚠️ {symbol} 缓存分析价格异常({cached_price})，判定为脏缓存，跳过")
                     return None
+                if _price_deviation_too_large(cached_price, current_price):
+                    print(f"⚠️ {symbol} 缓存当前价格与实时价偏离过大(cached={cached_price}, live={current_price})，判定为脏缓存，跳过")
+                    return None
+                break
+
+        for pattern in suspicious_patterns:
+            m = re.search(pattern, analysis_text)
+            if not m:
+                continue
+            prices = [float(g) for g in m.groups() if g is not None]
+            for p in prices:
+                if p < 5:
+                    print(f"⚠️ {symbol} 缓存分析区间/均线价格异常({p})，判定为脏缓存，跳过")
+                    return None
+                if _price_deviation_too_large(p, current_price):
+                    print(f"⚠️ {symbol} 缓存价格字段与实时价偏离过大(cached={p}, live={current_price})，判定为脏缓存，跳过")
+                    return None
+
         return cache_data
     
     except Exception as e:
@@ -824,9 +852,10 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
     
     # 2. 计算数据哈希值
     data_hash = calculate_data_hash(symbol, daily_data, hourly_data)
+    current_price = float(daily_data['Close'].iloc[-1].item()) if not daily_data.empty else None
     
     # 3. 检查缓存
-    cache_data = load_analysis_cache(symbol)
+    cache_data = load_analysis_cache(symbol, current_price=current_price)
     if cache_data and cache_data.get('data_hash') == data_hash:
         # print(f"🚀 {symbol} 使用缓存结果，跳过AI分析")
         return cache_data['analysis']
