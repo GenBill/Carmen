@@ -221,7 +221,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 try:
                                     from analysis import analyze_stock_with_ai, refine_ai_analysis
                                     ai_analysis = analyze_stock_with_ai(symbol, market="US")
-                                    refined_info = refine_ai_analysis(ai_analysis, market="US")
+                                    refined_info = refine_ai_analysis(ai_analysis, market="US", current_price=price)
                                 except Exception as e:
                                     print(f"⚠️ {symbol} AI分析/提炼失败: {e}")
                                 

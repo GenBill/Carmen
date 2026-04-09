@@ -29,20 +29,25 @@ def get_cache_file_path(symbol: str) -> str:
 
 def calculate_data_hash(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.DataFrame) -> str:
     """计算数据哈希值，用于检测数据是否变化"""
-    # 使用最新的价格和指标数据计算哈希
+    # 带版本号，历史缓存格式有问题时可强制失效
+    hash_version = "v2"
+
+    # 使用最新的价格和关键序列计算哈希，避免仅靠最新一根数据命中脏缓存
     latest_daily = {
-        'price': float(daily_data['Close'].iloc[-1].item()) if not daily_data.empty else 0,
+        'price': round(float(daily_data['Close'].iloc[-1].item()), 4) if not daily_data.empty else 0,
         'volume': int(daily_data['Volume'].iloc[-1].item()) if not daily_data.empty else 0,
+        'recent_close': [round(float(x), 4) for x in daily_data['Close'].tail(5).iloc[:, 0].tolist()] if not daily_data.empty else [],
     }
     
     latest_hourly = {}
     if hourly_data is not None and not hourly_data.empty:
         latest_hourly = {
-            'price': float(hourly_data['Close'].iloc[-1].item()),
-            'date': hourly_data.index[-1].strftime('%Y-%m-%d %H:%M')
+            'price': round(float(hourly_data['Close'].iloc[-1].item()), 4),
+            'date': hourly_data.index[-1].strftime('%Y-%m-%d %H:%M'),
+            'recent_close': [round(float(x), 4) for x in hourly_data['Close'].tail(5).iloc[:, 0].tolist()],
         }
     
-    data_str = f"{symbol}_{json.dumps(latest_daily, sort_keys=True)}_{json.dumps(latest_hourly, sort_keys=True)}"
+    data_str = f"{hash_version}_{symbol}_{json.dumps(latest_daily, sort_keys=True)}_{json.dumps(latest_hourly, sort_keys=True)}"
     return hashlib.md5(data_str.encode()).hexdigest()
 
 def load_analysis_cache(symbol: str) -> Optional[Dict]:
@@ -59,6 +64,35 @@ def load_analysis_cache(symbol: str) -> Optional[Dict]:
         cache_time = datetime.fromisoformat(cache_data['timestamp'])
         if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
             return None
+
+        # 脏缓存保护: 若分析文案中的价格量级与symbol当前市场常识明显错乱，直接作废
+        analysis_text = cache_data.get('analysis', '')
+        if symbol.endswith(('.SS', '.SZ')):
+            import re
+            price_patterns = [
+                r'当前价格[：:]\s*\$?([\d.]+)',
+                r'当前价格\$([\d.]+)',
+                r'当前价[：:]\s*\$?([\d.]+)',
+                r'当前价格([\d.]+)',
+            ]
+            suspicious_patterns = [
+                r'EMA\(20\)：([\d.]+)，EMA\(50\)：([\d.]+)',
+                r'理想买入价[：:]\s*([\d.]+)-([\d.]+)',
+                r'第一止盈[：:]\s*([\d.]+)元',
+            ]
+            for pattern in price_patterns:
+                m = re.search(pattern, analysis_text)
+                if m:
+                    cached_price = float(m.group(1))
+                    if cached_price < 5:
+                        print(f"⚠️ {symbol} 缓存分析价格异常({cached_price})，判定为脏缓存，跳过")
+                        return None
+                    break
+            for pattern in suspicious_patterns:
+                m = re.search(pattern, analysis_text)
+                if m and float(m.group(1)) < 5:
+                    print(f"⚠️ {symbol} 缓存分析区间/均线价格异常({m.group(1)})，判定为脏缓存，跳过")
+                    return None
         return cache_data
     
     except Exception as e:
@@ -260,13 +294,14 @@ def call_deepseek_api(prompt: str, market: str = "US") -> str:
         raise ValueError(f"Invalid market: {market}. Must be 'US' or 'HKA'")
 
 
-def refine_ai_analysis(ai_output: str, market: str = "US") -> dict:
+def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float = None) -> dict:
     """
     将AI分析结果再喂给AI进行提炼，提取关键信息
     
     Args:
         ai_output: AI的原始分析结果
         market: 市场类型（"US"或"HKA"）
+        current_price: 当前价格，用于对提炼结果做价格一致性校验
         
     Returns:
         dict: 包含提炼后的信息，格式为 {
@@ -302,16 +337,9 @@ def refine_ai_analysis(ai_output: str, market: str = "US") -> dict:
 """
     
     # 调用简易AI进行提炼（使用chat模型，更快更便宜）
-    try:
-        deepseek = DeepSeekAPI(
-            system_prompt="你是一个信息提炼助手，擅长从长文本中提取关键交易信息，并按固定格式输出。",
-            model_type="deepseek-chat"
-        )
-        refined_output = deepseek(refine_prompt, agent_mode=False, enable_debate=False)
-        
-        # 解析提炼后的信息
+    def _extract_structured_fields(refined_output: str) -> dict:
         import re
-        
+
         result = {
             'min_buy_price': None,
             'max_buy_price': None,
@@ -503,13 +531,65 @@ def refine_ai_analysis(ai_output: str, market: str = "US") -> dict:
                     except:
                         pass
         
-        # 打印提取结果用于调试
-        extracted_count = sum(1 for v in [result['min_buy_price'], result['max_buy_price'], 
-                                          result['buy_time'], result['target_price'], 
-                                          result['stop_loss'], result['win_rate']] if v is not None)
-        print(f"📊 AI提炼完成: 成功提取 {extracted_count}/6 个字段")
-        
         return result
+
+    def _is_price_result_valid(result: dict, current_price: float) -> bool:
+        if current_price is None or current_price <= 0:
+            return True
+
+        prices_to_check = [
+            result.get('min_buy_price'),
+            result.get('max_buy_price'),
+            result.get('target_price'),
+            result.get('stop_loss'),
+        ]
+        prices_to_check = [p for p in prices_to_check if p is not None and p > 0]
+        if not prices_to_check:
+            return True
+
+        lower_bound = current_price * 0.8
+        upper_bound = current_price * 1.2
+        for p in prices_to_check:
+            if p < lower_bound or p > upper_bound:
+                return False
+        return True
+
+    try:
+        deepseek = DeepSeekAPI(
+            system_prompt="你是一个信息提炼助手，擅长从长文本中提取关键交易信息，并按固定格式输出。",
+            model_type="deepseek-chat"
+        )
+
+        max_attempts = 2
+        final_result = None
+        for attempt in range(max_attempts):
+            refined_output = deepseek(refine_prompt, agent_mode=False, enable_debate=False)
+            result = _extract_structured_fields(refined_output)
+
+            extracted_count = sum(1 for v in [result['min_buy_price'], result['max_buy_price'], 
+                                              result['buy_time'], result['target_price'], 
+                                              result['stop_loss'], result['win_rate']] if v is not None)
+            print(f"📊 AI提炼完成: 成功提取 {extracted_count}/6 个字段")
+
+            if _is_price_result_valid(result, current_price):
+                final_result = result
+                break
+
+            print(f"⚠️ AI提炼价格校验失败: current_price={current_price}, attempt={attempt + 1}/{max_attempts}")
+            final_result = result
+
+        if final_result is not None and not _is_price_result_valid(final_result, current_price):
+            print(f"⚠️ AI提炼两次均价格异常，清空全部AI提炼字段，仅保留非AI原生指标: current_price={current_price}")
+            final_result.update({
+                'min_buy_price': None,
+                'max_buy_price': None,
+                'buy_time': None,
+                'target_price': None,
+                'stop_loss': None,
+                'win_rate': None,
+            })
+
+        return final_result
         
     except Exception as e:
         print(f"⚠️  AI提炼失败: {e}")

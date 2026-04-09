@@ -222,9 +222,10 @@ class TelegramNotifier:
 
         msg = "\n".join(msg_parts)
         reply_markup = {
-            "inline_keyboard": [[
-                {"text": "🤖 AI分析", "callback_data": f"ai_analysis:{symbol}"}
-            ]]
+            "inline_keyboard": [
+                [{"text": "🤖 AI分析", "callback_data": f"ai_analysis:{symbol}"}],
+                [{"text": "📊 查基本面", "callback_data": f"fundamental:{symbol}"}]
+            ]
         }
         success = self.send_message(msg, reply_markup=reply_markup)
 

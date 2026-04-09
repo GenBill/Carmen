@@ -17,7 +17,7 @@ def process_ai_task(symbol, market, qq_notifier, price, score, backtest_str, rsi
         ai_analysis = analyze_stock_with_ai(symbol, market=market)
         
         # 2. 提炼信息
-        refined_info = refine_ai_analysis(ai_analysis, market=market)
+        refined_info = refine_ai_analysis(ai_analysis, market=market, current_price=price)
         
         # 3. 发送QQ通知
         if qq_notifier:
