@@ -487,31 +487,56 @@ def generate_ai_analysis_html(ai_analysis_results: List[dict]) -> str:
     生成AI分析结果的HTML
     
     Args:
-        ai_analysis_results: AI分析结果列表
+        ai_analysis_results: 由 analysis.ai_result_to_html_row / build_ai_analysis_results_for_html 组装的行列表
         
     Returns:
         str: HTML字符串
     """
     if not ai_analysis_results:
         return ""
-    
+
+    def _display_from_ai_result(row_symbol: str, ai_result: dict) -> str:
+        if not ai_result or ai_result.get('symbol') != row_symbol:
+            return '分析结果 symbol 校验失败，已拒绝展示。'
+        st = ai_result.get('status') or ''
+        if st == 'completed':
+            text = (ai_result.get('summary_analysis') or ai_result.get('full_analysis') or ai_result.get('analysis') or '').strip()
+            return text if text else '（completed 但正文为空）'
+        if st == 'partial':
+            base = (ai_result.get('summary_analysis') or ai_result.get('full_analysis') or '').strip()
+            err = ai_result.get('error') or ''
+            return (base + '\n\n' if base else '') + f'[partial] {err}'.strip()
+        if st == 'pending':
+            return 'AI 分析进行中或尚未写入缓存，请稍后刷新。'
+        if st == 'failed':
+            return f"分析失败: {ai_result.get('error', 'unknown')}"
+        if st in ('skipped', 'missing'):
+            return f"暂无有效分析: {ai_result.get('error', st)}"
+        return ai_result.get('error') or '暂无分析内容'
+
     html_parts = ['<div class="ai-analysis-section">']
     html_parts.append('<div class="ai-analysis-header">AI深度分析报告</div>')
-    
+
     for result in ai_analysis_results:
         symbol = result.get('symbol', 'Unknown')
-        analysis = result.get('analysis', '无分析结果')
         score_buy = result.get('score_buy', 0)
         price = result.get('price', 0)
-        
-        # 转义HTML特殊字符
-        escaped_analysis = html.escape(analysis)
-        
+        ai_result = result.get('ai_result')
+        if ai_result is None and result.get('analysis') is not None:
+            legacy = result.get('analysis')
+            display = legacy if isinstance(legacy, str) else str(legacy)
+        elif isinstance(ai_result, dict) and ai_result.get('symbol') != symbol:
+            display = 'AI 结果包 symbol 与行不一致，已拒绝展示。'
+        else:
+            display = _display_from_ai_result(symbol, ai_result if isinstance(ai_result, dict) else {})
+
+        escaped_analysis = html.escape(display)
+
         html_parts.append(f'''
         <div class="ai-analysis-item">
             <div class="ai-analysis-header-item">
                 <div>
-                    <span class="ai-analysis-symbol">{symbol}</span>
+                    <span class="ai-analysis-symbol">{html.escape(str(symbol))}</span>
                     <span class="ai-analysis-price">当前价格: ${price:.2f}</span>
                 </div>
                 <span class="ai-analysis-score">买入评分: {score_buy:.1f}</span>
@@ -519,7 +544,7 @@ def generate_ai_analysis_html(ai_analysis_results: List[dict]) -> str:
             <div class="ai-analysis-content">{escaped_analysis}</div>
         </div>
         ''')
-    
+
     html_parts.append('</div>')
     return ''.join(html_parts)
 

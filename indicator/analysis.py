@@ -9,8 +9,10 @@ import numpy as np
 import os
 import json
 import hashlib
+import threading
+import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agent.deepseek import DeepSeekAPI
@@ -18,6 +20,361 @@ from agent.deepseek import DeepSeekAPI
 # 缓存配置
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'analysis_cache')
 CACHE_EXPIRE_HOURS = 24  # 缓存过期时间（小时）
+CACHE_FORMAT_VERSION = 2
+
+_symbol_lock_registry: Dict[str, threading.Lock] = {}
+_symbol_lock_registry_guard = threading.Lock()
+
+
+def _get_symbol_lock(symbol: str) -> threading.Lock:
+    with _symbol_lock_registry_guard:
+        if symbol not in _symbol_lock_registry:
+            _symbol_lock_registry[symbol] = threading.Lock()
+        return _symbol_lock_registry[symbol]
+
+
+def empty_refined_info() -> Dict[str, Any]:
+    return {
+        'min_buy_price': None,
+        'max_buy_price': None,
+        'buy_time': None,
+        'target_price': None,
+        'stop_loss': None,
+        'win_rate': None,
+        'refined_text': '',
+    }
+
+
+def infer_market_from_symbol(symbol: str) -> str:
+    if symbol.endswith('.HK') or symbol.endswith('.SS') or symbol.endswith('.SZ'):
+        return 'HKA'
+    return 'US'
+
+
+def summarize_full_analysis(full_text: str, max_chars: int = 800) -> str:
+    """
+    展示用短摘要（确定性截断）。长文必须与 full_analysis 区分，避免 summary/full/analysis 三者同字。
+    后续可换 LLM 摘要，接口不变。
+    """
+    if not full_text or not str(full_text).strip():
+        return ''
+    t = str(full_text).strip()
+    if len(t) <= max_chars:
+        return t
+    return t[:max_chars].rstrip() + '\n\n…（摘要已截断，完整正文见 full_analysis）'
+
+
+def _price_deviation_too_large(price_value: float, live_price: float, tolerance: float = 0.2) -> bool:
+    if live_price is None or live_price <= 0 or price_value is None or price_value <= 0:
+        return False
+    lower = live_price * (1 - tolerance)
+    upper = live_price * (1 + tolerance)
+    return price_value < lower or price_value > upper
+
+
+def _legacy_analysis_text_dirty(analysis_text: str, current_price: Optional[float]) -> bool:
+    """Heuristic dirty-cache detection on analysis body (legacy + new)."""
+    if not analysis_text:
+        return False
+    price_patterns = [
+        r'当前价格[：:]\s*\$?([\d.]+)',
+        r'当前价格\$([\d.]+)',
+        r'当前价[：:]\s*\$?([\d.]+)',
+        r'当前价格([\d.]+)',
+    ]
+    suspicious_patterns = [
+        r'EMA\(20\)[=：:]\s*\$?([\d.]+)',
+        r'EMA\(50\)[=：:]\s*\$?([\d.]+)',
+        r'买入价格区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+        r'买入区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
+        r'目标价位?[：:]\s*\$?([\d.]+)',
+        r'止损位?[：:]\s*\$?([\d.]+)',
+        r'第一止盈[：:]\s*\$?([\d.]+)',
+    ]
+    for pattern in price_patterns:
+        m = re.search(pattern, analysis_text)
+        if m:
+            try:
+                cached_price = float(m.group(1))
+                if cached_price < 5:
+                    return True
+                if _price_deviation_too_large(cached_price, current_price):
+                    return True
+            except (TypeError, ValueError):
+                pass
+            break
+    for pattern in suspicious_patterns:
+        m = re.search(pattern, analysis_text)
+        if not m:
+            continue
+        try:
+            prices = [float(g) for g in m.groups() if g is not None]
+            for p in prices:
+                if p < 5:
+                    return True
+                if _price_deviation_too_large(p, current_price):
+                    return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def normalize_cache_entry(raw: Dict[str, Any], symbol: str) -> Dict[str, Any]:
+    """Upgrade legacy single-field cache to unified structure."""
+    if not raw:
+        return {}
+    out = dict(raw)
+    out['symbol'] = raw.get('symbol') or symbol
+    fa = (out.get('full_analysis') or out.get('analysis') or '') or ''
+    out['full_analysis'] = fa
+    out['analysis'] = fa
+    if not out.get('summary_analysis') and fa:
+        out['summary_analysis'] = summarize_full_analysis(fa)
+    elif not out.get('summary_analysis'):
+        out['summary_analysis'] = ''
+    sa = out.get('summary_analysis') or ''
+    if fa and sa == fa and len(fa) > 800:
+        out['summary_analysis'] = summarize_full_analysis(fa)
+    ri = out.get('refined_info')
+    if not isinstance(ri, dict):
+        out['refined_info'] = empty_refined_info()
+    else:
+        base = empty_refined_info()
+        base.update(ri)
+        out['refined_info'] = base
+    ra_disk = out.get('refine_analysis')
+    if ra_disk is None:
+        ra_disk = ''
+    rt = (out['refined_info'].get('refined_text') or '').strip()
+    ra_s = str(ra_disk).strip()
+    if ra_s and not rt:
+        out['refined_info']['refined_text'] = ra_s
+        rt = ra_s
+    if not ra_s and rt:
+        out['refine_analysis'] = rt
+    elif ra_s:
+        out['refine_analysis'] = ra_s
+    else:
+        out['refine_analysis'] = ''
+    st = out.get('status')
+    if not st:
+        out['status'] = 'completed' if fa.strip() else 'failed'
+    if 'cache_version' not in out:
+        out['cache_version'] = 1
+    if 'market' not in out:
+        out['market'] = infer_market_from_symbol(symbol)
+    if 'data_hash' not in out:
+        out['data_hash'] = ''
+    if 'current_price' not in out or out['current_price'] is None:
+        out['current_price'] = 0.0
+    if 'is_dirty' not in out:
+        out['is_dirty'] = False
+    if 'error' not in out:
+        out['error'] = ''
+    if 'timestamp' not in out:
+        out['timestamp'] = datetime.now().isoformat()
+    return out
+
+
+def read_analysis_cache_entry(symbol: str) -> Optional[Dict[str, Any]]:
+    """Read cache file for symbol; normalize; does not validate freshness."""
+    try:
+        cache_file = get_cache_file_path(symbol)
+        if not os.path.exists(cache_file):
+            return None
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        if raw.get('symbol') and raw.get('symbol') != symbol:
+            print(f"⚠️ {symbol} 磁盘缓存 symbol 不匹配({raw.get('symbol')})，拒绝读取")
+            return None
+        return normalize_cache_entry(raw, symbol)
+    except Exception as e:
+        print(f"⚠️ 读取 {symbol} 分析缓存失败: {e}")
+        return None
+
+
+def validate_cache_for_use(
+    entry: Dict[str, Any],
+    symbol: str,
+    data_hash: str,
+    current_price: float,
+) -> bool:
+    """Strict cache hit: symbol, completed, hash, price, not dirty."""
+    if not entry:
+        return False
+    if entry.get('symbol') != symbol:
+        return False
+    if entry.get('status') != 'completed':
+        return False
+    if entry.get('data_hash') != data_hash:
+        return False
+    if entry.get('is_dirty'):
+        return False
+    cached_price = entry.get('current_price')
+    try:
+        cp = float(cached_price) if cached_price is not None else None
+    except (TypeError, ValueError):
+        cp = None
+    if cp is not None and cp > 0 and current_price is not None and current_price > 0:
+        if _price_deviation_too_large(cp, float(current_price)):
+            return False
+    text = (entry.get('full_analysis') or entry.get('analysis') or '')
+    if _legacy_analysis_text_dirty(text, current_price):
+        return False
+    cache_time = entry.get('timestamp')
+    if cache_time:
+        try:
+            ct = datetime.fromisoformat(cache_time)
+            if datetime.now() - ct > timedelta(hours=CACHE_EXPIRE_HOURS):
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def get_analysis_context(symbol: str, period_days: int = 250) -> Optional[Dict[str, Any]]:
+    """Fetch OHLCV, hash, live price, inferred market for one symbol."""
+    daily_data, hourly_data = get_stock_data(symbol, period_days)
+    if daily_data is None or daily_data.empty:
+        return None
+    data_hash = calculate_data_hash(symbol, daily_data, hourly_data)
+    current_price = float(_last_row_scalar(_ensure_1d_series(daily_data['Close'])))
+    return {
+        'symbol': symbol,
+        'daily_data': daily_data,
+        'hourly_data': hourly_data,
+        'data_hash': data_hash,
+        'current_price': current_price,
+        'market': infer_market_from_symbol(symbol),
+    }
+
+
+def try_load_completed_analysis_for_symbol(symbol: str, period_days: int = 250) -> Optional[Dict[str, Any]]:
+    """Read-only: return completed cache entry if hash/price/dirty checks pass (no AI)."""
+    ctx = get_analysis_context(symbol, period_days)
+    if not ctx:
+        return None
+    entry = read_analysis_cache_entry(symbol)
+    if not entry:
+        return None
+    if validate_cache_for_use(
+        entry, symbol, ctx['data_hash'], ctx['current_price'],
+    ):
+        return entry
+    return None
+
+
+def save_analysis_cache_entry(symbol: str, entry: Dict[str, Any]) -> None:
+    """Atomic write per symbol; caller should hold symbol lock for consistency."""
+    try:
+        ensure_cache_dir()
+        out = dict(entry)
+        out['symbol'] = symbol
+        out['cache_version'] = CACHE_FORMAT_VERSION
+        fa = out.get('full_analysis') or out.get('analysis') or ''
+        out['full_analysis'] = fa
+        out['analysis'] = fa
+        if 'refine_analysis' not in out:
+            out['refine_analysis'] = ''
+        if 'refined_info' not in out or not isinstance(out.get('refined_info'), dict):
+            out['refined_info'] = empty_refined_info()
+
+        to_save = dict(out)
+        if to_save.get('analysis') == fa:
+            to_save.pop('analysis', None)
+        ri = to_save.get('refined_info') if isinstance(to_save.get('refined_info'), dict) else {}
+        rtext = (ri.get('refined_text') or '').strip()
+        rtop = (to_save.get('refine_analysis') or '').strip()
+        if rtop and rtext and rtop == rtext:
+            to_save.pop('refine_analysis', None)
+        elif not rtop:
+            to_save.pop('refine_analysis', None)
+
+        cache_file = get_cache_file_path(symbol)
+        tmp = cache_file + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, cache_file)
+    except Exception as e:
+        print(f"⚠️ 保存 {symbol} 分析缓存失败: {e}")
+
+
+def _base_ai_result(
+    symbol: str,
+    market: str,
+    status: str,
+    data_hash: str,
+    current_price: float,
+) -> Dict[str, Any]:
+    return {
+        'cache_version': CACHE_FORMAT_VERSION,
+        'symbol': symbol,
+        'market': market,
+        'status': status,
+        'data_hash': data_hash,
+        'current_price': float(current_price) if current_price is not None else 0.0,
+        'is_dirty': False,
+        'error': '',
+        'timestamp': datetime.now().isoformat(),
+        'full_analysis': '',
+        'analysis': '',
+        'summary_analysis': '',
+        'refine_analysis': '',
+        'refined_info': empty_refined_info(),
+    }
+
+
+def ai_result_to_html_row(
+    symbol: str,
+    price: float,
+    score_buy: float,
+    entry: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Single stock row for HTML report; rejects symbol mismatch."""
+    row = {
+        'symbol': symbol,
+        'score_buy': score_buy,
+        'price': price,
+        'ai_result': None,
+    }
+    if not entry:
+        row['ai_result'] = {
+            **_base_ai_result(symbol, infer_market_from_symbol(symbol), 'missing', '', price),
+            'status': 'missing',
+            'error': '无分析任务结果或缓存',
+        }
+        return row
+    if entry.get('symbol') != symbol:
+        row['ai_result'] = {
+            **_base_ai_result(symbol, entry.get('market') or infer_market_from_symbol(symbol), 'missing', '', price),
+            'status': 'missing',
+            'error': 'AI 结果 symbol 与当前股票不一致，已拒绝展示',
+        }
+        return row
+    row['ai_result'] = entry
+    return row
+
+
+def build_ai_analysis_results_for_html(buy_signal_stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """HTML 阶段只合并内存结果与磁盘 completed 缓存，不调用 AI。"""
+    out: List[Dict[str, Any]] = []
+    for stock in buy_signal_stocks:
+        sym = stock.get('symbol') or ''
+        if not sym:
+            continue
+        entry = stock.get('_ai_result')
+        if (not entry) or (entry.get('symbol') != sym):
+            entry = try_load_completed_analysis_for_symbol(sym)
+        out.append(
+            ai_result_to_html_row(
+                sym,
+                float(stock.get('price', 0) or 0),
+                float(stock.get('score_buy', 0) or 0),
+                entry,
+            )
+        )
+    return out
+
 
 def ensure_cache_dir():
     """确保缓存目录存在"""
@@ -27,6 +384,81 @@ def get_cache_file_path(symbol: str) -> str:
     """获取缓存文件路径"""
     return os.path.join(CACHE_DIR, f"{symbol}_analysis.json")
 
+
+def _last_row_scalar(series_or_col):
+    """
+    取最后一行标量。yfinance 在部分标的下 Close 最后一格可能非严格标量，.item() 会抛 ValueError。
+    """
+    last = series_or_col.iloc[-1]
+    if isinstance(last, pd.Series):
+        return last.iloc[0]
+    if isinstance(last, np.ndarray):
+        return np.asarray(last).reshape(-1)[0]
+    if hasattr(last, 'item'):
+        try:
+            return last.item()
+        except ValueError:
+            return np.asarray(last).reshape(-1)[0]
+    return last
+
+
+def _ensure_1d_series(x: Any) -> pd.Series:
+    """yfinance 列可能是单列 DataFrame 或 Series，统一成 Series。"""
+    if isinstance(x, pd.DataFrame):
+        return x.iloc[:, 0]
+    return x
+
+
+_YF_DOWNLOAD_LOCK = threading.Lock()
+
+
+def _normalize_yf_dataframe(df: Optional[pd.DataFrame], symbol: str) -> pd.DataFrame:
+    """
+    串行 download 仍可能因 MultiIndex 列混用导致错列；按请求 symbol 取列并 copy，避免与其它 ticker 混淆。
+    """
+    if df is None:
+        return df
+    out = df.copy()
+    if out.empty:
+        return out
+    sym_u = str(symbol).strip().upper()
+    if isinstance(out.columns, pd.MultiIndex):
+        try:
+            level = out.columns.get_level_values(-1)
+            tickers = [str(x).upper() for x in level.unique()]
+        except Exception:
+            tickers = []
+        if sym_u in tickers:
+            out = out.xs(sym_u, axis=1, level=-1, drop_level=True)
+        elif len(tickers) == 1:
+            out = out.xs(out.columns.levels[-1][0], axis=1, level=-1, drop_level=True)
+        else:
+            first = out.columns.levels[-1][0]
+            out = out.xs(first, axis=1, level=-1, drop_level=True)
+            if str(first).upper() != sym_u:
+                print(f"⚠️ yfinance 列 ticker 与请求不一致: 请求={sym_u} 实际={first}")
+    return out
+
+
+def analysis_text_contains_symbol(symbol: str, text: str) -> bool:
+    """主分析/提炼输入须显式包含标的，避免模型套用其它股票上下文。"""
+    if not symbol or not text:
+        return False
+    s = str(symbol).strip()
+    if s in text:
+        return True
+    su, tu = s.upper(), text.upper()
+    if su in tu:
+        return True
+    for suf in ('.SS', '.SZ', '.HK'):
+        if su.endswith(suf):
+            base = su[: -len(suf)]
+            if base and base in tu:
+                return True
+            break
+    return False
+
+
 def calculate_data_hash(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.DataFrame) -> str:
     """计算数据哈希值，用于检测数据是否变化"""
     # 带版本号，历史缓存格式有问题时可强制失效
@@ -34,117 +466,71 @@ def calculate_data_hash(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.D
 
     # 使用最新的价格和关键序列计算哈希，避免仅靠最新一根数据命中脏缓存
     latest_daily = {
-        'price': round(float(daily_data['Close'].iloc[-1].item()), 4) if not daily_data.empty else 0,
-        'volume': int(daily_data['Volume'].iloc[-1].item()) if not daily_data.empty else 0,
-        'recent_close': [round(float(x), 4) for x in daily_data['Close'].tail(5).iloc[:, 0].tolist()] if not daily_data.empty else [],
+        'price': round(float(_last_row_scalar(_ensure_1d_series(daily_data['Close']))), 4)
+        if not daily_data.empty
+        else 0,
+        'volume': int(_last_row_scalar(_ensure_1d_series(daily_data['Volume'])))
+        if not daily_data.empty
+        else 0,
+        'recent_close': [
+            round(float(x), 4)
+            for x in _ensure_1d_series(daily_data['Close']).tail(5).tolist()
+        ]
+        if not daily_data.empty
+        else [],
     }
     
     latest_hourly = {}
     if hourly_data is not None and not hourly_data.empty:
         latest_hourly = {
-            'price': round(float(hourly_data['Close'].iloc[-1].item()), 4),
+            'price': round(float(_last_row_scalar(_ensure_1d_series(hourly_data['Close']))), 4),
             'date': hourly_data.index[-1].strftime('%Y-%m-%d %H:%M'),
-            'recent_close': [round(float(x), 4) for x in hourly_data['Close'].tail(5).iloc[:, 0].tolist()],
+            'recent_close': [
+                round(float(x), 4)
+                for x in _ensure_1d_series(hourly_data['Close']).tail(5).tolist()
+            ],
         }
     
     data_str = f"{hash_version}_{symbol}_{json.dumps(latest_daily, sort_keys=True)}_{json.dumps(latest_hourly, sort_keys=True)}"
     return hashlib.md5(data_str.encode()).hexdigest()
 
 def load_analysis_cache(symbol: str, current_price: float = None) -> Optional[Dict]:
-    """加载分析缓存"""
+    """兼容旧逻辑：读盘并做过期与文案价格启发式校验；data_hash 由调用方自行比对。"""
     try:
-        cache_file = get_cache_file_path(symbol)
-        if not os.path.exists(cache_file):
+        entry = read_analysis_cache_entry(symbol)
+        if not entry:
             return None
-        
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            cache_data = json.load(f)
-        
-        if cache_data.get('symbol') != symbol:
-            print(f"⚠️ {symbol} 缓存symbol不匹配({cache_data.get('symbol')})，判定为脏缓存，跳过")
+        ts = entry.get('timestamp')
+        if ts:
+            try:
+                if datetime.now() - datetime.fromisoformat(ts) > timedelta(hours=CACHE_EXPIRE_HOURS):
+                    return None
+            except Exception:
+                pass
+        text = entry.get('full_analysis') or entry.get('analysis') or ''
+        if _legacy_analysis_text_dirty(text, current_price):
             return None
-
-        # 检查缓存是否过期
-        cache_time = datetime.fromisoformat(cache_data['timestamp'])
-        if datetime.now() - cache_time > timedelta(hours=CACHE_EXPIRE_HOURS):
-            return None
-
-        # 脏缓存保护: 若分析文案中的价格与当前价格体系明显错乱，直接作废
-        analysis_text = cache_data.get('analysis', '')
-        import re
-
-        price_patterns = [
-            r'当前价格[：:]\s*\$?([\d.]+)',
-            r'当前价格\$([\d.]+)',
-            r'当前价[：:]\s*\$?([\d.]+)',
-            r'当前价格([\d.]+)',
-        ]
-        suspicious_patterns = [
-            r'EMA\(20\)[=：:]\s*\$?([\d.]+)',
-            r'EMA\(50\)[=：:]\s*\$?([\d.]+)',
-            r'买入价格区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
-            r'买入区间[：:]\s*\$?([\d.]+)\s*[-~到至 ]+\s*\$?([\d.]+)',
-            r'目标价位?[：:]\s*\$?([\d.]+)',
-            r'止损位?[：:]\s*\$?([\d.]+)',
-            r'第一止盈[：:]\s*\$?([\d.]+)',
-        ]
-
-        def _price_deviation_too_large(price_value: float, live_price: float, tolerance: float = 0.2) -> bool:
-            if live_price is None or live_price <= 0 or price_value is None or price_value <= 0:
-                return False
-            lower = live_price * (1 - tolerance)
-            upper = live_price * (1 + tolerance)
-            return price_value < lower or price_value > upper
-
-        for pattern in price_patterns:
-            m = re.search(pattern, analysis_text)
-            if m:
-                cached_price = float(m.group(1))
-                if cached_price < 5:
-                    print(f"⚠️ {symbol} 缓存分析价格异常({cached_price})，判定为脏缓存，跳过")
-                    return None
-                if _price_deviation_too_large(cached_price, current_price):
-                    print(f"⚠️ {symbol} 缓存当前价格与实时价偏离过大(cached={cached_price}, live={current_price})，判定为脏缓存，跳过")
-                    return None
-                break
-
-        for pattern in suspicious_patterns:
-            m = re.search(pattern, analysis_text)
-            if not m:
-                continue
-            prices = [float(g) for g in m.groups() if g is not None]
-            for p in prices:
-                if p < 5:
-                    print(f"⚠️ {symbol} 缓存分析区间/均线价格异常({p})，判定为脏缓存，跳过")
-                    return None
-                if _price_deviation_too_large(p, current_price):
-                    print(f"⚠️ {symbol} 缓存价格字段与实时价偏离过大(cached={p}, live={current_price})，判定为脏缓存，跳过")
-                    return None
-
-        return cache_data
-    
+        return entry
     except Exception as e:
         print(f"⚠️ 加载 {symbol} 分析缓存失败: {e}")
         return None
 
+
 def save_analysis_cache(symbol: str, data_hash: str, analysis_result: str):
-    """保存分析缓存"""
-    try:
-        ensure_cache_dir()
-        cache_data = {
-            'symbol': symbol,
-            'data_hash': data_hash,
-            'analysis': analysis_result,
-            'timestamp': datetime.now().isoformat(),
-            'cache_expire_hours': CACHE_EXPIRE_HOURS
-        }
-        
-        cache_file = get_cache_file_path(symbol)
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            json.dump(cache_data, f, ensure_ascii=False, indent=2)
-    
-    except Exception as e:
-        print(f"⚠️ 保存 {symbol} 分析缓存失败: {e}")
+    """兼容旧 API：以新格式写入 completed（无 refine 信息）。"""
+    market = infer_market_from_symbol(symbol)
+    daily_data, hourly_data = get_stock_data(symbol, 250)
+    cp = 0.0
+    if daily_data is not None and not daily_data.empty:
+        cp = float(_last_row_scalar(_ensure_1d_series(daily_data['Close'])))
+    summary = summarize_full_analysis(analysis_result)
+    entry = _base_ai_result(symbol, market, 'completed', data_hash, cp)
+    entry['full_analysis'] = analysis_result
+    entry['analysis'] = analysis_result
+    entry['summary_analysis'] = summary
+    entry['refined_info'] = empty_refined_info()
+    with _get_symbol_lock(symbol):
+        save_analysis_cache_entry(symbol, entry)
 
 def clean_expired_cache():
     """清理过期的缓存文件"""
@@ -254,12 +640,15 @@ def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, p
     Returns:
         tuple: (日K线数据, 小时级数据)
     """
-    # 获取日K线数据
-    daily_data = yf.download(symbol, period=f"{period_days}d", interval="1d", auto_adjust=True, progress=False)
-    
-    # 获取小时级数据（最近30天）
-    hourly_data = yf.download(symbol, period="30d", interval="1h", auto_adjust=True, progress=False)
-    
+    with _YF_DOWNLOAD_LOCK:
+        daily_raw = yf.download(
+            symbol, period=f"{period_days}d", interval="1d", auto_adjust=True, progress=False
+        )
+        hourly_raw = yf.download(
+            symbol, period="30d", interval="1h", auto_adjust=True, progress=False
+        )
+    daily_data = _normalize_yf_dataframe(daily_raw, symbol)
+    hourly_data = _normalize_yf_dataframe(hourly_raw, symbol)
     return daily_data, hourly_data
 
 
@@ -322,7 +711,12 @@ def call_deepseek_api(prompt: str, market: str = "US") -> str:
         raise ValueError(f"Invalid market: {market}. Must be 'US' or 'HKA'")
 
 
-def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float = None) -> dict:
+def refine_ai_analysis(
+    ai_output: str,
+    market: str = "US",
+    current_price: float = None,
+    symbol: str = "",
+) -> dict:
     """
     将AI分析结果再喂给AI进行提炼，提取关键信息
     
@@ -342,8 +736,14 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
             'refined_text': str              # 提炼后的文本
         }
     """
+    if symbol and not analysis_text_contains_symbol(symbol, ai_output or ''):
+        return {**empty_refined_info(), 'refine_analysis_raw': ''}
+
+    sym_line = f"标的代码: {symbol}\n" if symbol else ""
     # 构建提炼提示词 - 要求AI提取更多字段并使用固定格式
     refine_prompt = f"""
+{sym_line}请只根据下面「报告正文」提炼，所有价格必须与该标的正文一致；不要使用其它股票、示例或模板中的数字。
+
 请从以下股票分析报告中，提炼出最关键的交易信息。如果有多空双方博弈，请你只保留综合裁决的结果。
 
 {ai_output}
@@ -562,9 +962,6 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
         return result
 
     def _is_price_result_valid(result: dict, current_price: float) -> bool:
-        if current_price is None or current_price <= 0:
-            return True
-
         prices_to_check = [
             result.get('min_buy_price'),
             result.get('max_buy_price'),
@@ -574,6 +971,9 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
         prices_to_check = [p for p in prices_to_check if p is not None and p > 0]
         if not prices_to_check:
             return True
+        if current_price is None or current_price <= 0:
+            # 有价位却无现价锚点，视为无效（避免未校验数字直接落库）
+            return False
 
         lower_bound = current_price * 0.8
         upper_bound = current_price * 1.2
@@ -590,8 +990,10 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
 
         max_attempts = 2
         final_result = None
+        last_refined_output = ''
         for attempt in range(max_attempts):
             refined_output = deepseek(refine_prompt, agent_mode=False, enable_debate=False)
+            last_refined_output = refined_output or ''
             result = _extract_structured_fields(refined_output)
 
             extracted_count = sum(1 for v in [result['min_buy_price'], result['max_buy_price'], 
@@ -617,6 +1019,8 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
                 'win_rate': None,
             })
 
+        if final_result is not None:
+            final_result['refine_analysis_raw'] = last_refined_output
         return final_result
         
     except Exception as e:
@@ -628,7 +1032,8 @@ def refine_ai_analysis(ai_output: str, market: str = "US", current_price: float 
             'target_price': None,
             'stop_loss': None,
             'win_rate': None,
-            'refined_text': ''
+            'refined_text': '',
+            'refine_analysis_raw': '',
         }
 
 def safe_get_value(series, default=None):
@@ -644,7 +1049,8 @@ def safe_get_value(series, default=None):
     """
     if series is None or len(series) == 0:
         return default
-    
+
+    series = _ensure_1d_series(series)
     value = series.iloc[-1]
     
     # 确保返回标量值
@@ -674,8 +1080,8 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
         str: 格式化的分析数据
     """
     # 获取当前价格和成交量（确保是标量）
-    current_price = float(daily_data['Close'].iloc[-1].item())
-    current_volume = int(daily_data['Volume'].iloc[-1].item())
+    current_price = float(_last_row_scalar(_ensure_1d_series(daily_data['Close'])))
+    current_volume = int(_last_row_scalar(_ensure_1d_series(daily_data['Volume'])))
     
     # 获取日线指标值（确保都是标量）
     latest_daily = {
@@ -695,7 +1101,7 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
     # 获取小时级数据
     if hourly_data is not None and not hourly_data.empty and hourly_indicators:
         latest_hourly = {
-            'price': float(hourly_data['Close'].iloc[-1].item()),
+            'price': float(_last_row_scalar(_ensure_1d_series(hourly_data['Close']))),
             'rsi_7': safe_get_value(hourly_indicators['rsi_7']),
             'macd': safe_get_value(hourly_indicators['macd']),
             'ema_20': safe_get_value(hourly_indicators['ema_20']),
@@ -709,20 +1115,20 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
         }
     
     # 获取最近的价格序列（确保是列表）
-    recent_prices = daily_data['Close'].iloc[:, 0].tail(24).tolist()
-    recent_volumes = daily_data['Volume'].iloc[:, 0].tail(24).tolist()
+    recent_prices = _ensure_1d_series(daily_data['Close']).tail(24).tolist()
+    recent_volumes = _ensure_1d_series(daily_data['Volume']).tail(24).tolist()
     
     daily_tail_long = 24
     hourly_tail_long = 24
     
     # 获取日线技术指标的24个数据点
-    daily_rsi_7_series = daily_indicators['rsi_7'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_rsi_14_series = daily_indicators['rsi_14'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_macd_dif_series = daily_indicators['macd_dif'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_macd_dea_series = daily_indicators['macd_dea'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_macd_series = daily_indicators['macd'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_ema_20_series = daily_indicators['ema_20'].iloc[:, 0].tail(daily_tail_long).tolist()
-    daily_ema_50_series = daily_indicators['ema_50'].iloc[:, 0].tail(daily_tail_long).tolist()
+    daily_rsi_7_series = _ensure_1d_series(daily_indicators['rsi_7']).tail(daily_tail_long).tolist()
+    daily_rsi_14_series = _ensure_1d_series(daily_indicators['rsi_14']).tail(daily_tail_long).tolist()
+    daily_macd_dif_series = _ensure_1d_series(daily_indicators['macd_dif']).tail(daily_tail_long).tolist()
+    daily_macd_dea_series = _ensure_1d_series(daily_indicators['macd_dea']).tail(daily_tail_long).tolist()
+    daily_macd_series = _ensure_1d_series(daily_indicators['macd']).tail(daily_tail_long).tolist()
+    daily_ema_20_series = _ensure_1d_series(daily_indicators['ema_20']).tail(daily_tail_long).tolist()
+    daily_ema_50_series = _ensure_1d_series(daily_indicators['ema_50']).tail(daily_tail_long).tolist()
     
     # 获取小时级技术指标的24个数据点
     hourly_rsi_7_series = []
@@ -730,9 +1136,9 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
     hourly_ema_20_series = []
     
     if hourly_data is not None and not hourly_data.empty and hourly_indicators:
-        hourly_rsi_7_series = hourly_indicators['rsi_7'].iloc[:, 0].tail(hourly_tail_long).tolist()
-        hourly_macd_series = hourly_indicators['macd'].iloc[:, 0].tail(hourly_tail_long).tolist()
-        hourly_ema_20_series = hourly_indicators['ema_20'].iloc[:, 0].tail(hourly_tail_long).tolist()
+        hourly_rsi_7_series = _ensure_1d_series(hourly_indicators['rsi_7']).tail(hourly_tail_long).tolist()
+        hourly_macd_series = _ensure_1d_series(hourly_indicators['macd']).tail(hourly_tail_long).tolist()
+        hourly_ema_20_series = _ensure_1d_series(hourly_indicators['ema_20']).tail(hourly_tail_long).tolist()
     
     # 格式化数值显示
     def format_value(value, format_str=".2f"):
@@ -747,6 +1153,9 @@ def format_analysis_data(symbol: str, daily_data: pd.DataFrame, hourly_data: pd.
         return [f"{v:{format_str}}" if v is not None and not pd.isna(v) else 'N/A' for v in series]
     
     analysis_text = f"""
+=== 数据绑定标的（模型须与此一致）===
+标的: {symbol} | 日线末收={current_price:.4f} | 末量={current_volume}
+
 股票代码: {symbol}
 当前价格: ${current_price:.2f}
 当前成交量: {current_volume:,}
@@ -823,74 +1232,65 @@ def get_stock_type(symbol: str) -> str:
     else:
         return "美股"
 
-def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = None) -> str:
-    """
-    使用AI分析股票，提供短线分析、建仓建议和买卖点
-    
-    Args:
-        symbol: 股票代码
-        period_days: 分析数据的天数
-        market: 市场类型（"US"或"HKA"），None则自动识别
-        
-    Returns:
-        str: AI分析结果
-    """
-    # 自动识别市场类型
-    if market is None:
-        if symbol.endswith('.HK') or symbol.endswith('.SS') or symbol.endswith('.SZ'):
-            market = "HKA"
-        else:
-            market = "US"
-    
-    # 1. 获取股票数据
-    daily_data, hourly_data = get_stock_data(symbol, period_days)
-    
-    if daily_data is None or daily_data.empty:
-        return f"❌ 无法获取 {symbol} 的股票数据"
-    
-    # print(f"✅ 成功获取 {symbol} 数据: 日线{len(daily_data)}条, 小时线{len(hourly_data) if hourly_data is not None else 0}条")
-    
-    # 2. 计算数据哈希值
-    data_hash = calculate_data_hash(symbol, daily_data, hourly_data)
-    current_price = float(daily_data['Close'].iloc[-1].item()) if not daily_data.empty else None
-    
-    # 3. 检查缓存
-    cache_data = load_analysis_cache(symbol, current_price=current_price)
-    if cache_data and cache_data.get('data_hash') == data_hash:
-        # print(f"🚀 {symbol} 使用缓存结果，跳过AI分析")
-        return cache_data['analysis']
-    
-    # 2. 计算技术指标
-    daily_indicators = calculate_technical_indicators(daily_data)
-    hourly_indicators = calculate_technical_indicators(hourly_data) if hourly_data is not None and not hourly_data.empty else {}
-    
-    # 3. 格式化分析数据
-    analysis_data = format_analysis_data(symbol, daily_data, hourly_data, daily_indicators, hourly_indicators)
-    
-    # 4. 获取当前美股时间信息
-    now_utc = datetime.utcnow()
-    # 转换为美东时间（美股交易时间）- 正确处理夏令时
-    et_tz = pytz.timezone('US/Eastern')
-    now_et = now_utc.replace(tzinfo=pytz.UTC).astimezone(et_tz)
-    
-    time_info = get_time_info(symbol)
-    stock_type = get_stock_type(symbol)
 
-    # 5. 构建AI分析提示词（根据市场类型）
-    if market == "HKA":
-        # 港A股市场的prompt
-        market_instruction = """
+def build_or_load_ai_result(symbol: str, period_days: int = 250, market: str = None) -> Dict[str, Any]:
+    """
+    统一入口：按 symbol 加锁生成/读取三层 AI 结果并写入磁盘缓存。
+    缓存命中条件：validate_cache_for_use（含 data_hash、current_price、非脏、completed）。
+    """
+    if market is None:
+        market = "HKA" if symbol.endswith(('.HK', '.SS', '.SZ')) else "US"
+
+    ctx = get_analysis_context(symbol, period_days)
+    if not ctx:
+        err = _base_ai_result(symbol, market, 'failed', '', 0.0)
+        err['error'] = f'无法获取 {symbol} 的股票数据'
+        return err
+
+    daily_data = ctx['daily_data']
+    hourly_data = ctx['hourly_data']
+    data_hash = ctx['data_hash']
+    current_price = float(ctx['current_price'])
+
+    snap = read_analysis_cache_entry(symbol)
+    if snap and validate_cache_for_use(snap, symbol, data_hash, current_price):
+        return snap
+
+    with _get_symbol_lock(symbol):
+        snap = read_analysis_cache_entry(symbol)
+        if snap and validate_cache_for_use(snap, symbol, data_hash, current_price):
+            return snap
+
+        pending = _base_ai_result(symbol, market, 'pending', data_hash, current_price)
+        save_analysis_cache_entry(symbol, pending)
+
+        try:
+            daily_indicators = calculate_technical_indicators(daily_data)
+            hourly_indicators = (
+                calculate_technical_indicators(hourly_data)
+                if hourly_data is not None and not hourly_data.empty
+                else {}
+            )
+            analysis_data = format_analysis_data(
+                symbol, daily_data, hourly_data, daily_indicators, hourly_indicators
+            )
+            time_info = get_time_info(symbol)
+            stock_type = get_stock_type(symbol)
+
+            if market == "HKA":
+                market_instruction = """
 请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性。
 注意港A股市场特点：交易时间为上午9:30-12:00，下午13:00-16:00（港股），请充分考虑市场时间和流动性特点。
 """
-    else:
-        # 美股市场的prompt
-        market_instruction = """
+            else:
+                market_instruction = """
 请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性，并充分考虑当前时间因素对美股交易的影响。
 接口允许的话，你也可以适当检索一些新闻、政策、事件并分析其对美股交易的影响。
 """
-    
-    prompt = f"""
+
+            prompt = f"""
+【硬性要求】正文中标的代码 {symbol} 须至少出现两次；文中 RSI、MACD、成交量等数值必须与下方「格式化数据」一致，禁止套用其它股票或示例行情。
+
 你是一位专业的股票技术分析师，请基于以下技术指标数据和当前市场时间，对{stock_type} {symbol} 进行深度分析：
 
 {time_info}
@@ -923,14 +1323,75 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
 
 {market_instruction}
 """
-    
-    # 5. 调用DeepSeek API（传入市场类型）
-    ai_checkpoint = call_deepseek_api(prompt, market=market)
+            ai_full = call_deepseek_api(prompt, market=market)
+            if not analysis_text_contains_symbol(symbol, ai_full or ''):
+                skip_refine = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
+                skip_refine['full_analysis'] = ai_full or ''
+                skip_refine['analysis'] = ai_full or ''
+                skip_refine['summary_analysis'] = summarize_full_analysis(ai_full or '')
+                skip_refine['refined_info'] = empty_refined_info()
+                skip_refine['refine_analysis'] = ''
+                skip_refine['error'] = '主分析正文未包含标的代码，已跳过提炼'
+                save_analysis_cache_entry(symbol, skip_refine)
+                return skip_refine
 
-    # 6. 保存缓存
-    save_analysis_cache(symbol, data_hash, ai_checkpoint)
-    
-    return ai_checkpoint
+            summary = summarize_full_analysis(ai_full)
+
+            partial_e = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
+            partial_e['full_analysis'] = ai_full
+            partial_e['analysis'] = ai_full
+            partial_e['summary_analysis'] = summary
+            partial_e['refined_info'] = empty_refined_info()
+            save_analysis_cache_entry(symbol, partial_e)
+
+            try:
+                refined = refine_ai_analysis(
+                    ai_full, market=market, current_price=current_price, symbol=symbol
+                )
+                refine_raw = ''
+                if not isinstance(refined, dict):
+                    refined = empty_refined_info()
+                else:
+                    refine_raw = str(refined.pop('refine_analysis_raw', '') or '')
+                    refined = {**empty_refined_info(), **refined}
+            except Exception as ref_ex:
+                partial_bad = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
+                partial_bad['full_analysis'] = ai_full
+                partial_bad['analysis'] = ai_full
+                partial_bad['summary_analysis'] = summary
+                partial_bad['refined_info'] = empty_refined_info()
+                partial_bad['refine_analysis'] = ''
+                partial_bad['error'] = f'refine_failed: {ref_ex}'
+                save_analysis_cache_entry(symbol, partial_bad)
+                return partial_bad
+
+            done = _base_ai_result(symbol, market, 'completed', data_hash, current_price)
+            done['full_analysis'] = ai_full
+            done['analysis'] = ai_full
+            done['summary_analysis'] = summary
+            done['refined_info'] = refined
+            done['refine_analysis'] = refine_raw
+            save_analysis_cache_entry(symbol, done)
+            return done
+        except Exception as ex:
+            failed = _base_ai_result(symbol, market, 'failed', data_hash, current_price)
+            failed['error'] = str(ex)
+            save_analysis_cache_entry(symbol, failed)
+            return failed
+
+
+def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = None) -> str:
+    """
+    使用AI分析股票；内部走 build_or_load_ai_result，返回全文便于兼容旧调用。
+    """
+    r = build_or_load_ai_result(symbol, period_days=period_days, market=market)
+    text = (r.get('full_analysis') or r.get('analysis') or '').strip()
+    st = r.get('status')
+    if st in ('completed', 'partial') and text:
+        return r.get('full_analysis') or r.get('analysis') or ''
+    if st == 'failed':
+        return f"❌ 无法完成 {symbol} 分析: {r.get('error', 'unknown')}"
+    return text or f"❌ {r.get('error', '分析失败')}"
 
 
 def main(symbol):

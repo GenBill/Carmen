@@ -28,6 +28,7 @@ from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from concurrent.futures import ThreadPoolExecutor
 from async_ai import process_ai_task
+from scan_ai_common import should_submit_scan_ai, skip_gate_log_suffix
 
 import time
 import pytz
@@ -207,33 +208,34 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             else:
                                 confidence = 0.0
                             
-                            # 发送Telegram推送（使用后台线程，不阻塞扫描）
+                            # 后台 AI（与是否配置 Telegram/QQ 解耦；闸门见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
-                            position_build_score = volume_ma_info.get('position_build_score', 0)
-                            has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                            if qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)) and has_recent_golden_cross and position_build_score >= 6:
+                            submit_ai, signal_ok, position_build_score, has_recent_golden_cross = should_submit_scan_ai(
+                                score[0], confidence, volume_ma_info
+                            )
+                            if submit_ai:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
                                 avg_volume = stock_data.get('avg_volume', 1)
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
-                                
+
                                 print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
-                                
-                                # 提交后台任务
+                                if not qq_notifier:
+                                    print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
+
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol, "HKA", qq_notifier,
                                     price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info')
                                 )
-                                
-                                # 将Future保存到stock_data
+
                                 stock_data['_ai_future'] = future
 
-                            elif qq_notifier and (score[0] >= 3.0 or (confidence >= 0.5 and score[0] >= 2.0)):
-                                print(f"⏭️  {symbol} build_strength={build_strength}，不满足“很强(>=6)”或近7日无量能金叉，跳过 Telegram 推送与后台AI分析")
+                            elif signal_ok:
+                                print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross)}")
 
-                            elif qq_notifier and (symbol in watchlist_stocks) and score[1] >= 2.0:
+                            elif (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
                                 pass
                     
@@ -283,8 +285,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         'is_watchlist': False,
                         # 保存Future供后续获取结果
                         '_ai_future': stock_data.get('_ai_future'),
-                        '_ai_analysis': None,
-                        '_refined_info': {}
+                        '_ai_result': None,
                     })
                 
                 flush_output()
@@ -324,17 +325,17 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
             try:
                 future = stock.get('_ai_future')
                 symbol = stock['symbol']
-                # 获取结果（如果未完成会阻塞等待）
-                ai_analysis, refined_info = future.result()
-                
-                # 回填数据
-                stock['_ai_analysis'] = ai_analysis
-                stock['_refined_info'] = refined_info
-                
-                print(f"✅ {symbol} 后台AI分析完成")
+                res = future.result()
+                if isinstance(res, dict) and res.get('symbol') == symbol:
+                    stock['_ai_result'] = res
+                    print(f"✅ {symbol} 后台AI分析完成 (status={res.get('status')})")
+                else:
+                    print(f"⚠️ {symbol} 异步AI结果symbol不匹配，丢弃结果")
+                    stock['_ai_result'] = None
             except Exception as e:
                 print(f"⚠️ 获取 {stock.get('symbol')} AI结果失败: {e}")
-    
+                stock['_ai_result'] = None
+
     # 关闭线程池
     executor.shutdown(wait=True)
     
@@ -352,39 +353,10 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
             ai_analysis_results = []
             
             if buy_signal_stocks:
-                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，准备AI分析结果...")
-                from analysis import analyze_stock_with_ai
-                
-                for stock in buy_signal_stocks:
-                    symbol = stock['symbol']
-                    try:
-                        # 优先复用QQ推送时已保存的原始AI分析结果（避免重复API调用）
-                        # 注意：网页端使用原始分析结果，不使用refine版本
-                        cached_analysis = stock.get('_ai_analysis')
-                        
-                        if cached_analysis:
-                            # 使用缓存的原始分析结果（与QQ推送同源）
-                            analysis_result = cached_analysis
-                            print(f"✅ {symbol} 复用已有AI原始分析结果")
-                        else:
-                            # 没有缓存，需要新调用API
-                            print(f"🆕 {symbol} 无缓存，调用AI分析...")
-                            analysis_result = analyze_stock_with_ai(symbol, market="HKA")
-                        
-                        ai_analysis_results.append({
-                            'symbol': symbol,
-                            'analysis': analysis_result,
-                            'score_buy': stock.get('score_buy', 0),
-                            'price': stock.get('price', 0)
-                        })
-                    except Exception as e:
-                        print(f"⚠️ {symbol} 分析失败: {e}")
-                        ai_analysis_results.append({
-                            'symbol': symbol,
-                            'analysis': f"分析失败: {str(e)}",
-                            'score_buy': stock.get('score_buy', 0),
-                            'price': stock.get('price', 0)
-                        })
+                print(f"\n🔍 发现 {len(buy_signal_stocks)} 只买入信号股票，组装AI展示数据（仅缓存/任务结果）...")
+                from analysis import build_ai_analysis_results_for_html
+
+                ai_analysis_results = build_ai_analysis_results_for_html(buy_signal_stocks)
             
             # 准备报告数据
             report_data = prepare_report_data(
@@ -430,9 +402,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         except Exception as e:
             print(f"⚠️  生成HTML或推送时出错: {e}")
             traceback.print_exc()
-
-    executor.shutdown(wait=False, cancel_futures=True)
-
 
 def flush_output():
     """强制刷新所有输出缓冲区"""
