@@ -184,6 +184,8 @@ class TelegramNotifier:
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
+            current_multiple_vs_ma = volume_ma_info.get('current_multiple_vs_ma') or {}
+            volume_spike_threshold = volume_ma_info.get('volume_spike_threshold', 4.0)
             position_build_score = volume_ma_info.get('position_build_score', 0)
             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
@@ -200,7 +202,16 @@ class TelegramNotifier:
             else:
                 msg_parts.append(f"近{recent_cross_window_days}日量能金叉: 暂无")
 
-            msg_parts.append(f"建仓评分: {position_build_score:.1f}")
+            if current_above_ma:
+                detail = ", ".join(
+                    f"{label}日({current_multiple_vs_ma.get(label, 0):.2f}x)"
+                    for label in current_above_ma
+                )
+                msg_parts.append(f"异常爆量: 现量≥{volume_spike_threshold:.1f}x {detail}")
+            else:
+                msg_parts.append("异常爆量: 暂无")
+
+            msg_parts.append(f"建仓强度: {position_build_score:.1f}")
 
         msg = "\n".join(msg_parts)
         reply_markup = {
