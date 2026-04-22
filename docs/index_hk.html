@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="a7f33ffc4ad9dcc030fa97c8de79bc8d">
+    <meta data-hash="879f4bc47846e897bc5d7e0740cf4f15">
     <title>Carmen Stock Scanner - 港股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -154,13 +154,13 @@
         <!-- AI分析结果部分 -->
         
         
-        <div class="upload-time">📤 上传时间: 2026-04-21 16:22:27</div>
+        <div class="upload-time">📤 上传时间: 2026-04-22 12:13:30</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ 港股市场扫描 | 2026-04-21 16:19:26 CST
-查询 2720 只股票 | RSI8 | MACD(8,17,9) | 港股市场
+        const terminalOutput = `⏰ 港股市场扫描 | 2026-04-22 12:12:52 CST
+查询 2725 只股票 | RSI8 | MACD(8,17,9) | 港股市场
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
@@ -175,10 +175,10 @@
 2635.HK |  $45.50 [92m-33.58%[0m | 量比:[91m[1m   394.4%[0m | RSI:  80.2 [92m↓[0m 33.2 | DIF:[91m  1.35[0m DEA:[91m  2.04[0m 斜率: [92m-1.15[0m | [91mBuy 2.2[0m vs [92mSell 0.0[0m
 9988.HK | $136.50 [92m -1.23%[0m | 量比:[92m    51.3%[0m | RSI:  68.3 [97m→[0m 66.8 | DIF:[91m  2.39[0m DEA:[92m -0.05[0m 斜率: [92m-0.08[0m | [91mBuy 0.0[0m vs [92mSell 2.0[0m (31/49)
 ========================================================================================================================
-⚠️ 本轮查询: 成功 662 | 失败 2058
+⚠️ 本轮查询: 成功 665 | 失败 2060
 🔔 本次扫描发现 2 个信号！
 
-📋 黑名单摘要: 6749 只股票 | 最近7天新增: 7 | 今日已检查: 1 | 平均成交金额: $2,180,314 | 移除阈值: $20,000,000 (2.0x)`;
+📋 黑名单摘要: 6750 只股票 | 最近7天新增: 8 | 今日已检查: 1 | 平均成交金额: $2,180,206 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
     </script>
