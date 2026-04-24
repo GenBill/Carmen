@@ -138,6 +138,8 @@ class TelegramNotifier:
         refined_text: Optional[str] = None,
         bowl_score: Optional[float] = None,
         volume_ma_info: Optional[Dict] = None,
+        turnover_rate: Optional[float] = None,
+        turnover_warning: Optional[str] = None,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         current_time = time.time()
@@ -178,6 +180,10 @@ class TelegramNotifier:
             msg_parts.append(f"RSI: {rsi:.2f}")
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
+        if turnover_rate is not None:
+            msg_parts.append(f"换手率: {turnover_rate:.2f}%")
+        if turnover_warning:
+            msg_parts.append(f"⚠️ 换手率警报: {html.escape(turnover_warning)}")
 
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []

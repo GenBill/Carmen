@@ -29,12 +29,41 @@ from scheduler import MarketScheduler
 from concurrent.futures import ThreadPoolExecutor
 from async_ai import process_ai_task
 from scan_ai_common import should_submit_scan_ai, skip_gate_log_suffix
+from agent.deepseek import fetch_a_share_data
+
+# A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
+A_SHARE_MIN_TURNOVER_PCT = 7.5
 
 import time
+import math
 import pytz
 from datetime import datetime
 import sys
 import traceback
+from typing import Optional
+
+
+def _a_share_turnover_effective(raw) -> Optional[float]:
+    """
+    仅当东财/ak 成功给出有限浮点(0~100)换手率(%) 时用于过滤/拦截；
+    None/NaN/越界/拉取失败 一律视为「未知」，不拦截、不挡打印。
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        import pandas as pd
+        if pd.isna(raw):
+            return None
+    except Exception:
+        pass
+    try:
+        x = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(x) or x < 0.0 or x > 100.0:
+        return None
+    return x
+
 
 def get_stock_list_from_csv(stock_path: str):
     """
@@ -172,6 +201,15 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 if should_filter_stock(symbol, stock_data):
                     failed_count += 1
                     continue
+
+                # 每只股票独立初始化，避免沿用上一只股票的状态
+                turnover_rate = None
+                turnover_warning = None
+                signal_ok = False
+                position_build_score = 0
+                has_recent_golden_cross = False
+                gate_blocked = False
+                ai_launched = False
                 
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
@@ -213,6 +251,29 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             submit_ai, signal_ok, position_build_score, has_recent_golden_cross = should_submit_scan_ai(
                                 score[0], confidence, volume_ma_info
                             )
+                            gate_blocked = signal_ok and not submit_ai
+                            if submit_ai:
+                                a_data: dict = {}
+                                try:
+                                    a_data = fetch_a_share_data(symbol.split('.')[0]) or {}
+                                except Exception as e:
+                                    print(
+                                        f"⚠️  {symbol} 东财/ak 换手率拉取失败（{e}），"
+                                        f"本标的换手不做 {A_SHARE_MIN_TURNOVER_PCT:g}% 拦截，信号照常"
+                                    )
+                                # 只认有效数字；网络/异常=未知 → 不拦截、不跳过后台/打印
+                                turnover_rate = _a_share_turnover_effective(a_data.get("换手率"))
+                                if turnover_rate is None:
+                                    turnover_warning = (
+                                        f'A股换手率未获取到有效值，本次不执行换手率>{A_SHARE_MIN_TURNOVER_PCT:g}% 过滤'
+                                    )
+                                elif turnover_rate <= A_SHARE_MIN_TURNOVER_PCT:
+                                    submit_ai = False
+                                    print(
+                                        f"⏭️  {symbol} A股换手率{turnover_rate:.2f}%，"
+                                        f"未超过{A_SHARE_MIN_TURNOVER_PCT:g}%，跳过买入/后台分析"
+                                    )
+
                             if submit_ai:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
@@ -227,12 +288,14 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol, "HKA", qq_notifier,
-                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info')
+                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info'),
+                                    turnover_rate, turnover_warning
                                 )
 
                                 stock_data['_ai_future'] = future
+                                ai_launched = True
 
-                            elif signal_ok:
+                            elif gate_blocked:
                                 print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross)}")
 
                             elif (symbol in watchlist_stocks) and score[1] >= 2.0:
@@ -243,6 +306,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         print(f"⚠️  处理 {symbol} 回测时出错:")
                         traceback.print_exc()
                 
+                # 不因换手低而跳过终端打印；未知换手一律照常打印
                 # 打印股票信息
                 is_watchlist = symbol in watchlist_stocks
                 print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result, bowl_score=bowl_score)
@@ -250,7 +314,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 if not print_success:
                     failed_count += 1
                 else:
-                    # 统计信号 (无论盘中盘后都统计，以便CLI显示)
+                    # 统计信号 (仅统计实际展示/保留的信号)
                     if score[0] >= 2.0:
                         alert_count += 1
                     
@@ -273,6 +337,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         'price': price,
                         'change_pct': change_pct,
                         'volume_ratio': volume_ratio,
+                        'turnover_rate': turnover_rate,
+                        'turnover_warning': turnover_warning,
                         'rsi_prev': stock_data.get('rsi_prev', 0),
                         'rsi_current': stock_data.get('rsi', 0),
                         'dif': stock_data.get('dif', 0),
@@ -286,6 +352,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         # 保存Future供后续获取结果
                         '_ai_future': stock_data.get('_ai_future'),
                         '_ai_result': None,
+                        '_ai_launched': ai_launched,
                     })
                 
                 flush_output()
@@ -344,11 +411,11 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         try:
             terminal_output = get_output_buffer()
             
-            # 筛选买入评分>=2.0 且 胜率>=0.5 的股票，复用已有的AI分析结果
+            # 只展示本轮实际启动后台AI的买入信号，避免“暂无有效分析”的占位行
             buy_signal_stocks = [
                 stock for stock in stocks_data_for_html 
                 if stock.get('score_buy', 0) >= 2.0 and stock.get('confidence', 0) >= 0.5
-                and stock.get('symbol')
+                and stock.get('symbol') and stock.get('_ai_launched')
             ]
             ai_analysis_results = []
             
@@ -446,9 +513,9 @@ if __name__ == "__main__":
     scheduler = MarketScheduler(
         market='A',
         run_nodes_cfg=[
-            {'hour': 11, 'minute': 00},
-            {'hour': 11, 'minute': 35},
-            {'hour': 14, 'minute': 30},
+            {'hour': 10, 'minute': 10},
+            {'hour': 11, 'minute': 40},
+            {'hour': 14, 'minute': 00},
             {'hour': 15, 'minute': 10}
         ]
     )

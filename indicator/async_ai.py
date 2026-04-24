@@ -12,6 +12,8 @@ def process_ai_task(
     volume_ratio,
     bowl_score=None,
     volume_ma_info=None,
+    turnover_rate=None,
+    turnover_warning=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
@@ -31,8 +33,8 @@ def process_ai_task(
                 'status': 'skipped',
                 'error': 'volume_ma_gate',
                 'full_analysis': '',
-                'analysis': '',
                 'summary_analysis': '',
+                'refine_analysis': '',
                 'refined_info': empty_refined_info(),
             }
 
@@ -45,8 +47,8 @@ def process_ai_task(
                 'status': 'failed',
                 'error': 'symbol_mismatch',
                 'full_analysis': '',
-                'analysis': '',
                 'summary_analysis': '',
+                'refine_analysis': '',
                 'refined_info': empty_refined_info(),
             }
 
@@ -69,9 +71,11 @@ def process_ai_task(
                 target_price=refined_info.get('target_price'),
                 stop_loss=refined_info.get('stop_loss'),
                 ai_win_rate=refined_info.get('win_rate'),
-                refined_text=refined_info.get('refined_text'),
+                refined_text=(result.get('refine_analysis') or '').strip() or None,
                 bowl_score=bowl_score,
                 volume_ma_info=volume_ma_info,
+                turnover_rate=turnover_rate,
+                turnover_warning=turnover_warning,
             )
 
         return result
@@ -88,8 +92,8 @@ def process_ai_task(
                 'status': 'failed',
                 'error': str(e),
                 'full_analysis': '',
-                'analysis': '',
                 'summary_analysis': '',
+                'refine_analysis': '',
                 'refined_info': empty_refined_info(),
             }
         except Exception:

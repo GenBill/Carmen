@@ -20,7 +20,7 @@ from agent.deepseek import DeepSeekAPI
 # 缓存配置
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'analysis_cache')
 CACHE_EXPIRE_HOURS = 24  # 缓存过期时间（小时）
-CACHE_FORMAT_VERSION = 2
+CACHE_FORMAT_VERSION = 3
 
 _symbol_lock_registry: Dict[str, threading.Lock] = {}
 _symbol_lock_registry_guard = threading.Lock()
@@ -51,17 +51,33 @@ def infer_market_from_symbol(symbol: str) -> str:
     return 'US'
 
 
-def summarize_full_analysis(full_text: str, max_chars: int = 800) -> str:
+def compress_summary_with_ai(full_text: str, symbol: str, market: str) -> str:
     """
-    展示用短摘要（确定性截断）。长文必须与 full_analysis 区分，避免 summary/full/analysis 三者同字。
-    后续可换 LLM 摘要，接口不变。
+    由 full_analysis 经模型压缩得到 summary_analysis。
+    禁止在本函数内按字符数截断；失败时返回空字符串。
     """
     if not full_text or not str(full_text).strip():
         return ''
-    t = str(full_text).strip()
-    if len(t) <= max_chars:
-        return t
-    return t[:max_chars].rstrip() + '\n\n…（摘要已截断，完整正文见 full_analysis）'
+    sym_line = f"标的代码: {symbol}\n" if symbol else ""
+    prompt = f"""{sym_line}请将下面「完整技术分析报告」改写为更短的执行摘要，保留：多空/观望结论、关键价位与数字、风险提示。
+要求：
+- 必须通读并概括全文语义，禁止只做首尾截取、复制前若干字或机械截断。
+- 篇幅明显短于原文，可用小标题或列表。
+- 保持与原文一致的标的与数据含义。
+
+——完整报告——
+{full_text}
+"""
+    try:
+        deepseek = DeepSeekAPI(
+            system_prompt="你是摘要助手，只输出压缩后的中文摘要正文，不要客套开场白。",
+            model_type="deepseek-chat",
+        )
+        out = deepseek(prompt, agent_mode=False, enable_debate=False)
+        return (out or "").strip()
+    except Exception as e:
+        print(f"⚠️ AI 压缩摘要失败: {e}")
+        return ""
 
 
 def _price_deviation_too_large(price_value: float, live_price: float, tolerance: float = 0.2) -> bool:
@@ -120,21 +136,16 @@ def _legacy_analysis_text_dirty(analysis_text: str, current_price: Optional[floa
 
 
 def normalize_cache_entry(raw: Dict[str, Any], symbol: str) -> Dict[str, Any]:
-    """Upgrade legacy single-field cache to unified structure."""
+    """Normalize cache entry to current schema (full / summary / refine 三份正文)."""
     if not raw:
         return {}
     out = dict(raw)
+    out.pop('analysis', None)
     out['symbol'] = raw.get('symbol') or symbol
-    fa = (out.get('full_analysis') or out.get('analysis') or '') or ''
+    fa = (out.get('full_analysis') or '') or ''
     out['full_analysis'] = fa
-    out['analysis'] = fa
-    if not out.get('summary_analysis') and fa:
-        out['summary_analysis'] = summarize_full_analysis(fa)
-    elif not out.get('summary_analysis'):
+    if not out.get('summary_analysis'):
         out['summary_analysis'] = ''
-    sa = out.get('summary_analysis') or ''
-    if fa and sa == fa and len(fa) > 800:
-        out['summary_analysis'] = summarize_full_analysis(fa)
     ri = out.get('refined_info')
     if not isinstance(ri, dict):
         out['refined_info'] = empty_refined_info()
@@ -142,20 +153,9 @@ def normalize_cache_entry(raw: Dict[str, Any], symbol: str) -> Dict[str, Any]:
         base = empty_refined_info()
         base.update(ri)
         out['refined_info'] = base
-    ra_disk = out.get('refine_analysis')
-    if ra_disk is None:
-        ra_disk = ''
-    rt = (out['refined_info'].get('refined_text') or '').strip()
-    ra_s = str(ra_disk).strip()
-    if ra_s and not rt:
-        out['refined_info']['refined_text'] = ra_s
-        rt = ra_s
-    if not ra_s and rt:
-        out['refine_analysis'] = rt
-    elif ra_s:
-        out['refine_analysis'] = ra_s
-    else:
-        out['refine_analysis'] = ''
+    ra_s = str(out.get('refine_analysis') or '').strip()
+    out['refine_analysis'] = ra_s
+    out['refined_info']['refined_text'] = ''
     st = out.get('status')
     if not st:
         out['status'] = 'completed' if fa.strip() else 'failed'
@@ -218,7 +218,7 @@ def validate_cache_for_use(
     if cp is not None and cp > 0 and current_price is not None and current_price > 0:
         if _price_deviation_too_large(cp, float(current_price)):
             return False
-    text = (entry.get('full_analysis') or entry.get('analysis') or '')
+    text = (entry.get('full_analysis') or '')
     if _legacy_analysis_text_dirty(text, current_price):
         return False
     cache_time = entry.get('timestamp')
@@ -271,23 +271,22 @@ def save_analysis_cache_entry(symbol: str, entry: Dict[str, Any]) -> None:
         out = dict(entry)
         out['symbol'] = symbol
         out['cache_version'] = CACHE_FORMAT_VERSION
-        fa = out.get('full_analysis') or out.get('analysis') or ''
+        out.pop('analysis', None)
+        fa = out.get('full_analysis') or ''
         out['full_analysis'] = fa
-        out['analysis'] = fa
         if 'refine_analysis' not in out:
             out['refine_analysis'] = ''
         if 'refined_info' not in out or not isinstance(out.get('refined_info'), dict):
             out['refined_info'] = empty_refined_info()
 
         to_save = dict(out)
-        if to_save.get('analysis') == fa:
-            to_save.pop('analysis', None)
+        to_save.pop('analysis', None)
         ri = to_save.get('refined_info') if isinstance(to_save.get('refined_info'), dict) else {}
-        rtext = (ri.get('refined_text') or '').strip()
+        ri_save = dict(ri) if ri else {}
+        ri_save['refined_text'] = ''
+        to_save['refined_info'] = ri_save
         rtop = (to_save.get('refine_analysis') or '').strip()
-        if rtop and rtext and rtop == rtext:
-            to_save.pop('refine_analysis', None)
-        elif not rtop:
+        if not rtop:
             to_save.pop('refine_analysis', None)
 
         cache_file = get_cache_file_path(symbol)
@@ -317,7 +316,6 @@ def _base_ai_result(
         'error': '',
         'timestamp': datetime.now().isoformat(),
         'full_analysis': '',
-        'analysis': '',
         'summary_analysis': '',
         'refine_analysis': '',
         'refined_info': empty_refined_info(),
@@ -507,7 +505,7 @@ def load_analysis_cache(symbol: str, current_price: float = None) -> Optional[Di
                     return None
             except Exception:
                 pass
-        text = entry.get('full_analysis') or entry.get('analysis') or ''
+        text = entry.get('full_analysis') or ''
         if _legacy_analysis_text_dirty(text, current_price):
             return None
         return entry
@@ -516,17 +514,16 @@ def load_analysis_cache(symbol: str, current_price: float = None) -> Optional[Di
         return None
 
 
-def save_analysis_cache(symbol: str, data_hash: str, analysis_result: str):
-    """兼容旧 API：以新格式写入 completed（无 refine 信息）。"""
+def save_analysis_cache(symbol: str, data_hash: str, full_report: str):
+    """写入 completed 缓存：full + AI 摘要；无 refine（refine_analysis 为空）。"""
     market = infer_market_from_symbol(symbol)
     daily_data, hourly_data = get_stock_data(symbol, 250)
     cp = 0.0
     if daily_data is not None and not daily_data.empty:
         cp = float(_last_row_scalar(_ensure_1d_series(daily_data['Close'])))
-    summary = summarize_full_analysis(analysis_result)
+    summary = compress_summary_with_ai(full_report, symbol, market)
     entry = _base_ai_result(symbol, market, 'completed', data_hash, cp)
-    entry['full_analysis'] = analysis_result
-    entry['analysis'] = analysis_result
+    entry['full_analysis'] = full_report
     entry['summary_analysis'] = summary
     entry['refined_info'] = empty_refined_info()
     with _get_symbol_lock(symbol):
@@ -716,7 +713,7 @@ def refine_ai_analysis(
     market: str = "US",
     current_price: float = None,
     symbol: str = "",
-) -> dict:
+) -> Tuple[Dict[str, Any], str]:
     """
     将AI分析结果再喂给AI进行提炼，提取关键信息
     
@@ -726,18 +723,10 @@ def refine_ai_analysis(
         current_price: 当前价格，用于对提炼结果做价格一致性校验
         
     Returns:
-        dict: 包含提炼后的信息，格式为 {
-            'min_buy_price': float or None,  # 最低买入价（买入区间下限）
-            'max_buy_price': float or None,  # 最高买入价（买入区间上限）
-            'buy_time': str or None,         # 买入时间建议
-            'target_price': float or None,   # 目标价/止盈位
-            'stop_loss': float or None,      # 止损位
-            'win_rate': float or None,       # 胜率（0-1之间）
-            'refined_text': str              # 提炼后的文本
-        }
+        (refined_info, refine_analysis): refined_info 仅含解析字段；refine_analysis 为模型输出的结构化正文。
     """
     if symbol and not analysis_text_contains_symbol(symbol, ai_output or ''):
-        return {**empty_refined_info(), 'refine_analysis_raw': ''}
+        return empty_refined_info(), ''
 
     sym_line = f"标的代码: {symbol}\n" if symbol else ""
     # 构建提炼提示词 - 要求AI提取更多字段并使用固定格式
@@ -775,7 +764,7 @@ def refine_ai_analysis(
             'target_price': None,
             'stop_loss': None,
             'win_rate': None,
-            'refined_text': refined_output
+            'refined_text': '',
         }
         
         # ===== 提取买入区间 =====
@@ -1019,22 +1008,15 @@ def refine_ai_analysis(
                 'win_rate': None,
             })
 
-        if final_result is not None:
-            final_result['refine_analysis_raw'] = last_refined_output
-        return final_result
-        
+        if final_result is None:
+            return empty_refined_info(), ''
+        final_result['refined_text'] = ''
+        merged = {**empty_refined_info(), **final_result}
+        return merged, (last_refined_output or '').strip()
+
     except Exception as e:
         print(f"⚠️  AI提炼失败: {e}")
-        return {
-            'min_buy_price': None,
-            'max_buy_price': None,
-            'buy_time': None,
-            'target_price': None,
-            'stop_loss': None,
-            'win_rate': None,
-            'refined_text': '',
-            'refine_analysis_raw': '',
-        }
+        return empty_refined_info(), ''
 
 def safe_get_value(series, default=None):
     """
@@ -1327,37 +1309,29 @@ def build_or_load_ai_result(symbol: str, period_days: int = 250, market: str = N
             if not analysis_text_contains_symbol(symbol, ai_full or ''):
                 skip_refine = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
                 skip_refine['full_analysis'] = ai_full or ''
-                skip_refine['analysis'] = ai_full or ''
-                skip_refine['summary_analysis'] = summarize_full_analysis(ai_full or '')
+                skip_refine['summary_analysis'] = compress_summary_with_ai(ai_full or '', symbol, market)
                 skip_refine['refined_info'] = empty_refined_info()
                 skip_refine['refine_analysis'] = ''
                 skip_refine['error'] = '主分析正文未包含标的代码，已跳过提炼'
                 save_analysis_cache_entry(symbol, skip_refine)
                 return skip_refine
 
-            summary = summarize_full_analysis(ai_full)
+            summary = compress_summary_with_ai(ai_full, symbol, market)
 
             partial_e = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
             partial_e['full_analysis'] = ai_full
-            partial_e['analysis'] = ai_full
             partial_e['summary_analysis'] = summary
             partial_e['refined_info'] = empty_refined_info()
             save_analysis_cache_entry(symbol, partial_e)
 
             try:
-                refined = refine_ai_analysis(
+                refined, refine_raw = refine_ai_analysis(
                     ai_full, market=market, current_price=current_price, symbol=symbol
                 )
-                refine_raw = ''
-                if not isinstance(refined, dict):
-                    refined = empty_refined_info()
-                else:
-                    refine_raw = str(refined.pop('refine_analysis_raw', '') or '')
-                    refined = {**empty_refined_info(), **refined}
+                refined = {**empty_refined_info(), **refined}
             except Exception as ref_ex:
                 partial_bad = _base_ai_result(symbol, market, 'partial', data_hash, current_price)
                 partial_bad['full_analysis'] = ai_full
-                partial_bad['analysis'] = ai_full
                 partial_bad['summary_analysis'] = summary
                 partial_bad['refined_info'] = empty_refined_info()
                 partial_bad['refine_analysis'] = ''
@@ -1367,7 +1341,6 @@ def build_or_load_ai_result(symbol: str, period_days: int = 250, market: str = N
 
             done = _base_ai_result(symbol, market, 'completed', data_hash, current_price)
             done['full_analysis'] = ai_full
-            done['analysis'] = ai_full
             done['summary_analysis'] = summary
             done['refined_info'] = refined
             done['refine_analysis'] = refine_raw
@@ -1385,10 +1358,10 @@ def analyze_stock_with_ai(symbol: str, period_days: int = 250, market: str = Non
     使用AI分析股票；内部走 build_or_load_ai_result，返回全文便于兼容旧调用。
     """
     r = build_or_load_ai_result(symbol, period_days=period_days, market=market)
-    text = (r.get('full_analysis') or r.get('analysis') or '').strip()
+    text = (r.get('full_analysis') or '').strip()
     st = r.get('status')
     if st in ('completed', 'partial') and text:
-        return r.get('full_analysis') or r.get('analysis') or ''
+        return r.get('full_analysis') or ''
     if st == 'failed':
         return f"❌ 无法完成 {symbol} 分析: {r.get('error', 'unknown')}"
     return text or f"❌ {r.get('error', '分析失败')}"

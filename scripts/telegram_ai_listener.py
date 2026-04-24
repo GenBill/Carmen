@@ -122,6 +122,22 @@ def extract_symbol_from_message(text: str) -> Optional[str]:
     return normalize_symbol(match.group(1))
 
 
+def compose_telegram_cached_body(entry: dict) -> str:
+    """
+    把「结构化提炼」（refine_analysis）与「全文」（full_analysis）一并塞进会话；无全文时退回 summary_analysis。
+    """
+    full = (entry.get('full_analysis') or '').strip()
+    refined = (entry.get('refine_analysis') or '').strip()
+    summ = (entry.get('summary_analysis') or '').strip()
+
+    if refined and full:
+        sep = '\n\n' + ('─' * 18) + '\n\n'
+        return f"【总结·提炼】\n{refined}{sep}【完整分析】\n{full}"
+    if full:
+        return full
+    return summ
+
+
 def resolve_cached_ai_text(symbol: str) -> Tuple[Optional[str], str]:
     """
     仅从统一缓存读取；返回 (正文, 说明)。
@@ -140,7 +156,7 @@ def resolve_cached_ai_text(symbol: str) -> Tuple[Optional[str], str]:
         return None, '分析进行中（pending）'
 
     if st == 'partial':
-        body = (entry.get('summary_analysis') or entry.get('full_analysis') or entry.get('analysis') or '').strip()
+        body = compose_telegram_cached_body(entry).strip()
         if body:
             return body, '分析未完成（partial），以下为已生成的摘要/正文'
         return None, '分析未完成（partial）'
@@ -155,7 +171,7 @@ def resolve_cached_ai_text(symbol: str) -> Tuple[Optional[str], str]:
         return None, '暂无 AI 分析缓存'
 
     if st == 'completed':
-        text = (entry.get('summary_analysis') or entry.get('full_analysis') or entry.get('analysis') or '').strip()
+        text = compose_telegram_cached_body(entry).strip()
         if not text:
             return None, 'completed 缓存中文本为空'
 

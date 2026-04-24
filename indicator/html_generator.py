@@ -29,6 +29,8 @@ def calculate_content_hash(data: dict) -> str:
             'price': stock.get('price', 0), 
             'change_pct': stock.get('change_pct', 0), 
             'volume_ratio': stock.get('volume_ratio', 0), 
+            'turnover_rate': stock.get('turnover_rate'),
+            'turnover_warning': stock.get('turnover_warning', ''),
             'rsi_prev': stock.get('rsi_prev', 0), 
             'rsi_current': stock.get('rsi_current', 0), 
             'dif': stock.get('dif', 0), 
@@ -500,7 +502,7 @@ def generate_ai_analysis_html(ai_analysis_results: List[dict]) -> str:
             return '分析结果 symbol 校验失败，已拒绝展示。'
         st = ai_result.get('status') or ''
         if st == 'completed':
-            text = (ai_result.get('summary_analysis') or ai_result.get('full_analysis') or ai_result.get('analysis') or '').strip()
+            text = (ai_result.get('summary_analysis') or ai_result.get('full_analysis') or '').strip()
             return text if text else '（completed 但正文为空）'
         if st == 'partial':
             base = (ai_result.get('summary_analysis') or ai_result.get('full_analysis') or '').strip()
@@ -522,10 +524,7 @@ def generate_ai_analysis_html(ai_analysis_results: List[dict]) -> str:
         score_buy = result.get('score_buy', 0)
         price = result.get('price', 0)
         ai_result = result.get('ai_result')
-        if ai_result is None and result.get('analysis') is not None:
-            legacy = result.get('analysis')
-            display = legacy if isinstance(legacy, str) else str(legacy)
-        elif isinstance(ai_result, dict) and ai_result.get('symbol') != symbol:
+        if isinstance(ai_result, dict) and ai_result.get('symbol') != symbol:
             display = 'AI 结果包 symbol 与行不一致，已拒绝展示。'
         else:
             display = _display_from_ai_result(symbol, ai_result if isinstance(ai_result, dict) else {})
