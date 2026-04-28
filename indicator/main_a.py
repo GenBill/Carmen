@@ -31,9 +31,6 @@ from async_ai import process_ai_task
 from scan_ai_common import should_submit_scan_ai, skip_gate_log_suffix
 from agent.deepseek import fetch_a_share_data
 
-# A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
-A_SHARE_MIN_TURNOVER_PCT = 7.5
-
 import time
 import math
 import pytz
@@ -41,6 +38,20 @@ from datetime import datetime
 import sys
 import traceback
 from typing import Optional
+
+# A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
+# 早盘（北京时间 12:00 前）5%，下午盘 10%
+A_SHARE_MIN_TURNOVER_PCT_AM = 5.0
+A_SHARE_MIN_TURNOVER_PCT_PM = 10.0
+
+
+def _a_share_min_turnover_pct_now() -> float:
+    tz = pytz.timezone("Asia/Shanghai")
+    return (
+        A_SHARE_MIN_TURNOVER_PCT_AM
+        if datetime.now(tz).hour < 12
+        else A_SHARE_MIN_TURNOVER_PCT_PM
+    )
 
 
 def _a_share_turnover_effective(raw) -> Optional[float]:
@@ -253,25 +264,26 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             )
                             gate_blocked = signal_ok and not submit_ai
                             if submit_ai:
+                                min_tp = _a_share_min_turnover_pct_now()
                                 a_data: dict = {}
                                 try:
                                     a_data = fetch_a_share_data(symbol.split('.')[0]) or {}
                                 except Exception as e:
                                     print(
                                         f"⚠️  {symbol} 东财/ak 换手率拉取失败（{e}），"
-                                        f"本标的换手不做 {A_SHARE_MIN_TURNOVER_PCT:g}% 拦截，信号照常"
+                                        f"本标的换手不做 {min_tp:g}% 拦截，信号照常"
                                     )
                                 # 只认有效数字；网络/异常=未知 → 不拦截、不跳过后台/打印
                                 turnover_rate = _a_share_turnover_effective(a_data.get("换手率"))
                                 if turnover_rate is None:
                                     turnover_warning = (
-                                        f'A股换手率未获取到有效值，本次不执行换手率>{A_SHARE_MIN_TURNOVER_PCT:g}% 过滤'
+                                        f'A股换手率未获取到有效值，本次不执行换手率>{min_tp:g}% 过滤'
                                     )
-                                elif turnover_rate <= A_SHARE_MIN_TURNOVER_PCT:
+                                elif turnover_rate <= min_tp:
                                     submit_ai = False
                                     print(
                                         f"⏭️  {symbol} A股换手率{turnover_rate:.2f}%，"
-                                        f"未超过{A_SHARE_MIN_TURNOVER_PCT:g}%，跳过买入/后台分析"
+                                        f"未超过{min_tp:g}%，跳过买入/后台分析"
                                     )
 
                             if submit_ai:
@@ -514,9 +526,10 @@ if __name__ == "__main__":
         market='A',
         run_nodes_cfg=[
             {'hour': 10, 'minute': 10},
-            {'hour': 11, 'minute': 40},
+            {'hour': 11, 'minute': 10},
+            {'hour': 12, 'minute': 30},
             {'hour': 14, 'minute': 00},
-            {'hour': 15, 'minute': 10}
+            {'hour': 15, 'minute': 20}
         ]
     )
 
