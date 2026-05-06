@@ -9,7 +9,7 @@ warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
-from stocks_list.get_all_stock import get_stock_list
+from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
@@ -140,13 +140,18 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
 
     # 批量下载股票数据（多线程加速）
     if not offline_mode:
-        batch_download_stocks(
+        batch_result = batch_download_stocks(
             stock_symbols, 
             use_cache=use_cache, 
             cache_minutes=actual_cache_minutes,
             batch_size=50,
             period="1y"
         )
+        missing_delisted = sorted(set(batch_result.get('missing_delisted', [])))
+        if missing_delisted:
+            added = append_manual_exclude_symbols(missing_delisted)
+            if added:
+                capture_output(f"🚫 已将 {added} 只疑似退市/无历史数据股票加入永久排除列表")
         flush_output()
 
     # 轮询每支股票

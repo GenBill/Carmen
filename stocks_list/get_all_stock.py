@@ -6,6 +6,8 @@ from .get_China_A_stock import get_china_a_stock_list
 from .get_China_HK_stock import get_china_hk_stock_list
 from .update_stock_lists import update_stock_lists_cache
 
+MANUAL_EXCLUDE_FILE = "stocks_list/cache/manual_exclude_symbols.txt"
+
 def check_and_update_cache(files: List[str]):
     """检查缓存文件并自动更新"""
     should_update = False
@@ -35,6 +37,49 @@ def check_and_update_cache(files: List[str]):
             update_stock_lists_cache()
         except Exception as e:
             print(f"❌ 自动更新股票列表失败: {e}")
+
+def load_manual_exclude_symbols() -> Set[str]:
+    """加载永久排除列表"""
+    excluded: Set[str] = set()
+    if not os.path.exists(MANUAL_EXCLUDE_FILE):
+        return excluded
+
+    try:
+        with open(MANUAL_EXCLUDE_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                symbol = line.strip().upper()
+                if symbol and not symbol.startswith('#'):
+                    excluded.add(symbol)
+    except Exception as e:
+        print(f"⚠️  读取永久排除列表失败: {e}")
+    return excluded
+
+
+def append_manual_exclude_symbols(symbols: List[str]) -> int:
+    """追加 symbol 到永久排除列表，返回新增数量"""
+    existing = load_manual_exclude_symbols()
+    new_symbols = sorted({s.strip().upper() for s in symbols if s and s.strip()} - existing)
+    if not new_symbols:
+        return 0
+
+    with open(MANUAL_EXCLUDE_FILE, "a", encoding="utf-8") as f:
+        for symbol in new_symbols:
+            f.write(f"{symbol}\n")
+    return len(new_symbols)
+
+
+def apply_manual_excludes(symbols: List[str]) -> List[str]:
+    """应用永久排除列表过滤"""
+    excluded = load_manual_exclude_symbols()
+    if not excluded:
+        return symbols
+
+    filtered = [s for s in symbols if s.upper() not in excluded]
+    removed = len(symbols) - len(filtered)
+    if removed > 0:
+        print(f"🚫 永久排除列表过滤: {len(symbols)} -> {len(filtered)} (-{removed})")
+    return filtered
+
 
 def get_us_stock_list_from_files() -> List[str]:
     """
@@ -75,7 +120,7 @@ def get_us_stock_list_from_files() -> List[str]:
         except Exception as e:
             print(f"Error reading {file}: {e}")
 
-    return sorted(list(all_tickers))
+    return apply_manual_excludes(sorted(list(all_tickers)))
 
 def get_simple_stock_symbols_from_file(path: str="my_stock_symbols.txt"):
     """从文件读取股票列表并过滤"""
@@ -85,7 +130,7 @@ def get_simple_stock_symbols_from_file(path: str="my_stock_symbols.txt"):
             symbol = line.strip()
             if is_valid_common_stock(symbol):
                 symbols.append(symbol)
-    return symbols
+    return apply_manual_excludes(symbols)
 
 def is_valid_common_stock(symbol: str) -> bool:
     """
@@ -147,13 +192,13 @@ def get_stock_list(path: str = '', mode: str = 'US') -> List[str]:
         return get_us_stock_list_from_files()
     elif mode == 'HK':
         check_and_update_cache(['stocks_list/cache/china_screener_HK.csv'])
-        return get_china_hk_stock_list()
+        return apply_manual_excludes(get_china_hk_stock_list())
     elif mode == 'A':
         check_and_update_cache(['stocks_list/cache/china_screener_A.csv'])
-        return get_china_a_stock_list()
+        return apply_manual_excludes(get_china_a_stock_list())
     elif mode == 'HK+A':
         check_and_update_cache(['stocks_list/cache/china_screener_HK.csv', 'stocks_list/cache/china_screener_A.csv'])
-        return get_china_hk_stock_list() + get_china_a_stock_list()
+        return apply_manual_excludes(get_china_hk_stock_list() + get_china_a_stock_list())
     else:
         raise ValueError(f"Invalid mode: {mode}")
 

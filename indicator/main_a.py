@@ -15,7 +15,7 @@ from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
 from get_stock_price import get_stock_data, batch_download_stocks
-from stocks_list.get_all_stock import get_stock_list
+from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
@@ -177,13 +177,18 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     flush_output()
 
     # 批量下载股票数据（多线程加速）
-    batch_download_stocks(
+    batch_result = batch_download_stocks(
         stock_symbols, 
         use_cache=True, 
-        cache_minutes=20,
+        cache_minutes=5,
         batch_size=50,
         period="1y"
     )
+    missing_delisted = sorted(set(batch_result.get('missing_delisted', [])))
+    if missing_delisted:
+        added = append_manual_exclude_symbols(missing_delisted)
+        if added:
+            capture_output(f"🚫 已将 {added} 只疑似退市/无历史数据股票加入永久排除列表")
     flush_output()
     
     # 扫描股票
@@ -206,7 +211,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 macd_signal=macd_signal,
                 avg_volume_days=avg_volume_days,
                 use_cache=True,
-                cache_minutes=20
+                cache_minutes=5
             )
             
             if stock_data:

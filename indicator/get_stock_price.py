@@ -944,15 +944,21 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
         period: 下载数据的时间周期，默认 "1y"
 
     Returns:
-        None
+        dict: 失败分类结果，包含 missing_delisted / rate_limited / empty_data
     """
+    result = {
+        'missing_delisted': [],
+        'rate_limited': [],
+        'empty_data': []
+    }
+
     if not symbols:
-        return
+        return result
 
     # 过滤掉损坏的股票代码
     valid_symbols = [s for s in symbols if s not in broken_stock_symbols]
     if not valid_symbols:
-        return
+        return result
 
     # 检查缓存，只下载没有有效缓存的股票
     symbols_to_download = []
@@ -966,7 +972,7 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
 
     if not symbols_to_download:
         # print("✅ 所有股票缓存均有效，无需重新下载")
-        return
+        return result
     # if use_cache:
     #     print(f"📂 缓存目录: {CACHE_DIR.resolve()}")
 
@@ -996,6 +1002,7 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
 
             if hist_batch.empty:
                 print(f"⚠️  批量下载返回空数据，批次: {i//batch_size + 1}")
+                result['empty_data'].extend(batch)
                 continue
 
             # 处理返回的数据格式
@@ -1017,9 +1024,13 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
                                     now = datetime.now()
                                     _DATA_CACHE[symbol] = (now, hist)
                                     _save_cache_to_file(symbol, now, hist)
+                            else:
+                                result['empty_data'].append(symbol)
                         except Exception as e:
                             print(f"⚠️  处理 {symbol} 数据时出错: {e}")
                             continue
+                    else:
+                        result['missing_delisted'].append(symbol)
             else:
                 # 单层索引：只有一只股票的情况
                 if len(batch) == 1:
@@ -1032,15 +1043,23 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
                 else:
                     # 多只股票但返回单层索引（异常情况，可能所有股票都下载失败）
                     print(f"⚠️  批量下载返回异常格式，批次大小: {len(batch)}")
+                    result['empty_data'].extend(batch)
 
             # 避免过于频繁的API调用
             if i + batch_size < len(symbols_to_download):
                 time.sleep(0.01)
 
         except Exception as e:
+            err = str(e)
             print(f"⚠️  批量下载失败 (批次 {i//batch_size + 1}): {e}")
+            if 'Too Many Requests' in err or 'Rate limited' in err:
+                result['rate_limited'].extend(batch)
+            elif 'possibly delisted' in err or 'No data found' in err:
+                result['missing_delisted'].extend(batch)
+            else:
+                result['empty_data'].extend(batch)
             continue
-    return
+    return result
 
 
 def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 

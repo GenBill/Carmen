@@ -72,7 +72,7 @@ class VolumeFilter:
         """检查股票是否在黑名单中"""
         return symbol.upper() in self.blacklist
     
-    def add_to_blacklist(self, symbol: str, avg_volume: int, avg_price: float = None):
+    def add_to_blacklist(self, symbol: str, avg_volume: int, avg_price: float = None, reason: str = None):
         """
         将股票添加到黑名单
         
@@ -80,6 +80,7 @@ class VolumeFilter:
             symbol: 股票代码
             avg_volume: 平均成交量（股数）
             avg_price: 平均价格（美元），用于计算成交金额
+            reason: 自定义原因，不传则使用低成交量原因
         """
         symbol = symbol.upper()
         if symbol not in self.blacklist:
@@ -91,6 +92,7 @@ class VolumeFilter:
             
             # 计算成交金额
             volume_usd = avg_volume * avg_price
+            reason_text = reason or f'平均成交量 {avg_volume:,} 股，成交金额约 ${volume_usd:,.0f}'
             
             self.blacklist.add(symbol)
             self.blacklist_metadata[symbol] = {
@@ -99,7 +101,7 @@ class VolumeFilter:
                 'avg_volume': avg_volume,
                 'avg_price': avg_price,
                 'volume_usd': volume_usd,
-                'reason': f'平均成交量 {avg_volume:,} 股，成交金额约 ${volume_usd:,.0f}'
+                'reason': reason_text
             }
             
             # print(f"🚫 已加入黑名单: {symbol} - {self.blacklist_metadata[symbol]['reason']}")
