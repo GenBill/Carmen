@@ -40,18 +40,20 @@ import traceback
 from typing import Optional
 
 # A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
-# 早盘（北京时间 12:00 前）5%，下午盘 10%
+# 北京时间：10:00 前 2%，10:00–12:00 前 5%，下午盘 10%
+A_SHARE_MIN_TURNOVER_PCT_EARLY_AM = 2.0
 A_SHARE_MIN_TURNOVER_PCT_AM = 5.0
 A_SHARE_MIN_TURNOVER_PCT_PM = 10.0
 
 
 def _a_share_min_turnover_pct_now() -> float:
     tz = pytz.timezone("Asia/Shanghai")
-    return (
-        A_SHARE_MIN_TURNOVER_PCT_AM
-        if datetime.now(tz).hour < 12
-        else A_SHARE_MIN_TURNOVER_PCT_PM
-    )
+    h = datetime.now(tz).hour
+    if h < 10:
+        return A_SHARE_MIN_TURNOVER_PCT_EARLY_AM
+    if h < 12:
+        return A_SHARE_MIN_TURNOVER_PCT_AM
+    return A_SHARE_MIN_TURNOVER_PCT_PM
 
 
 def _a_share_turnover_effective(raw) -> Optional[float]:
@@ -525,6 +527,7 @@ if __name__ == "__main__":
     scheduler = MarketScheduler(
         market='A',
         run_nodes_cfg=[
+            {'hour': 9, 'minute': 50},
             {'hour': 10, 'minute': 10},
             {'hour': 11, 'minute': 10},
             {'hour': 12, 'minute': 30},

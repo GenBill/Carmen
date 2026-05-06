@@ -445,7 +445,8 @@ if __name__ == "__main__":
         market='HK',
         run_nodes_cfg=[
             {'hour': 12, 'minute': 10},
-            {'hour': 15, 'minute': 30},
+            {'hour': 14, 'minute': 10},
+            {'hour': 15, 'minute': 10},
             {'hour': 16, 'minute': 10}
         ]
     )

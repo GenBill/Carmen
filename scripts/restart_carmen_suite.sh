@@ -2,31 +2,27 @@
 set -euo pipefail
 
 cd /home/serv/Carmen
-restart_target() {
-  local target="$1"
+
+start_fresh_session() {
+  local session="$1"
   local cmd="$2"
+  local log="$3"
 
-  if ! tmux has-session -t "${target%%:*}" 2>/dev/null; then
-    echo "[ERROR] tmux session not found: ${target%%:*}" >&2
-    return 1
-  fi
-
-  tmux send-keys -t "${target}" C-c
-  sleep 2
-  tmux send-keys -t "${target}" "conda activate Quant && ${cmd}" Enter
+  tmux kill-session -t "$session" 2>/dev/null || true
+  tmux new-session -d -s "$session" "zsh -lc 'source /home/serv/.zshrc && conda activate Quant && cd /home/serv/Carmen && exec ${cmd} 2>&1 | tee -a ${log}'"
 }
 
 check_target() {
   local target="$1"
   echo "===== ${target} ====="
-  tmux capture-pane -pt "${target}" | tail -30
+  tmux capture-pane -pt "$target" | tail -30
   echo
 }
 
-restart_target "0:0" "python indicator/run.py"
-restart_target "1:0" "python indicator/main_a.py"
-restart_target "2:0" "python indicator/main_hk.py"
-restart_target "3:0" "python scripts/telegram_ai_listener.py"
+start_fresh_session "0" "python indicator/run.py" "/home/serv/Carmen/runtime/us_market.log"
+start_fresh_session "1" "python indicator/main_a.py" "/home/serv/Carmen/runtime/a_share_market.log"
+start_fresh_session "2" "python indicator/main_hk.py" "/home/serv/Carmen/runtime/hk_market.log"
+start_fresh_session "3" "python scripts/telegram_ai_listener.py" "/home/serv/Carmen/runtime/telegram_listener.log"
 
 sleep 8
 
