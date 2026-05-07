@@ -7,10 +7,102 @@ import os
 import time
 import html
 import json
-from typing import Optional, Tuple, Dict
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Tuple, Dict, List
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
 _global_push_cache = {}
+
+
+QUEUE_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_pending_queue.json'
+AUDIT_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_signal_audit.jsonl'
+
+
+def format_signal_snapshot(
+    title: str,
+    symbol: str,
+    price: float,
+    score: float,
+    backtest_text: Optional[str] = None,
+    min_buy_price: Optional[float] = None,
+    max_buy_price: Optional[float] = None,
+    buy_time: Optional[str] = None,
+    target_price: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    ai_win_rate: Optional[float] = None,
+    rsi_prev: Optional[float] = None,
+    rsi: Optional[float] = None,
+    dif: Optional[float] = None,
+    dea: Optional[float] = None,
+    dif_dea_slope: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    turnover_rate: Optional[float] = None,
+    recent_crosses: Optional[List[str]] = None,
+    volume_spike_text: Optional[str] = None,
+    position_build_score: Optional[float] = None,
+    now_text: Optional[str] = None,
+) -> str:
+    
+    split_symbol = symbol.split('.')
+    split_symbol_0 = split_symbol[0]
+    split_symbol_1 = f"[{split_symbol[1]}]" if len(split_symbol)==2 else ""
+    parts = [
+        title,
+        f"时间: {now_text or datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"股票: <code>{split_symbol_0}</code>{split_symbol_1}",
+        f"当前价格: {price:.2f}",
+        f"评分: {score:.2f}",
+    ]
+    if backtest_text:
+        parts.append(f"回测胜率: {backtest_text}")
+
+    parts.append("")
+    if min_buy_price is not None and max_buy_price is not None:
+        parts.append(f"买入区间: {min_buy_price:.2f}-{max_buy_price:.2f}")
+    elif max_buy_price is not None:
+        parts.append(f"最高买入价: {max_buy_price:.2f}")
+    elif min_buy_price is not None:
+        parts.append(f"最低买入价: {min_buy_price:.2f}")
+    if buy_time:
+        parts.append(f"买入时间: {buy_time}")
+    if target_price is not None:
+        parts.append(f"目标价位: {target_price:.2f}")
+    if stop_loss is not None:
+        parts.append(f"止损位: {stop_loss:.2f}")
+    if ai_win_rate is not None:
+        parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
+
+    parts.append("")
+    if rsi_prev is not None and rsi is not None:
+        parts.append(f"RSI: {rsi_prev:.2f} -> {rsi:.2f}")
+    elif rsi is not None:
+        parts.append(f"RSI: {rsi:.2f}")
+    if dif is not None and dea is not None and dif_dea_slope is not None:
+        parts.append(f"MACD: DIF {dif:.2f} | DEA {dea:.2f} | 斜率 {dif_dea_slope:.2f}")
+    if volume_ratio is not None:
+        parts.append(f"量比: {volume_ratio:.2f}")
+    if turnover_rate is not None:
+        parts.append(f"换手率: {turnover_rate:.2f}%")
+
+    parts.append("")
+    cross_text = ' / '.join(recent_crosses or []) if recent_crosses else '无'
+    parts.append(f"近7日量能金叉: {cross_text}")
+    parts.append(f"异常爆量: {volume_spike_text or '暂无'}")
+    if position_build_score is not None:
+        parts.append(f"建仓强度: {position_build_score:.1f}")
+    return "\n".join(parts)
+
+
+def append_signal_audit(event: Dict) -> None:
+    try:
+        AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(event)
+        payload.setdefault('ts', datetime.now().isoformat())
+        with open(AUDIT_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"⚠️  写入 Telegram 审计日志失败: {e}")
 
 
 class TelegramNotifier:
@@ -33,6 +125,67 @@ class TelegramNotifier:
         self.initial_wait = 1.0
         self.max_wait = 30
         self.backoff_multiplier = 2
+        QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load_pending_queue(self) -> List[Dict]:
+        if not QUEUE_FILE.exists():
+            return []
+        try:
+            with open(QUEUE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            print(f"⚠️  读取 Telegram 待发送队列失败: {e}")
+            return []
+
+    def _save_pending_queue(self, queue: List[Dict]) -> None:
+        try:
+            with open(QUEUE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(queue, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️  保存 Telegram 待发送队列失败: {e}")
+
+    def _queue_pending_message(self, symbol: str, msg: str, reply_markup: Optional[Dict] = None, signal_id: Optional[str] = None) -> None:
+        queue = self._load_pending_queue()
+        item = {
+            'symbol': symbol,
+            'signal_id': signal_id,
+            'msg': msg,
+            'reply_markup': reply_markup,
+            'created_at': time.time(),
+            'attempts': 0,
+        }
+        queue = [x for x in queue if not ((signal_id and x.get('signal_id') == signal_id) or (x.get('symbol') == symbol and x.get('msg') == msg))]
+        queue.append(item)
+        self._save_pending_queue(queue)
+        append_signal_audit({'event': 'queued', 'symbol': symbol, 'signal_id': signal_id})
+        print(f"📝 {symbol} 已写入 Telegram 待发送队列")
+
+    def flush_pending_queue(self, max_items: int = 20) -> int:
+        queue = self._load_pending_queue()
+        if not queue:
+            return 0
+
+        sent = 0
+        kept = []
+        for idx, item in enumerate(queue):
+            if idx >= max_items:
+                kept.extend(queue[idx:])
+                break
+            symbol = item.get('symbol', 'UNKNOWN')
+            signal_id = item.get('signal_id')
+            ok = self.send_message(item.get('msg', ''), item.get('reply_markup'))
+            if ok:
+                _global_push_cache[symbol] = time.time()
+                sent += 1
+                append_signal_audit({'event': 'replayed_sent', 'symbol': symbol, 'signal_id': signal_id})
+                print(f"✅ {symbol} 待发送 Telegram 已补发成功")
+            else:
+                item['attempts'] = int(item.get('attempts', 0)) + 1
+                append_signal_audit({'event': 'replayed_failed', 'symbol': symbol, 'signal_id': signal_id, 'attempts': item['attempts']})
+                kept.append(item)
+        self._save_pending_queue(kept)
+        return sent
 
     def send_message(self, msg: str, reply_markup: Optional[Dict] = None) -> bool:
         """
@@ -140,51 +293,27 @@ class TelegramNotifier:
         volume_ma_info: Optional[Dict] = None,
         turnover_rate: Optional[float] = None,
         turnover_warning: Optional[str] = None,
+        queue_on_fail: bool = True,
+        signal_id: Optional[str] = None,
+        rsi_prev: Optional[float] = None,
+        dif: Optional[float] = None,
+        dea: Optional[float] = None,
+        dif_dea_slope: Optional[float] = None,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         current_time = time.time()
+        append_signal_audit({'event': 'send_attempt', 'symbol': symbol, 'signal_id': signal_id, 'price': price, 'score': score})
         if symbol in _global_push_cache:
             last_push_time = _global_push_cache[symbol]
             hours_passed = (current_time - last_push_time) / 3600
             if hours_passed < self.cache_hours:
                 print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
+                append_signal_audit({'event': 'deduped', 'symbol': symbol, 'signal_id': signal_id, 'hours_passed': round(hours_passed, 2)})
                 return False
 
-        safe_symbol = html.escape(symbol.replace('.SS', '[SS]').replace('.SZ', '[SZ]').replace('.HK', '[HK]'))
-        pure_symbol = html.escape(symbol.replace('.SS', '').replace('.SZ', '').replace('.HK', ''))
-        msg_parts = [
-            "📈 买入信号提醒",
-            f"股票: {safe_symbol}",
-            f"代码: <code>{pure_symbol}</code>",
-            f"当前价格: {price:.2f}",
-            f"评分: {score:.2f}",
-            f"回测胜率: {backtest_str[1:-1]}",
-        ]
-
-        if min_buy_price is not None and max_buy_price is not None:
-            msg_parts.append(f"买入区间: {min_buy_price:.2f}-{max_buy_price:.2f}")
-        elif max_buy_price is not None:
-            msg_parts.append(f"最高买入价: {max_buy_price:.2f}")
-        elif min_buy_price is not None:
-            msg_parts.append(f"最低买入价: {min_buy_price:.2f}")
-
-        if buy_time is not None:
-            msg_parts.append(f"买入时间: {buy_time}")
-        if target_price is not None:
-            msg_parts.append(f"目标价位: {target_price:.2f}")
-        if stop_loss is not None:
-            msg_parts.append(f"止损位: {stop_loss:.2f}")
-        if ai_win_rate is not None:
-            msg_parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
-        if rsi is not None:
-            msg_parts.append(f"RSI: {rsi:.2f}")
-        if volume_ratio is not None:
-            msg_parts.append(f"量比: {volume_ratio:.1f}%")
-        if turnover_rate is not None:
-            msg_parts.append(f"换手率: {turnover_rate:.2f}%")
-        if turnover_warning:
-            msg_parts.append(f"⚠️ 换手率警报: {html.escape(turnover_warning)}")
-
+        recent_crosses = []
+        volume_spike_text = None
+        position_build_score = None
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
@@ -196,28 +325,42 @@ class TelegramNotifier:
 
             if (not has_recent_golden_cross) or position_build_score < 6:
                 print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<6)，跳过 Telegram 买入推送")
+                append_signal_audit({'event': 'gate_blocked', 'symbol': symbol, 'signal_id': signal_id, 'position_build_score': position_build_score, 'has_recent_golden_cross': has_recent_golden_cross})
                 return False
 
-            if recent_golden_crosses:
-                compact_crosses = []
-                for cross in recent_golden_crosses:
-                    compact_crosses.append(cross.replace('上穿', 'x'))
-                msg_parts.append(f"近{recent_cross_window_days}日量能金叉: {' / '.join(compact_crosses)}")
-            else:
-                msg_parts.append(f"近{recent_cross_window_days}日量能金叉: 暂无")
-
+            recent_crosses = [cross.replace('上穿', 'x') for cross in recent_golden_crosses]
             if current_above_ma:
                 detail = ", ".join(
                     f"{label}日({current_multiple_vs_ma.get(label, 0):.2f}x)"
                     for label in current_above_ma
                 )
-                msg_parts.append(f"异常爆量: 现量≥{volume_spike_threshold:.1f}x {detail}")
+                volume_spike_text = f"现量≥{volume_spike_threshold:.1f}x {detail}"
             else:
-                msg_parts.append("异常爆量: 暂无")
+                volume_spike_text = "暂无"
 
-            msg_parts.append(f"建仓强度: {position_build_score:.1f}")
-
-        msg = "\n".join(msg_parts)
+        msg = format_signal_snapshot(
+            title="📈 买入信号提醒",
+            symbol=symbol,
+            price=price,
+            score=score,
+            backtest_text=backtest_str[1:-1] if backtest_str else None,
+            min_buy_price=min_buy_price,
+            max_buy_price=max_buy_price,
+            buy_time=buy_time,
+            target_price=target_price,
+            stop_loss=stop_loss,
+            ai_win_rate=ai_win_rate,
+            rsi_prev=rsi_prev,
+            rsi=rsi,
+            dif=dif,
+            dea=dea,
+            dif_dea_slope=dif_dea_slope,
+            volume_ratio=(volume_ratio / 100.0) if volume_ratio is not None else None,
+            turnover_rate=turnover_rate,
+            recent_crosses=recent_crosses,
+            volume_spike_text=volume_spike_text,
+            position_build_score=position_build_score,
+        )
         reply_markup = {
             "inline_keyboard": [
                 [{"text": "🤖 AI分析", "callback_data": f"ai_analysis:{symbol}"}],
@@ -228,6 +371,10 @@ class TelegramNotifier:
 
         if success:
             _global_push_cache[symbol] = current_time
+            append_signal_audit({'event': 'sent', 'symbol': symbol, 'signal_id': signal_id})
+        elif queue_on_fail:
+            append_signal_audit({'event': 'send_failed', 'symbol': symbol, 'signal_id': signal_id})
+            self._queue_pending_message(symbol, msg, reply_markup, signal_id=signal_id)
 
         return success
 

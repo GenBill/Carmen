@@ -136,12 +136,17 @@ class QQNotifier:
         
         return success
 
-    def send_buy_signal(self, symbol: str, price: float, score: float, backtest_str: str, 
+    def send_buy_signal(self, symbol: str, price: float, score: float, backtest_str: str,
                        rsi: Optional[float] = None, volume_ratio: Optional[float] = None,
                        min_buy_price: Optional[float] = None, max_buy_price: Optional[float] = None,
                        buy_time: Optional[str] = None, target_price: Optional[float] = None,
                        stop_loss: Optional[float] = None, ai_win_rate: Optional[float] = None,
-                       refined_text: Optional[str] = None) -> bool:
+                       refined_text: Optional[str] = None, bowl_score: Optional[float] = None,
+                       volume_ma_info: Optional[dict] = None, turnover_rate: Optional[float] = None,
+                       turnover_warning: Optional[str] = None, queue_on_fail: bool = True,
+                       signal_id: Optional[str] = None, rsi_prev: Optional[float] = None,
+                       dif: Optional[float] = None, dea: Optional[float] = None,
+                       dif_dea_slope: Optional[float] = None) -> bool:
         """
         发送买入信号通知（带缓存，避免重复推送）
         
@@ -207,8 +212,13 @@ class QQNotifier:
         if ai_win_rate is not None:
             msg_parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
         
-        if rsi is not None:
+        if rsi_prev is not None and rsi is not None:
+            msg_parts.append(f"RSI: {rsi_prev:.2f} -> {rsi:.2f}")
+        elif rsi is not None:
             msg_parts.append(f"RSI: {rsi:.2f}")
+
+        if dif is not None and dea is not None and dif_dea_slope is not None:
+            msg_parts.append(f"MACD: DIF {dif:.2f} | DEA {dea:.2f} | 斜率 {dif_dea_slope:.2f}")
         
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")

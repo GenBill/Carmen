@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 
 import requests
 
@@ -24,16 +24,23 @@ RUNTIME_DIR = os.path.join(CARMEN_ROOT, 'runtime')
 OFFSET_FILE = os.path.join(RUNTIME_DIR, 'telegram_listener.offset')
 TIMEOUT_SECONDS = 15
 POLL_INTERVAL_SECONDS = 1
+QUEUE_RETRY_INTERVAL_SECONDS = 180
+LAST_QUEUE_RETRY_TS = 0.0
+AUDIT_FILE = os.path.join(INDICATOR_DIR, 'runtime', 'telegram_signal_audit.jsonl')
+WATCHLIST_FILE = os.path.join(INDICATOR_DIR, 'daily_watchlist.json')
 
 if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
 
-from telegram_notifier import load_telegram_token  # noqa: E402
+from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot  # noqa: E402
 from analysis import (  # noqa: E402
     get_analysis_context,
     read_analysis_cache_entry,
     validate_cache_for_use,
 )
+from get_stock_price import get_stock_data  # noqa: E402
+from indicators import carmen_indicator, vegas_indicator, silver_indicator, backtest_carmen_indicator  # noqa: E402
+from agent.deepseek import fetch_a_share_data  # noqa: E402
 
 
 def ensure_runtime_dir():
@@ -109,17 +116,157 @@ def answer_callback(bot_token: str, callback_query_id: str, text: str = '已收�
 def register_bot_commands(bot_token: str):
     api_url = f"https://api.telegram.org/bot{bot_token}/setMyCommands"
     commands = [
-        {'command': 'ai_analysis', 'description': '仅读缓存：/ai_analysis 600519SS'}
+        {'command': 'help', 'description': '查看 Carmen Telegram 指令'},
+        {'command': 'ai_analysis', 'description': '仅读缓存：/ai_analysis 600519SS'},
+        {'command': 'score', 'description': '实时评分：/score 002930'},
+        {'command': 'audit', 'description': '审计链：/audit 002930'}
     ]
     response = requests.post(api_url, data={'commands': json.dumps(commands, ensure_ascii=False)}, timeout=15)
     response.raise_for_status()
 
 
-def extract_symbol_from_message(text: str) -> Optional[str]:
-    match = re.match(r'^/ai_analysis(?:@\w+)?\s+(.+?)\s*$', text.strip(), flags=re.IGNORECASE)
+def extract_symbol_from_message(text: str, command: str = 'ai_analysis') -> Optional[str]:
+    match = re.match(rf'^/{command}(?:@\w+)?\s+(.+?)\s*$', text.strip(), flags=re.IGNORECASE)
     if not match:
         return None
     return normalize_symbol(match.group(1))
+
+
+def query_realtime_score(symbol: str) -> str:
+    try:
+        stock_data = get_stock_data(
+            symbol,
+            rsi_period=8,
+            macd_fast=8,
+            macd_slow=17,
+            macd_signal=9,
+            avg_volume_days=8,
+            use_cache=True,
+            cache_minutes=15,
+        )
+    except Exception as e:
+        return f'实时评分失败: {symbol} | {e}'
+
+    if not stock_data:
+        return f'未获取到 {symbol} 行情/指标数据'
+
+    score_carmen = carmen_indicator(stock_data)
+    score_vegas = vegas_indicator(stock_data)
+    score_silver = silver_indicator(stock_data)
+    score_buy = round(score_carmen[0] * score_vegas[0] * score_silver, 2)
+    score_sell = round(score_carmen[1] * score_vegas[1], 2)
+    backtest_result = None
+    try:
+        backtest_result = backtest_carmen_indicator(
+            symbol, [score_buy, score_sell], stock_data,
+            gate=2.0, rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8
+        )
+    except Exception:
+        backtest_result = None
+
+    entry = read_analysis_cache_entry(symbol) or {}
+    refined = entry.get('refined_info') or {}
+    v = stock_data.get('volume_ma_info') or {}
+    recent_crosses = v.get('recent_golden_crosses') or []
+    cross_text = ' / '.join(c.replace('上穿', 'x') for c in recent_crosses) if recent_crosses else '无'
+    volume_ratio = (stock_data.get('estimated_volume', 0) / stock_data.get('avg_volume', 1) * 100) if stock_data.get('avg_volume') else 0
+    turnover_rate = None
+    try:
+        if symbol.endswith('.SZ') or symbol.endswith('.SS'):
+            a_data = fetch_a_share_data(symbol.split('.')[0]) or {}
+            x = a_data.get('换手率')
+            turnover_rate = float(x) if x is not None else None
+    except Exception:
+        turnover_rate = None
+
+    current_above_ma = v.get('current_above_ma') or []
+    current_multiple_vs_ma = v.get('current_multiple_vs_ma') or {}
+    if current_above_ma:
+        detail = ', '.join(f"{label}日({current_multiple_vs_ma.get(label, 0):.2f}x)" for label in current_above_ma)
+        volume_spike_text = f"现量≥{v.get('volume_spike_threshold', 4.0):.1f}x {detail}"
+    else:
+        volume_spike_text = '暂无'
+
+    backtest_text = None
+    if backtest_result and backtest_result.get('buy_prob'):
+        a, b = backtest_result.get('buy_prob')
+        backtest_text = f'{a}/{b}'
+    return format_signal_snapshot(
+        title='📊 实时评分',
+        symbol=symbol,
+        price=float(stock_data.get('close') or 0),
+        score=score_buy,
+        backtest_text=backtest_text,
+        min_buy_price=refined.get('min_buy_price'),
+        max_buy_price=refined.get('max_buy_price'),
+        buy_time=refined.get('buy_time'),
+        target_price=refined.get('target_price'),
+        stop_loss=refined.get('stop_loss'),
+        ai_win_rate=refined.get('win_rate'),
+        rsi_prev=float(stock_data.get('rsi_prev')) if stock_data.get('rsi_prev') is not None else None,
+        rsi=float(stock_data.get('rsi')) if stock_data.get('rsi') is not None else None,
+        dif=float(stock_data.get('dif')) if stock_data.get('dif') is not None else None,
+        dea=float(stock_data.get('dea')) if stock_data.get('dea') is not None else None,
+        dif_dea_slope=float(stock_data.get('dif_dea_slope')) if stock_data.get('dif_dea_slope') is not None else None,
+        volume_ratio=(volume_ratio / 100.0),
+        turnover_rate=turnover_rate,
+        recent_crosses=[c.replace('上穿', 'x') for c in recent_crosses],
+        volume_spike_text=volume_spike_text,
+        position_build_score=v.get('position_build_score', 0),
+        now_text=time.strftime('%Y-%m-%d %H:%M'),
+    )
+
+
+def query_audit_chain(symbol: str) -> str:
+    if not os.path.exists(AUDIT_FILE):
+        return f'未找到审计日志: {symbol}'
+    rows = []
+    try:
+        with open(AUDIT_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line=line.strip()
+                if not line:
+                    continue
+                try:
+                    obj=json.loads(line)
+                except Exception:
+                    continue
+                if normalize_symbol(obj.get('symbol','')) == symbol:
+                    rows.append(obj)
+    except Exception as e:
+        return f'读取审计日志失败: {e}'
+    rows = rows[-20:]
+    if not rows:
+        return f'未找到 {symbol} 审计链'
+    parts=[f'🧾 审计链 {symbol}']
+    for r in rows:
+        parts.append(f"{r.get('ts','')} | {r.get('signal_id','-')} | {r.get('event','-')}")
+    return '\n'.join(parts)
+
+
+def build_help_text() -> str:
+    return (
+        "🤖 Carmen Telegram 指令\n"
+        "/help 查看帮助\n"
+        "/ai_analysis 002930 读取已缓存 AI 分析\n"
+        "/score 002930 实时计算当前评分\n"
+        "/audit 002930 查看最近审计链"
+    )
+
+
+def flush_pending_telegram_queue(bot_token: str, chat_id: str):
+    global LAST_QUEUE_RETRY_TS
+    now = time.time()
+    if now - LAST_QUEUE_RETRY_TS < QUEUE_RETRY_INTERVAL_SECONDS:
+        return
+    LAST_QUEUE_RETRY_TS = now
+    try:
+        notifier = TelegramNotifier(bot_token=bot_token, chat_id=chat_id)
+        replayed = notifier.flush_pending_queue()
+        if replayed > 0:
+            print(f'🔁 listener 补发 Telegram 待发送消息 {replayed} 条')
+    except Exception as e:
+        print(f'⚠️ listener 补发队列失败: {e}')
 
 
 def compose_telegram_cached_body(entry: dict) -> str:
@@ -265,16 +412,30 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
         if chat_id != str(expected_chat_id):
             return
         text = message.get('text', '')
-        symbol = extract_symbol_from_message(text)
-        if not symbol:
+        if re.match(r'^/help(?:@\w+)?\s*$', text.strip(), flags=re.IGNORECASE):
+            send_message(bot_token, chat_id, build_help_text(), reply_to_message_id=message.get('message_id'))
             return
-        send_message(
-            bot_token,
-            chat_id,
-            f"🧠 已收到 /ai_analysis {html.escape(symbol)}（仅读缓存，不现场生成）",
-            reply_to_message_id=message.get('message_id'),
-        )
-        process_symbol(bot_token, chat_id, symbol, reply_to_message_id=message.get('message_id'))
+
+        symbol = extract_symbol_from_message(text, 'ai_analysis')
+        if symbol:
+            send_message(
+                bot_token,
+                chat_id,
+                f"🧠 已收到 /ai_analysis {html.escape(symbol)}（仅读缓存，不现场生成）",
+                reply_to_message_id=message.get('message_id'),
+            )
+            process_symbol(bot_token, chat_id, symbol, reply_to_message_id=message.get('message_id'))
+            return
+
+        symbol = extract_symbol_from_message(text, 'score')
+        if symbol:
+            send_message(bot_token, chat_id, html.escape(query_realtime_score(symbol)), reply_to_message_id=message.get('message_id'))
+            return
+
+        symbol = extract_symbol_from_message(text, 'audit')
+        if symbol:
+            send_message(bot_token, chat_id, html.escape(query_audit_chain(symbol)), reply_to_message_id=message.get('message_id'))
+            return
 
 
 def main():
@@ -297,6 +458,7 @@ def main():
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            flush_pending_telegram_queue(bot_token, chat_id)
             for update in payload.get('result', []):
                 offset = max(offset, update['update_id'] + 1)
                 handle_update(bot_token, chat_id, update)

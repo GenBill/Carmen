@@ -38,6 +38,7 @@ from datetime import datetime
 import sys
 import traceback
 from typing import Optional
+import hashlib
 
 # A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
 # 北京时间：10:00 前 2%，10:00–12:00 前 5%，下午盘 10%
@@ -94,6 +95,20 @@ def get_stock_list_from_csv(stock_path: str):
         
         # 从Symbol列提取股票代码
         if 'Symbol' in df.columns:
+            if 'Name' in df.columns:
+                name_series = (
+                    df['Name']
+                    .fillna('')
+                    .astype(str)
+                    .str.replace(' ', '', regex=False)
+                    .str.replace('\u3000', '', regex=False)
+                    .str.upper()
+                )
+                st_mask = name_series.str.startswith(('ST', '*ST', 'S*ST'))
+                removed = int(st_mask.sum())
+                if removed > 0:
+                    df = df[~st_mask].copy()
+                    print(f"🚫 已过滤 ST 股票 {removed} 只")
             symbols = df['Symbol'].dropna().tolist()
             names = df['Name'].dropna().tolist() if 'Name' in df.columns else []
             return symbols, names
@@ -103,6 +118,14 @@ def get_stock_list_from_csv(stock_path: str):
     except Exception as e:
         print(f"⚠️ 读取股票列表失败: {e}")
         return [], []
+
+def _build_signal_id(symbol: str, stock_data: dict, score_buy: float) -> str:
+    date = stock_data.get('date', 'unknown')
+    close = stock_data.get('close', 0)
+    base = f"{symbol}|{date}|{close:.2f}|{score_buy:.2f}"
+    digest = hashlib.md5(base.encode('utf-8')).hexdigest()[:8]
+    return f"{symbol}|{date}|buy|{digest}"
+
 
 def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv', 
              rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, 
@@ -135,6 +158,12 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     # 初始化消息推送器：优先 Telegram，否则 QQ
     if enable_telegram_notify and telegram_bot_token and telegram_chat_id:
         qq_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
+        try:
+            replayed = qq_notifier.flush_pending_queue()
+            if replayed > 0:
+                print(f"🔁 启动时补发 Telegram 待发送消息 {replayed} 条")
+        except Exception as e:
+            print(f"⚠️  启动补发 Telegram 待发送消息失败: {e}")
     elif enable_qq_notify and qq_key and qq_number:
         qq_notifier = QQNotifier(key=qq_key, qq=qq_number)
     else:
@@ -304,11 +333,13 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 if not qq_notifier:
                                     print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
 
+                                signal_id = _build_signal_id(symbol, stock_data, score[0])
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol, "HKA", qq_notifier,
                                     price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info'),
-                                    turnover_rate, turnover_warning
+                                    turnover_rate, turnover_warning, signal_id,
+                                    stock_data.get('rsi_prev'), stock_data.get('dif'), stock_data.get('dea'), stock_data.get('dif_dea_slope')
                                 )
 
                                 stock_data['_ai_future'] = future

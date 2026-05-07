@@ -233,16 +233,20 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
                                 future = executor.submit(
                                     process_ai_task,
-                                    symbol,
-                                    'US',
-                                    qq_notifier,
-                                    price,
-                                    score[0],
-                                    backtest_str,
-                                    rsi,
-                                    volume_ratio,
-                                    bowl_score,
-                                    stock_data.get('volume_ma_info'),
+                                    symbol=symbol,
+                                    market='US',
+                                    qq_notifier=qq_notifier,
+                                    price=price,
+                                    score=score[0],
+                                    backtest_str=backtest_str,
+                                    rsi=rsi,
+                                    volume_ratio=volume_ratio,
+                                    bowl_score=bowl_score,
+                                    volume_ma_info=stock_data.get('volume_ma_info'),
+                                    rsi_prev=stock_data.get('rsi_prev'),
+                                    dif=stock_data.get('dif'),
+                                    dea=stock_data.get('dea'),
+                                    dif_dea_slope=stock_data.get('dif_dea_slope'),
                                 )
                                 stock_data['_ai_future'] = future
                             elif signal_ok:

@@ -6,6 +6,23 @@ import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
+def exclude_st_stocks(df: pd.DataFrame) -> pd.DataFrame:
+    """过滤掉名称以 ST/*ST/S*ST 开头的股票"""
+    if 'Name' not in df.columns:
+        return df
+
+    name_series = (
+        df['Name']
+        .fillna('')
+        .astype(str)
+        .str.replace(' ', '', regex=False)
+        .str.replace('\u3000', '', regex=False)
+        .str.upper()
+    )
+    st_mask = name_series.str.startswith(('ST', '*ST', 'S*ST'))
+    return df[~st_mask].copy()
+
+
 def process_sh_stock():
     """处理上海证券交易所股票数据"""
     file_path = 'stocks_list/cache/SH_stock_list.csv'
@@ -43,8 +60,7 @@ def process_sh_stock():
     
     # 添加.SS后缀（上海）
     result['Symbol'] = result['Symbol'] + '.SS'
-    
-    return result
+    return exclude_st_stocks(result)
 
 
 def process_sz_stock():
@@ -62,8 +78,7 @@ def process_sz_stock():
     
     # 添加.SZ后缀（深圳）
     result['Symbol'] = result['Symbol'] + '.SZ'
-    
-    return result
+    return exclude_st_stocks(result)
 
 
 def update_a_csv_cache():

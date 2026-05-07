@@ -1,4 +1,5 @@
 import traceback
+from datetime import datetime
 
 
 def process_ai_task(
@@ -14,12 +15,20 @@ def process_ai_task(
     volume_ma_info=None,
     turnover_rate=None,
     turnover_warning=None,
+    signal_id=None,
+    rsi_prev=None,
+    dif=None,
+    dea=None,
+    dif_dea_slope=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
     """
     try:
         from analysis import build_or_load_ai_result, empty_refined_info
+        from telegram_notifier import append_signal_audit
+
+        append_signal_audit({'event':'ai_started','symbol':symbol,'signal_id':signal_id,'market':market})
 
         position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
@@ -27,6 +36,7 @@ def process_ai_task(
             print(
                 f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>=6」或近7日无量能金叉，跳过后台AI分析与通知"
             )
+            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross})
             return {
                 'symbol': symbol,
                 'market': market,
@@ -39,6 +49,7 @@ def process_ai_task(
             }
 
         result = build_or_load_ai_result(symbol, market=market)
+        append_signal_audit({'event':'ai_completed','symbol':symbol,'signal_id':signal_id,'status':result.get('status')})
         if result.get('symbol') != symbol:
             print(f"⚠️ {symbol} AI 结果 symbol 不匹配(result={result.get('symbol')})，丢弃")
             return {
@@ -59,6 +70,7 @@ def process_ai_task(
 
         if qq_notifier and result.get('status') == 'completed':
             qq_notifier.send_buy_signal(
+                signal_id=signal_id,
                 symbol=symbol,
                 price=price,
                 score=score,
@@ -76,11 +88,20 @@ def process_ai_task(
                 volume_ma_info=volume_ma_info,
                 turnover_rate=turnover_rate,
                 turnover_warning=turnover_warning,
+                rsi_prev=rsi_prev,
+                dif=dif,
+                dea=dea,
+                dif_dea_slope=dif_dea_slope,
             )
 
         return result
 
     except Exception as e:
+        try:
+            from telegram_notifier import append_signal_audit
+            append_signal_audit({'event':'ai_failed','symbol':symbol,'signal_id':signal_id,'error':str(e)})
+        except Exception:
+            pass
         print(f"⚠️ {symbol} 后台AI任务失败: {e}")
         traceback.print_exc()
         try:
