@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/zsh
+source /home/serv/.zshrc
 set -eo pipefail
 
 cd /home/serv/Carmen

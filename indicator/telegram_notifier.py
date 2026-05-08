@@ -17,6 +17,18 @@ _global_push_cache = {}
 
 QUEUE_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_pending_queue.json'
 AUDIT_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_signal_audit.jsonl'
+DEFAULT_TELEGRAM_PROXY = os.environ.get('TELEGRAM_PROXY_URL', 'http://127.0.0.1:7890')
+
+
+def build_telegram_request_kwargs(timeout: int = 10) -> Dict:
+    proxy = os.environ.get('TELEGRAM_PROXY_URL', DEFAULT_TELEGRAM_PROXY).strip()
+    kwargs: Dict = {'timeout': timeout}
+    if proxy:
+        kwargs['proxies'] = {
+            'http': proxy,
+            'https': proxy,
+        }
+    return kwargs
 
 
 def format_signal_snapshot(
@@ -42,55 +54,81 @@ def format_signal_snapshot(
     volume_spike_text: Optional[str] = None,
     position_build_score: Optional[float] = None,
     now_text: Optional[str] = None,
+    telegram_html: bool = False,
 ) -> str:
     
     split_symbol = symbol.split('.')
     split_symbol_0 = split_symbol[0]
     split_symbol_1 = f"[{split_symbol[1]}]" if len(split_symbol)==2 else ""
+    sym_display = f"{split_symbol_0}{split_symbol_1}"
+    if telegram_html:
+        stock_line = f"股票: <code>{html.escape(split_symbol_0)}</code>{split_symbol_1}"
+    else:
+        stock_line = f"股票: {sym_display}"
     parts = [
         title,
         f"时间: {now_text or datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"股票: <code>{split_symbol_0}</code>{split_symbol_1}",
+        stock_line,
         f"当前价格: {price:.2f}",
         f"评分: {score:.2f}",
     ]
     if backtest_text:
         parts.append(f"回测胜率: {backtest_text}")
 
-    parts.append("")
+    refined_lines: List[str] = []
     if min_buy_price is not None and max_buy_price is not None:
-        parts.append(f"买入区间: {min_buy_price:.2f}-{max_buy_price:.2f}")
+        refined_lines.append(f"买入区间: {min_buy_price:.2f}-{max_buy_price:.2f}")
     elif max_buy_price is not None:
-        parts.append(f"最高买入价: {max_buy_price:.2f}")
+        refined_lines.append(f"最高买入价: {max_buy_price:.2f}")
     elif min_buy_price is not None:
-        parts.append(f"最低买入价: {min_buy_price:.2f}")
+        refined_lines.append(f"最低买入价: {min_buy_price:.2f}")
     if buy_time:
-        parts.append(f"买入时间: {buy_time}")
+        bt = html.escape(buy_time) if telegram_html else buy_time
+        refined_lines.append(f"买入时间: {bt}")
     if target_price is not None:
-        parts.append(f"目标价位: {target_price:.2f}")
+        refined_lines.append(f"目标价位: {target_price:.2f}")
     if stop_loss is not None:
-        parts.append(f"止损位: {stop_loss:.2f}")
+        refined_lines.append(f"止损位: {stop_loss:.2f}")
     if ai_win_rate is not None:
-        parts.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
+        refined_lines.append(f"AI预估胜率: {ai_win_rate*100:.1f}%")
 
-    parts.append("")
+    tech_lines: List[str] = []
     if rsi_prev is not None and rsi is not None:
-        parts.append(f"RSI: {rsi_prev:.2f} -> {rsi:.2f}")
+        rsi_span = f"{rsi_prev:.2f} -> {rsi:.2f}"
+        if telegram_html:
+            rsi_span = html.escape(rsi_span)
+        tech_lines.append(f"RSI: {rsi_span}")
     elif rsi is not None:
-        parts.append(f"RSI: {rsi:.2f}")
+        tech_lines.append(f"RSI: {rsi:.2f}")
     if dif is not None and dea is not None and dif_dea_slope is not None:
-        parts.append(f"MACD: DIF {dif:.2f} | DEA {dea:.2f} | 斜率 {dif_dea_slope:.2f}")
+        tech_lines.append(f"MACD: DIF {dif:.2f} | DEA {dea:.2f} | 斜率 {dif_dea_slope:.2f}")
     if volume_ratio is not None:
-        parts.append(f"量比: {volume_ratio:.2f}")
+        tech_lines.append(f"量比: {volume_ratio:.2f}")
     if turnover_rate is not None:
-        parts.append(f"换手率: {turnover_rate:.2f}%")
+        tech_lines.append(f"换手率: {turnover_rate:.2f}%")
 
-    parts.append("")
     cross_text = ' / '.join(recent_crosses or []) if recent_crosses else '无'
-    parts.append(f"近7日量能金叉: {cross_text}")
-    parts.append(f"异常爆量: {volume_spike_text or '暂无'}")
+    if telegram_html:
+        cross_text = html.escape(cross_text)
+    vs = volume_spike_text or '暂无'
+    if telegram_html:
+        vs = html.escape(vs)
+    footer_lines = [
+        f"近7日量能金叉: {cross_text}",
+        f"异常爆量: {vs}",
+    ]
     if position_build_score is not None:
-        parts.append(f"建仓强度: {position_build_score:.1f}")
+        footer_lines.append(f"建仓强度: {position_build_score:.1f}")
+
+    if refined_lines:
+        parts.append("")
+        parts.extend(refined_lines)
+    if tech_lines:
+        if refined_lines:
+            parts.append("")
+        parts.extend(tech_lines)
+    parts.append("")
+    parts.extend(footer_lines)
     return "\n".join(parts)
 
 
@@ -119,12 +157,13 @@ class TelegramNotifier:
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self.request_kwargs = build_telegram_request_kwargs(timeout=10)
         self.cache_hours = 2
 
-        self.max_retries = 3
-        self.initial_wait = 1.0
+        self.max_retries = 4
+        self.initial_wait = 2.0
         self.max_wait = 30
-        self.backoff_multiplier = 2
+        self.backoff_multiplier = 4
         QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     def _load_pending_queue(self) -> List[Dict]:
@@ -145,13 +184,21 @@ class TelegramNotifier:
         except Exception as e:
             print(f"⚠️  保存 Telegram 待发送队列失败: {e}")
 
-    def _queue_pending_message(self, symbol: str, msg: str, reply_markup: Optional[Dict] = None, signal_id: Optional[str] = None) -> None:
+    def _queue_pending_message(
+        self,
+        symbol: str,
+        msg: str,
+        reply_markup: Optional[Dict] = None,
+        signal_id: Optional[str] = None,
+        parse_mode: Optional[str] = 'HTML',
+    ) -> None:
         queue = self._load_pending_queue()
         item = {
             'symbol': symbol,
             'signal_id': signal_id,
             'msg': msg,
             'reply_markup': reply_markup,
+            'parse_mode': parse_mode,
             'created_at': time.time(),
             'attempts': 0,
         }
@@ -174,7 +221,15 @@ class TelegramNotifier:
                 break
             symbol = item.get('symbol', 'UNKNOWN')
             signal_id = item.get('signal_id')
-            ok = self.send_message(item.get('msg', ''), item.get('reply_markup'))
+            parse_mode = item.get('parse_mode', 'HTML')
+            if parse_mode is None:
+                ok = self.send_plain_text_message(item.get('msg', ''))
+            else:
+                ok = self.send_message(
+                    item.get('msg', ''),
+                    item.get('reply_markup'),
+                    parse_mode=parse_mode,
+                )
             if ok:
                 _global_push_cache[symbol] = time.time()
                 sent += 1
@@ -187,13 +242,54 @@ class TelegramNotifier:
         self._save_pending_queue(kept)
         return sent
 
-    def send_message(self, msg: str, reply_markup: Optional[Dict] = None) -> bool:
+    def send_plain_text_message(self, msg: str) -> bool:
+        wait_time = self.initial_wait
+        if msg == "":
+            print("⚠️  Telegram 纯文本消息为空，跳过")
+            return False
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                data = {
+                    "chat_id": self.chat_id,
+                    "text": msg,
+                    "disable_web_page_preview": True,
+                }
+                response = requests.post(self.api_url, data=data, **self.request_kwargs)
+                response.raise_for_status()
+
+                if attempt > 0:
+                    print(f"✅ Telegram 纯文本推送成功（第{attempt + 1}次尝试）")
+
+                return True
+            except Exception as e:
+                error_detail = ""
+                if "response" in locals() and hasattr(response, "text"):
+                    error_detail = f" Server response: {response.text}"
+
+                if attempt == self.max_retries:
+                    print(f"⚠️  Telegram 纯文本推送失败（已重试{self.max_retries}次）: {e}{error_detail}")
+                    return False
+
+                print(f"⚠️  Telegram 纯文本推送失败（第{attempt + 1}次尝试）: {e}{error_detail}，{wait_time}秒后重试...")
+                time.sleep(wait_time)
+                wait_time = min(wait_time * self.backoff_multiplier, self.max_wait)
+
+        return False
+
+    def send_message(
+        self,
+        msg: str,
+        reply_markup: Optional[Dict] = None,
+        parse_mode: Optional[str] = 'HTML',
+    ) -> bool:
         """
         发送 Telegram 消息（带指数退避重试机制）
 
         Args:
             msg: 要发送的消息内容
             reply_markup: 可选按钮/键盘配置
+            parse_mode: Telegram parse_mode（默认 HTML）；传入 None 则不发 parse_mode（纯文本）
 
         Returns:
             bool: 是否发送成功
@@ -209,11 +305,12 @@ class TelegramNotifier:
                     "chat_id": self.chat_id,
                     "text": msg,
                     "disable_web_page_preview": True,
-                    "parse_mode": "HTML",
                 }
+                if parse_mode is not None:
+                    data["parse_mode"] = parse_mode
                 if reply_markup:
                     data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-                response = requests.post(self.api_url, data=data, timeout=10)
+                response = requests.post(self.api_url, data=data, **self.request_kwargs)
                 response.raise_for_status()
 
                 if attempt > 0:
@@ -253,10 +350,12 @@ class TelegramNotifier:
                 print(f"⏭️  {symbol} 在 {hours_passed:.1f} 小时前已推送过，跳过")
                 return False
 
-        safe_symbol = html.escape(symbol.replace('.SS', '[SS]').replace('.SZ', '[SZ]').replace('.HK', '[HK]'))
+        split_symbol = symbol.split('.')
+        split_symbol_0 = split_symbol[0]
+        split_symbol_1 = f"[{split_symbol[1]}]" if len(split_symbol) == 2 else ""
         msg_parts = [
             "📉 卖出信号提醒",
-            f"股票: {safe_symbol}",
+            f"股票: <code>{html.escape(split_symbol_0)}</code>{split_symbol_1}",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
             f"回测胜率: {backtest_str[1:-1]}",
@@ -360,6 +459,7 @@ class TelegramNotifier:
             recent_crosses=recent_crosses,
             volume_spike_text=volume_spike_text,
             position_build_score=position_build_score,
+            telegram_html=True,
         )
         reply_markup = {
             "inline_keyboard": [
@@ -374,7 +474,7 @@ class TelegramNotifier:
             append_signal_audit({'event': 'sent', 'symbol': symbol, 'signal_id': signal_id})
         elif queue_on_fail:
             append_signal_audit({'event': 'send_failed', 'symbol': symbol, 'signal_id': signal_id})
-            self._queue_pending_message(symbol, msg, reply_markup, signal_id=signal_id)
+            self._queue_pending_message(symbol, msg, reply_markup, signal_id=signal_id, parse_mode='HTML')
 
         return success
 

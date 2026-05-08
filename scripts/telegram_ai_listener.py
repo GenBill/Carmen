@@ -32,7 +32,7 @@ WATCHLIST_FILE = os.path.join(INDICATOR_DIR, 'daily_watchlist.json')
 if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
 
-from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot  # noqa: E402
+from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot, build_telegram_request_kwargs  # noqa: E402
 from analysis import (  # noqa: E402
     get_analysis_context,
     read_analysis_cache_entry,
@@ -41,6 +41,9 @@ from analysis import (  # noqa: E402
 from get_stock_price import get_stock_data  # noqa: E402
 from indicators import carmen_indicator, vegas_indicator, silver_indicator, backtest_carmen_indicator  # noqa: E402
 from agent.deepseek import fetch_a_share_data  # noqa: E402
+
+TELEGRAM_REQUEST_KWARGS = build_telegram_request_kwargs(timeout=30)
+TELEGRAM_REQUEST_KWARGS_FAST = build_telegram_request_kwargs(timeout=15)
 
 
 def ensure_runtime_dir():
@@ -91,25 +94,32 @@ def normalize_symbol(raw: str) -> str:
     return value
 
 
-def send_message(bot_token: str, chat_id: str, text: str, reply_to_message_id: Optional[int] = None):
+def send_message(
+    bot_token: str,
+    chat_id: str,
+    text: str,
+    reply_to_message_id: Optional[int] = None,
+    parse_mode: Optional[str] = None,
+):
     api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     chunks = [text[i:i + 3800] for i in range(0, len(text), 3800)] or ['']
     for index, chunk in enumerate(chunks):
         data = {
             'chat_id': chat_id,
             'text': chunk,
-            'parse_mode': 'HTML',
             'disable_web_page_preview': True,
         }
+        if parse_mode:
+            data['parse_mode'] = parse_mode
         if reply_to_message_id and index == 0:
             data['reply_parameters'] = json.dumps({'message_id': reply_to_message_id}, ensure_ascii=False)
-        response = requests.post(api_url, data=data, timeout=30)
+        response = requests.post(api_url, data=data, **TELEGRAM_REQUEST_KWARGS)
         response.raise_for_status()
 
 
 def answer_callback(bot_token: str, callback_query_id: str, text: str = '已收到，开始分析…'):
     api_url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
-    response = requests.post(api_url, data={'callback_query_id': callback_query_id, 'text': text}, timeout=15)
+    response = requests.post(api_url, data={'callback_query_id': callback_query_id, 'text': text}, **TELEGRAM_REQUEST_KWARGS_FAST)
     response.raise_for_status()
 
 
@@ -121,7 +131,7 @@ def register_bot_commands(bot_token: str):
         {'command': 'score', 'description': '实时评分：/score 002930'},
         {'command': 'audit', 'description': '审计链：/audit 002930'}
     ]
-    response = requests.post(api_url, data={'commands': json.dumps(commands, ensure_ascii=False)}, timeout=15)
+    response = requests.post(api_url, data={'commands': json.dumps(commands, ensure_ascii=False)}, **TELEGRAM_REQUEST_KWARGS_FAST)
     response.raise_for_status()
 
 
@@ -132,7 +142,7 @@ def extract_symbol_from_message(text: str, command: str = 'ai_analysis') -> Opti
     return normalize_symbol(match.group(1))
 
 
-def query_realtime_score(symbol: str) -> str:
+def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     try:
         stock_data = get_stock_data(
             symbol,
@@ -145,10 +155,10 @@ def query_realtime_score(symbol: str) -> str:
             cache_minutes=15,
         )
     except Exception as e:
-        return f'实时评分失败: {symbol} | {e}'
+        return f'实时评分失败: {symbol} | {e}', None
 
     if not stock_data:
-        return f'未获取到 {symbol} 行情/指标数据'
+        return f'未获取到 {symbol} 行情/指标数据', None
 
     score_carmen = carmen_indicator(stock_data)
     score_vegas = vegas_indicator(stock_data)
@@ -191,29 +201,33 @@ def query_realtime_score(symbol: str) -> str:
     if backtest_result and backtest_result.get('buy_prob'):
         a, b = backtest_result.get('buy_prob')
         backtest_text = f'{a}/{b}'
-    return format_signal_snapshot(
-        title='📊 实时评分',
-        symbol=symbol,
-        price=float(stock_data.get('close') or 0),
-        score=score_buy,
-        backtest_text=backtest_text,
-        min_buy_price=refined.get('min_buy_price'),
-        max_buy_price=refined.get('max_buy_price'),
-        buy_time=refined.get('buy_time'),
-        target_price=refined.get('target_price'),
-        stop_loss=refined.get('stop_loss'),
-        ai_win_rate=refined.get('win_rate'),
-        rsi_prev=float(stock_data.get('rsi_prev')) if stock_data.get('rsi_prev') is not None else None,
-        rsi=float(stock_data.get('rsi')) if stock_data.get('rsi') is not None else None,
-        dif=float(stock_data.get('dif')) if stock_data.get('dif') is not None else None,
-        dea=float(stock_data.get('dea')) if stock_data.get('dea') is not None else None,
-        dif_dea_slope=float(stock_data.get('dif_dea_slope')) if stock_data.get('dif_dea_slope') is not None else None,
-        volume_ratio=(volume_ratio / 100.0),
-        turnover_rate=turnover_rate,
-        recent_crosses=[c.replace('上穿', 'x') for c in recent_crosses],
-        volume_spike_text=volume_spike_text,
-        position_build_score=v.get('position_build_score', 0),
-        now_text=time.strftime('%Y-%m-%d %H:%M'),
+    return (
+        format_signal_snapshot(
+            title='📊 实时评分',
+            symbol=symbol,
+            price=float(stock_data.get('close') or 0),
+            score=score_buy,
+            backtest_text=backtest_text,
+            min_buy_price=refined.get('min_buy_price'),
+            max_buy_price=refined.get('max_buy_price'),
+            buy_time=refined.get('buy_time'),
+            target_price=refined.get('target_price'),
+            stop_loss=refined.get('stop_loss'),
+            ai_win_rate=refined.get('win_rate'),
+            rsi_prev=float(stock_data.get('rsi_prev')) if stock_data.get('rsi_prev') is not None else None,
+            rsi=float(stock_data.get('rsi')) if stock_data.get('rsi') is not None else None,
+            dif=float(stock_data.get('dif')) if stock_data.get('dif') is not None else None,
+            dea=float(stock_data.get('dea')) if stock_data.get('dea') is not None else None,
+            dif_dea_slope=float(stock_data.get('dif_dea_slope')) if stock_data.get('dif_dea_slope') is not None else None,
+            volume_ratio=(volume_ratio / 100.0),
+            turnover_rate=turnover_rate,
+            recent_crosses=[c.replace('上穿', 'x') for c in recent_crosses],
+            volume_spike_text=volume_spike_text,
+            position_build_score=v.get('position_build_score', 0),
+            now_text=time.strftime('%Y-%m-%d %H:%M'),
+            telegram_html=True,
+        ),
+        'HTML',
     )
 
 
@@ -429,7 +443,14 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
 
         symbol = extract_symbol_from_message(text, 'score')
         if symbol:
-            send_message(bot_token, chat_id, html.escape(query_realtime_score(symbol)), reply_to_message_id=message.get('message_id'))
+            score_body, score_mode = query_realtime_score(symbol)
+            send_message(
+                bot_token,
+                chat_id,
+                score_body,
+                reply_to_message_id=message.get('message_id'),
+                parse_mode=score_mode,
+            )
             return
 
         symbol = extract_symbol_from_message(text, 'audit')

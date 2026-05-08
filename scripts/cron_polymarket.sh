@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/zsh
+source /home/serv/.zshrc
 set -eo pipefail
 
 cd /home/serv/Carmen
@@ -7,7 +8,7 @@ PYTHON_BIN="/home/serv/miniforge3/envs/Quant/bin/python3"
 SCRIPT_PATH="/home/serv/Carmen/scripts/polymarket_monitor.py"
 LOG_FILE="/home/serv/Carmen/scripts/polymarket_cron.log"
 INFO_BOT_TOKEN_FILE="/home/serv/.openclaw/secrets/telegram_daily_news.token"
-MAX_RETRIES=3
+MAX_RETRIES=4
 RETRY_SLEEP=1800
 
 send_report() {
@@ -25,6 +26,10 @@ import requests
 bot_token = os.environ['BOT_TOKEN']
 chat_id = os.environ['CHAT_ID']
 text_report = os.environ['TEXT_REPORT']
+proxy = os.environ.get('TELEGRAM_PROXY_URL', 'http://127.0.0.1:7890')
+request_kwargs = {'timeout': 20}
+if proxy:
+    request_kwargs['proxies'] = {'http': proxy, 'https': proxy}
 resp = requests.post(
     f"https://api.telegram.org/bot{bot_token}/sendMessage",
     data={
@@ -32,7 +37,7 @@ resp = requests.post(
         "text": text_report,
         "disable_web_page_preview": True,
     },
-    timeout=20,
+    **request_kwargs,
 )
 print(resp.text)
 resp.raise_for_status()

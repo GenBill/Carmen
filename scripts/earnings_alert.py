@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 import os
 import sys
+import html
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 
 import requests
+
+REPORTER_PATH = '/home/serv/.openclaw/workspace/scripts/reporter.py'
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 INDICATOR_DIR = os.path.join(BASE_DIR, 'indicator')
 if INDICATOR_DIR not in sys.path:
     sys.path.append(INDICATOR_DIR)
 
-from telegram_notifier import TelegramNotifier, load_telegram_token  # noqa: E402
+from telegram_notifier import TelegramNotifier, load_telegram_token, build_telegram_request_kwargs  # noqa: E402
 
 WATCHLIST_PATH = os.path.join(BASE_DIR, 'my_stock_symbols.txt')
 INFO_BOT_TOKEN_PATH = '/home/serv/.openclaw/secrets/telegram_daily_news.token'
@@ -26,6 +30,8 @@ REQUEST_HEADERS = {
     'Origin': 'https://www.nasdaq.com',
     'Referer': 'https://www.nasdaq.com/',
 }
+
+TELEGRAM_REQUEST_KWARGS = build_telegram_request_kwargs(timeout=10)
 
 
 def log(msg: str) -> None:
@@ -87,9 +93,9 @@ def build_alert_message(matches: List[Dict]) -> str:
     lines = [header]
     for item in matches:
         lines.append(
-            f"\n🔔 {item['symbol']} - {item['name']}"
+            f"\n🔔 {html.escape(item['symbol'])} - {html.escape(item['name'])}"
             f"\n• 财报日期: {item['report_date']}"
-            f"\n• 披露时段: {item['time_label']}"
+            f"\n• 披露时段: {html.escape(item['time_label'])}"
             f"\n• 距今天数: {item['days_until']} 天"
         )
     lines.append('\n⚠️ 注意：这是财报事件预警，不是买入信号。')
@@ -142,14 +148,57 @@ def main() -> int:
 
     bot_token, chat_id = load_telegram_token(INFO_BOT_TOKEN_PATH)
     notifier = TelegramNotifier(bot_token=bot_token, chat_id=chat_id)
+
     message = build_alert_message(matches)
 
-    if notifier.send_message(message):
-        log(f'sent {len(matches)} earnings alerts')
-        return 0
-
-    log('telegram send failed')
-    return 2
+    retry_schedule = [60, 300, 600]
+    attempt = 0
+    fault_lens_sent = False
+    while True:
+        attempt += 1
+        try:
+            response = requests.post(
+                notifier.api_url,
+                data={
+                    'chat_id': notifier.chat_id,
+                    'text': message,
+                    'disable_web_page_preview': True,
+                },
+                **TELEGRAM_REQUEST_KWARGS,
+            )
+            response.raise_for_status()
+            if attempt > 1:
+                log(f'plain text telegram push finally succeeded on attempt {attempt}')
+            log(f'sent {len(matches)} earnings alerts')
+            return 0
+        except Exception as e:
+            error_detail = ''
+            if 'response' in locals() and hasattr(response, 'text'):
+                error_detail = f' Server response: {response.text}'
+            if attempt > 3 and not fault_lens_sent:
+                fault_msg = (
+                    f'earnings_alert.py telegram send failed >3 times; manual intervention needed. '
+                    f'attempt={attempt}; matches={len(matches)}; error={str(e)}{error_detail}'
+                )
+                try:
+                    import subprocess
+                    subprocess.run(
+                        [
+                            '/usr/bin/python3', REPORTER_PATH,
+                            '--type', 'network_error',
+                            '--source', 'earnings_alert.py',
+                            '--message', fault_msg,
+                        ],
+                        check=False,
+                        timeout=30,
+                    )
+                    fault_lens_sent = True
+                    log('fault lens warning sent after >3 failed attempts')
+                except Exception as report_err:
+                    log(f'fault lens warning failed: {report_err}')
+            wait_time = retry_schedule[min(attempt - 1, len(retry_schedule) - 1)]
+            log(f'plain text telegram push failed on attempt {attempt}: {e}{error_detail}, retry in {wait_time}s')
+            time.sleep(wait_time)
 
 
 if __name__ == '__main__':
