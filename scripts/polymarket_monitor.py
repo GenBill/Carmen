@@ -2,9 +2,15 @@ import requests
 import json
 from datetime import datetime
 import math
+import os
 import sys
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from agent.deepseek import DeepSeekAPI
+
 EVENTS_URL = "https://gamma-api.polymarket.com/events?active=true&closed=false&limit=100"
+TOP_N = 5
+MAX_REMAINING_DAYS = 30
 
 BLACKLIST_TAG_SLUGS = {
     'weather', 'sports', 'nba', 'nfl', 'mlb', 'nhl', 'soccer', 'football',
@@ -67,7 +73,7 @@ def build_report(events):
                 remaining_days = (end_date - now).days + (end_date - now).seconds / 86400.0
             except Exception:
                 continue
-            if remaining_days <= 0:
+            if remaining_days <= 0 or remaining_days > MAX_REMAINING_DAYS:
                 continue
 
             volume = float(m.get('volume', 0))
@@ -87,6 +93,46 @@ def build_report(events):
     return processed_markets
 
 
+def render_report(processed_markets):
+    lines = [
+        "📊 Polymarket 趋势监控",
+        "策略：热门度排序（总资金 / 剩余天数）",
+        f"筛选条件：Top{TOP_N}，剩余天数<{MAX_REMAINING_DAYS}",
+    ]
+    for m in processed_markets[:TOP_N]:
+        lines.append(f"\n🔹 {m['question']}")
+        lines.append(f"  • 胜率: {m['prob']*100:.1f}% (Yes)")
+        lines.append(f"  • 相对热度: ${m['relative_volume']/1000:.1f}k/day (剩余 {math.ceil(m['days_left'])} 天)")
+    return "\n".join(lines)
+
+
+def translate_report_with_deepseek(report_text):
+    prompt = f"""
+请将下面的 Polymarket 趋势监控报告翻译成中文后直接输出。
+要求：
+- 保留 emoji、百分比、Top 数量、剩余天数等数字。
+- 美元金额和单位必须原样保留，不要换算或本地化；例如 `$12.3k/day` 必须仍输出 `$12.3k/day`。
+- 市场问题标题要译成自然、准确的中文，但专名处理遵循下面规则。
+- 人名、机构名、公司/品牌名默认保留英文原文，不要音译成中文。
+- 只保留专名英文，其他语义必须翻译成中文。
+- 国家、地区、职位、事件类型等普通语义可以翻译成中文。
+- 不要添加解释、免责声明或额外分析。
+
+原文：
+{report_text}
+"""
+    deepseek = DeepSeekAPI(
+        token_path="/home/serv/Carmen/agent/deepseek.token",
+        system_prompt="你是专业金融市场翻译助手，只输出中文译文正文。",
+        model_type="deepseek-chat",
+    )
+    translated = deepseek(prompt, agent_mode=False, enable_debate=False)
+    translated = (translated or "").strip()
+    if not translated:
+        raise RuntimeError("DeepSeek translation returned empty output")
+    return translated
+
+
 if __name__ == "__main__":
     try:
         events = get_popular_events()
@@ -96,12 +142,8 @@ if __name__ == "__main__":
             print("No qualified Polymarket markets after filtering.", file=sys.stderr)
             sys.exit(2)
 
-        print("📊 Polymarket 趋势监控（工业蓝）")
-        print("策略：热门度排序（总资金 / 剩余天数）")
-        for m in processed_markets[:10]:
-            print(f"\n🔹 {m['question']}")
-            print(f"  • 胜率: {m['prob']*100:.1f}% (Yes)")
-            print(f"  • 相对热度: ${m['relative_volume']/1000:.1f}k/day (剩余 {math.ceil(m['days_left'])} 天)")
+        report = render_report(processed_markets)
+        print(translate_report_with_deepseek(report))
     except Exception as e:
         print(f"Monitor error: {e}", file=sys.stderr)
         sys.exit(1)

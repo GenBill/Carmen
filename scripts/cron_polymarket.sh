@@ -51,15 +51,29 @@ PY
   success=0
 
   while [ "$attempt" -le "$MAX_RETRIES" ]; do
-    if RAW_OUTPUT=$($PYTHON_BIN "$SCRIPT_PATH" 2>&1); then
+    STDERR_FILE=$(mktemp /tmp/polymarket_monitor_stderr.XXXXXX)
+    if RAW_OUTPUT=$($PYTHON_BIN "$SCRIPT_PATH" 2>"$STDERR_FILE"); then
+      if [ -s "$STDERR_FILE" ]; then
+        echo "Monitor stderr (not sent):"
+        cat "$STDERR_FILE"
+      fi
+      rm -f "$STDERR_FILE"
       send_report "$RAW_OUTPUT"
       echo
       success=1
       break
     fi
 
+    STDERR_OUTPUT=$(cat "$STDERR_FILE" 2>/dev/null || true)
+    rm -f "$STDERR_FILE"
     attempt=$((attempt + 1))
-    echo "Attempt ${attempt}/$((MAX_RETRIES + 1)) failed: $RAW_OUTPUT"
+    echo "Attempt ${attempt}/$((MAX_RETRIES + 1)) failed."
+    if [ -n "$RAW_OUTPUT" ]; then
+      echo "stdout: $RAW_OUTPUT"
+    fi
+    if [ -n "$STDERR_OUTPUT" ]; then
+      echo "stderr: $STDERR_OUTPUT"
+    fi
 
     if [ "$attempt" -gt "$MAX_RETRIES" ]; then
       break
