@@ -1,6 +1,8 @@
 import traceback
 from datetime import datetime
 
+from scan_ai_common import MIN_POSITION_BUILD_SCORE, OPEN_DROP_FILTER_PCT, is_buy_blocked_by_open_gap
+
 
 def process_ai_task(
     symbol,
@@ -20,9 +22,13 @@ def process_ai_task(
     dif=None,
     dea=None,
     dif_dea_slope=None,
+    open_for_gap_filter=None,
+    opening_uncertain=False,
+    stock_cn_name=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
+    开盘价跌幅闸门在所有量能闸门之后执行；open_for_gap_filter 由 scan_ai_common 解析（含 A 股 akshare 核对）。
     """
     try:
         from analysis import build_or_load_ai_result, empty_refined_info
@@ -32,9 +38,11 @@ def process_ai_task(
 
         position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
-        if volume_ma_info and (not has_recent_golden_cross or position_build_score < 6):
+        if volume_ma_info and (
+            not has_recent_golden_cross or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE
+        ):
             print(
-                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>=6」或近7日无量能金叉，跳过后台AI分析与通知"
+                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」或近7日无量能金叉，跳过后台AI分析与通知"
             )
             append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross})
             return {
@@ -42,6 +50,22 @@ def process_ai_task(
                 'market': market,
                 'status': 'skipped',
                 'error': 'volume_ma_gate',
+                'full_analysis': '',
+                'summary_analysis': '',
+                'refine_analysis': '',
+                'refined_info': empty_refined_info(),
+            }
+
+        if is_buy_blocked_by_open_gap(price, open_for_gap_filter):
+            print(
+                f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过后台AI分析与通知"
+            )
+            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'reason':'open_gap'})
+            return {
+                'symbol': symbol,
+                'market': market,
+                'status': 'skipped',
+                'error': 'open_gap_filter',
                 'full_analysis': '',
                 'summary_analysis': '',
                 'refine_analysis': '',
@@ -92,6 +116,8 @@ def process_ai_task(
                 dif=dif,
                 dea=dea,
                 dif_dea_slope=dif_dea_slope,
+                stock_cn_name=stock_cn_name,
+                opening_uncertain=opening_uncertain,
             )
 
         return result

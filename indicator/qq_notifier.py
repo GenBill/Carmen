@@ -146,7 +146,9 @@ class QQNotifier:
                        turnover_warning: Optional[str] = None, queue_on_fail: bool = True,
                        signal_id: Optional[str] = None, rsi_prev: Optional[float] = None,
                        dif: Optional[float] = None, dea: Optional[float] = None,
-                       dif_dea_slope: Optional[float] = None) -> bool:
+                       dif_dea_slope: Optional[float] = None,
+                       stock_cn_name: Optional[str] = None,
+                       opening_uncertain: bool = False) -> bool:
         """
         发送买入信号通知（带缓存，避免重复推送）
         

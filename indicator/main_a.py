@@ -28,7 +28,14 @@ from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from concurrent.futures import ThreadPoolExecutor
 from async_ai import process_ai_task
-from scan_ai_common import should_submit_scan_ai, skip_gate_log_suffix
+from scan_ai_common import (
+    OPEN_DROP_FILTER_PCT,
+    MIN_POSITION_BUILD_SCORE,
+    is_buy_blocked_by_open_gap,
+    resolve_opening_price_context_for_filter,
+    should_submit_scan_ai,
+    skip_gate_log_suffix,
+)
 from agent.deepseek import fetch_a_share_data
 
 import time
@@ -87,7 +94,7 @@ def get_stock_list_from_csv(stock_path: str):
         stock_path: 股票列表CSV文件路径
         
     Returns:
-        list: 股票代码列表
+        tuple: (股票代码列表, symbol -> 中文名称)
     """
     try:
         import pandas as pd
@@ -109,15 +116,24 @@ def get_stock_list_from_csv(stock_path: str):
                 if removed > 0:
                     df = df[~st_mask].copy()
                     print(f"🚫 已过滤 ST 股票 {removed} 只")
-            symbols = df['Symbol'].dropna().tolist()
-            names = df['Name'].dropna().tolist() if 'Name' in df.columns else []
-            return symbols, names
+            symbol_to_name = {}
+            if 'Name' in df.columns:
+                for _, row in df.iterrows():
+                    sym = row['Symbol']
+                    if pd.isna(sym):
+                        continue
+                    sk = str(sym).strip()
+                    nv = row['Name']
+                    if pd.notna(nv) and str(nv).strip():
+                        symbol_to_name[sk] = str(nv).strip()
+            symbols = [str(x).strip() for x in df['Symbol'].dropna().tolist()]
+            return symbols, symbol_to_name
         else:
             print(f"⚠️ CSV文件中没有找到Symbol列")
-            return [], []
+            return [], {}
     except Exception as e:
         print(f"⚠️ 读取股票列表失败: {e}")
-        return [], []
+        return [], {}
 
 def _build_signal_id(symbol: str, stock_data: dict, score_buy: float) -> str:
     date = stock_data.get('date', 'unknown')
@@ -181,7 +197,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     current_time_str = now_beijing.strftime('%Y-%m-%d %H:%M:%S')
     
     # 获取A股列表
-    stock_symbols, stock_names = get_stock_list_from_csv(stock_path)
+    stock_symbols, a_share_names_map = get_stock_list_from_csv(stock_path)
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
     
     # 获取自选股列表（用于显示判断）
@@ -295,10 +311,11 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             
                             # 后台 AI（与是否配置 Telegram/QQ 解耦；闸门见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
-                            submit_ai, signal_ok, position_build_score, has_recent_golden_cross = should_submit_scan_ai(
-                                score[0], confidence, volume_ma_info
+                            submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
+                                should_submit_scan_ai(score[0], confidence, volume_ma_info)
                             )
-                            gate_blocked = signal_ok and not submit_ai
+                            submit_ai = submit_ai_vol
+                            gate_blocked = signal_ok and not submit_ai_vol
                             if submit_ai:
                                 min_tp = _a_share_min_turnover_pct_now()
                                 a_data: dict = {}
@@ -322,7 +339,17 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                         f"未超过{min_tp:g}%，跳过买入/后台分析"
                                     )
 
+                            opening_ctx = None
                             if submit_ai:
+                                opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                                price_chk = stock_data.get('close', 0)
+                                if is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter):
+                                    submit_ai = False
+                                    print(
+                                        f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过买入/后台分析"
+                                    )
+
+                            if submit_ai and opening_ctx is not None:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -334,12 +361,29 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                     print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
 
                                 signal_id = _build_signal_id(symbol, stock_data, score[0])
+                                cn_name = a_share_names_map.get(symbol) or a_share_names_map.get(symbol.strip())
                                 future = executor.submit(
                                     process_ai_task,
-                                    symbol, "HKA", qq_notifier,
-                                    price, score[0], backtest_str, rsi, volume_ratio, bowl_score, stock_data.get('volume_ma_info'),
-                                    turnover_rate, turnover_warning, signal_id,
-                                    stock_data.get('rsi_prev'), stock_data.get('dif'), stock_data.get('dea'), stock_data.get('dif_dea_slope')
+                                    symbol,
+                                    "HKA",
+                                    qq_notifier,
+                                    price,
+                                    score[0],
+                                    backtest_str,
+                                    rsi,
+                                    volume_ratio,
+                                    bowl_score=bowl_score,
+                                    volume_ma_info=stock_data.get('volume_ma_info'),
+                                    turnover_rate=turnover_rate,
+                                    turnover_warning=turnover_warning,
+                                    signal_id=signal_id,
+                                    rsi_prev=stock_data.get('rsi_prev'),
+                                    dif=stock_data.get('dif'),
+                                    dea=stock_data.get('dea'),
+                                    dif_dea_slope=stock_data.get('dif_dea_slope'),
+                                    open_for_gap_filter=opening_ctx.open_for_filter,
+                                    opening_uncertain=opening_ctx.opening_uncertain,
+                                    stock_cn_name=cn_name,
                                 )
 
                                 stock_data['_ai_future'] = future
@@ -347,7 +391,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
 
                             elif gate_blocked:
                                 print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross)}")
-
                             elif (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
                                 pass
@@ -379,7 +422,13 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     volume_ma_info = stock_data.get('volume_ma_info') or {}
                     position_build_score = volume_ma_info.get('position_build_score', 0)
                     has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                    if volume_ma_info and (not has_recent_golden_cross or position_build_score < 6):
+                    if volume_ma_info and (
+                        not has_recent_golden_cross
+                        or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE
+                    ):
+                        continue
+                    op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                    if is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
                         continue
                     
                     stocks_data_for_html.append({

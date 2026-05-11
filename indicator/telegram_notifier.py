@@ -11,6 +11,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, Dict, List
 
+from scan_ai_common import MIN_POSITION_BUILD_SCORE
+
 # 模块级全局缓存：{symbol: last_push_timestamp}
 _global_push_cache = {}
 
@@ -55,23 +57,33 @@ def format_signal_snapshot(
     position_build_score: Optional[float] = None,
     now_text: Optional[str] = None,
     telegram_html: bool = False,
+    stock_cn_name: Optional[str] = None,
+    opening_uncertain_warning: bool = False,
 ) -> str:
     
     split_symbol = symbol.split('.')
     split_symbol_0 = split_symbol[0]
     split_symbol_1 = f"[{split_symbol[1]}]" if len(split_symbol)==2 else ""
     sym_display = f"{split_symbol_0}{split_symbol_1}"
+    extras_suffix = ""
+    upper_sym = symbol.upper()
+    cn = (stock_cn_name or "").strip()
+    if cn and (upper_sym.endswith('.SS') or upper_sym.endswith('.SZ')):
+        extras_suffix = f" {html.escape(cn)}" if telegram_html else f" {cn}"
     if telegram_html:
-        stock_line = f"股票: <code>{html.escape(split_symbol_0)}</code>{split_symbol_1}"
+        stock_line = f"股票: <code>{html.escape(split_symbol_0)}</code>{split_symbol_1}{extras_suffix}"
     else:
-        stock_line = f"股票: {sym_display}"
-    parts = [
-        title,
+        stock_line = f"股票: {sym_display}{extras_suffix}"
+    parts: List[str] = [title]
+    if opening_uncertain_warning:
+        warn_line = "⚠️ 开盘价可能不准确，请核实"
+        parts.append(html.escape(warn_line) if telegram_html else warn_line)
+    parts.extend([
         f"时间: {now_text or datetime.now().strftime('%Y-%m-%d %H:%M')}",
         stock_line,
         f"当前价格: {price:.2f}",
         f"评分: {score:.2f}",
-    ]
+    ])
     if backtest_text:
         parts.append(f"回测胜率: {backtest_text}")
 
@@ -398,6 +410,8 @@ class TelegramNotifier:
         dif: Optional[float] = None,
         dea: Optional[float] = None,
         dif_dea_slope: Optional[float] = None,
+        stock_cn_name: Optional[str] = None,
+        opening_uncertain: bool = False,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         current_time = time.time()
@@ -422,8 +436,10 @@ class TelegramNotifier:
             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
-            if (not has_recent_golden_cross) or position_build_score < 6:
-                print(f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<6)，跳过 Telegram 买入推送")
+            if (not has_recent_golden_cross) or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE:
+                print(
+                    f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<{MIN_POSITION_BUILD_SCORE:g})，跳过 Telegram 买入推送"
+                )
                 append_signal_audit({'event': 'gate_blocked', 'symbol': symbol, 'signal_id': signal_id, 'position_build_score': position_build_score, 'has_recent_golden_cross': has_recent_golden_cross})
                 return False
 
@@ -460,6 +476,8 @@ class TelegramNotifier:
             volume_spike_text=volume_spike_text,
             position_build_score=position_build_score,
             telegram_html=True,
+            stock_cn_name=stock_cn_name,
+            opening_uncertain_warning=opening_uncertain,
         )
         reply_markup = {
             "inline_keyboard": [

@@ -23,7 +23,14 @@ from qq_notifier import QQNotifier, load_qq_token
 from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from async_ai import process_ai_task
-from scan_ai_common import should_submit_scan_ai, skip_gate_log_suffix
+from scan_ai_common import (
+    OPEN_DROP_FILTER_PCT,
+    MIN_POSITION_BUILD_SCORE,
+    is_buy_blocked_by_open_gap,
+    resolve_opening_price_context_for_filter,
+    should_submit_scan_ai,
+    skip_gate_log_suffix,
+)
 
 import time
 import signal
@@ -219,10 +226,23 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 confidence = 0.0
                             
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
-                            submit_ai, signal_ok, position_build_score, has_recent_golden_cross = should_submit_scan_ai(
-                                score[0], confidence, volume_ma_info
+                            submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
+                                should_submit_scan_ai(score[0], confidence, volume_ma_info)
                             )
+                            submit_ai = submit_ai_vol
+                            gate_blocked = signal_ok and not submit_ai_vol
+
+                            opening_ctx = None
                             if submit_ai:
+                                opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                                price_chk = stock_data.get('close', 0)
+                                if is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter):
+                                    submit_ai = False
+                                    print(
+                                        f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过买入/后台分析"
+                                    )
+
+                            if submit_ai and opening_ctx is not None:
                                 price = stock_data.get('close', 0)
                                 rsi = stock_data.get('rsi')
                                 estimated_volume = stock_data.get('estimated_volume', 0)
@@ -247,9 +267,11 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     dif=stock_data.get('dif'),
                                     dea=stock_data.get('dea'),
                                     dif_dea_slope=stock_data.get('dif_dea_slope'),
+                                    open_for_gap_filter=opening_ctx.open_for_filter,
+                                    opening_uncertain=opening_ctx.opening_uncertain,
                                 )
                                 stock_data['_ai_future'] = future
-                            elif signal_ok:
+                            elif gate_blocked:
                                 print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross)}")
                             elif (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
@@ -283,7 +305,13 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                         volume_ma_info = stock_data.get('volume_ma_info') or {}
                         position_build_score = volume_ma_info.get('position_build_score', 0)
                         has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                        if volume_ma_info and (not has_recent_golden_cross or position_build_score < 6):
+                        if volume_ma_info and (
+                            not has_recent_golden_cross
+                            or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE
+                        ):
+                            continue
+                        op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                        if is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
                             continue
                         
                         stocks_data_for_html.append({

@@ -220,6 +220,31 @@ def _em_stock_bid_ask_curl_cffi(code: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def fetch_a_share_today_open_from_ak(code: str) -> Optional[float]:
+    """
+    东财接口「今开」（与 stock_bid_ask_em / push2 stock get 同源），作 A 股开盘价的 akshare 核对基准。
+    失败返回 None。
+    """
+    if not _AKSHARE_AVAILABLE:
+        return None
+    want = _em_code_to_six(str(code or "").split(".")[0])
+    if len(want) != 6:
+        return None
+    m = _fetch_a_share_quotes_bid_ask(want)
+    if not m:
+        return None
+    jk = m.get("今开")
+    if jk is None:
+        return None
+    try:
+        v = float(jk)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v) or v <= 0:
+        return None
+    return round(v, 4)
+
+
 def _fetch_a_share_quotes_bid_ask(
     code: str,
 ) -> Optional[Dict[str, Any]]:

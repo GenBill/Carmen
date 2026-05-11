@@ -33,6 +33,7 @@ if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
 
 from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot, build_telegram_request_kwargs  # noqa: E402
+from scan_ai_common import resolve_opening_price_context_for_filter  # noqa: E402
 from analysis import (  # noqa: E402
     get_analysis_context,
     read_analysis_cache_entry,
@@ -189,6 +190,17 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     except Exception:
         turnover_rate = None
 
+    stock_cn_name = None
+    usym = symbol.upper()
+    if usym.endswith('.SZ') or usym.endswith('.SS'):
+        try:
+            ad = fetch_a_share_data(symbol.split('.')[0]) or {}
+            nm = ad.get('名称')
+            if nm is not None and str(nm).strip():
+                stock_cn_name = str(nm).strip()
+        except Exception:
+            pass
+
     current_above_ma = v.get('current_above_ma') or []
     current_multiple_vs_ma = v.get('current_multiple_vs_ma') or {}
     if current_above_ma:
@@ -201,6 +213,7 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     if backtest_result and backtest_result.get('buy_prob'):
         a, b = backtest_result.get('buy_prob')
         backtest_text = f'{a}/{b}'
+    op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
     return (
         format_signal_snapshot(
             title='📊 实时评分',
@@ -226,6 +239,8 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
             position_build_score=v.get('position_build_score', 0),
             now_text=time.strftime('%Y-%m-%d %H:%M'),
             telegram_html=True,
+            stock_cn_name=stock_cn_name,
+            opening_uncertain_warning=op_ctx.opening_uncertain,
         ),
         'HTML',
     )
