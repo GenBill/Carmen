@@ -17,11 +17,12 @@ if INDICATOR_DIR not in sys.path:
 
 from telegram_notifier import TelegramNotifier, load_telegram_token, build_telegram_request_kwargs  # noqa: E402
 
-WATCHLIST_PATH = os.path.join(BASE_DIR, 'my_stock_symbols.txt')
+# Dedicated earnings-alert watchlist. Keep this independent from trading/buy-signal watchlists.
+WATCHLIST_PATH = os.path.join(BASE_DIR, 'data', 'earnings_watchlist_us.txt')
 INFO_BOT_TOKEN_PATH = '/home/serv/.openclaw/secrets/telegram_daily_news.token'
 LOG_PREFIX = '[earnings-alert]'
 NASDAQ_CALENDAR_URL = 'https://api.nasdaq.com/api/calendar/earnings'
-LOOKAHEAD_DAYS = 7
+LOOKAHEAD_DAYS = 3
 TIMEOUT = 20
 
 REQUEST_HEADERS = {
@@ -89,7 +90,7 @@ def normalize_time_label(value: Optional[str]) -> str:
 
 
 def build_alert_message(matches: List[Dict]) -> str:
-    header = '🚨 财报临近预警（独立于买入信号）\n接下来 7 天内，你的美股自选里有这些标的将发布财报：'
+    header = f'🚨 财报临近预警（独立列表）\n接下来 {LOOKAHEAD_DAYS} 天内，财报监控列表里有这些标的将发布财报：'
     lines = [header]
     for item in matches:
         lines.append(
@@ -139,7 +140,7 @@ def main() -> int:
         log('no US symbols found in watchlist')
         return 0
 
-    log(f'loaded {len(us_symbols)} US watchlist symbols')
+    log(f'loaded {len(us_symbols)} US earnings watchlist symbols from {WATCHLIST_PATH}')
 
     matches = collect_upcoming_matches(us_symbols)
     if not matches:

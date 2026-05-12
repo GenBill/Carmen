@@ -636,12 +636,15 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         avg_volume = 0
 
     # 成交量均线（使用 SMA，较 EMA 更稳，适合观察主力建仓/放量结构）
-    hist_excluding_today = hist.iloc[:-1] if len(hist) > 1 else hist.iloc[:0]
+    # 买入闸门判断的是“当前交易日是否已经放量形成量能金叉”，所以 current 必须包含当日成交量。
+    # prev 则排除当日，用来判断 true crossing：昨日均线关系 <=，今日均线关系 >。
+    hist_volume_ma_current = hist
+    hist_volume_ma_prev = hist.iloc[:-1] if len(hist) > 1 else hist.iloc[:0]
 
     def _safe_volume_sma(window: int):
-        if hist_excluding_today.empty:
+        if hist_volume_ma_current.empty:
             return None
-        series = hist_excluding_today['Volume'].tail(window)
+        series = hist_volume_ma_current['Volume'].tail(window)
         if series.empty:
             return None
         value = series.mean()
@@ -654,12 +657,10 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     volume_ma30 = _safe_volume_sma(30)
     volume_ma60 = _safe_volume_sma(60)
 
-    hist_excluding_today_prev = hist.iloc[:-2] if len(hist) > 2 else hist.iloc[:0]
-
     def _safe_prev_volume_sma(window: int):
-        if hist_excluding_today_prev.empty:
+        if hist_volume_ma_prev.empty:
             return None
-        series = hist_excluding_today_prev['Volume'].tail(window)
+        series = hist_volume_ma_prev['Volume'].tail(window)
         if series.empty:
             return None
         value = series.mean()
@@ -672,10 +673,10 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     volume_ma30_prev = _safe_prev_volume_sma(30)
     volume_ma60_prev = _safe_prev_volume_sma(60)
 
-    volume_sma5_series = hist_excluding_today['Volume'].rolling(window=5, min_periods=5).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
-    volume_sma10_series = hist_excluding_today['Volume'].rolling(window=10, min_periods=10).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
-    volume_sma30_series = hist_excluding_today['Volume'].rolling(window=30, min_periods=30).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
-    volume_sma60_series = hist_excluding_today['Volume'].rolling(window=60, min_periods=60).mean() if not hist_excluding_today.empty else pd.Series(dtype=float)
+    volume_sma5_series = hist_volume_ma_current['Volume'].rolling(window=5, min_periods=5).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
+    volume_sma10_series = hist_volume_ma_current['Volume'].rolling(window=10, min_periods=10).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
+    volume_sma30_series = hist_volume_ma_current['Volume'].rolling(window=30, min_periods=30).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
+    volume_sma60_series = hist_volume_ma_current['Volume'].rolling(window=60, min_periods=60).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
 
     # 当日成交量
     current_volume = last_trading_day['Volume']
