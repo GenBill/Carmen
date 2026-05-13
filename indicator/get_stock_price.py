@@ -10,6 +10,9 @@ import time
 
 from lut import INTRADAY_VOLUME_LUT, INTRADAY_VOLUME_HK, INTRADAY_VOLUME_A
 
+# 与 indicators.MACD_FADE_TAIL_BARS 一致（连续 4 根日 K 的 DIF：第4天→今天）
+_MACD_FADE_TAIL_BARS = 4
+
 # 缓存目录
 CACHE_DIR = Path(__file__).parent / '.cache'
 CACHE_DIR.mkdir(exist_ok=True)
@@ -803,6 +806,19 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     
     # 计算 MACD
     macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
+
+    macd_dif_tail = []
+    try:
+        exp1_hist = hist['Close'].ewm(span=macd_fast, adjust=False).mean()
+        exp2_hist = hist['Close'].ewm(span=macd_slow, adjust=False).mean()
+        dif_series_hist = exp1_hist - exp2_hist
+        _need_tail = _MACD_FADE_TAIL_BARS
+        if len(dif_series_hist) >= _need_tail:
+            _chunk = dif_series_hist.iloc[-_need_tail:]
+            if _chunk.notna().all():
+                macd_dif_tail = [float(v) for v in _chunk.tolist()]
+    except Exception:
+        macd_dif_tail = []
     
     # 计算 EMA 指标（获取完整序列以便提取前一日数据）
     ema_5_series = calculate_ema(hist['Close'], period=5, return_series=True)
@@ -878,6 +894,7 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'dea': macd_data['dea'],
         'macd_histogram': macd_data['histogram'],
         'dif_dea_slope': macd_data['dif_dea_slope'],
+        'macd_dif_tail': macd_dif_tail,
         'ema_5': round(ema_5, 2) if ema_5 else None,
         'ema_12': round(ema_12, 2) if ema_12 else None,
         'ema_60': round(ema_60, 2) if ema_60 else None,

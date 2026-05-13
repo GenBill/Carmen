@@ -10,6 +10,60 @@ from datetime import datetime, timedelta
 # 长期数据缓存目录（5年历史数据，1天有效期）
 LONGTERM_CACHE_DIR = os.path.join(os.path.dirname(__file__), '.cache_5y')
 
+# MACD 「连跌见底 + 外推穿轴 + 今日反包」（DIF）；与 get_stock_price._MACD_FADE_TAIL_BARS 根数保持一致
+# 从下标说明：dif_tail 从旧到新，最后一项为「今天」。
+#   倒数第 1 根 = 第1天（今天），倒数第 2 = 第2天（昨天）…倒数第 4 = 第4天。
+MACD_FADE_DECLINE_DAYS = 3
+MACD_FADE_TAIL_BARS = MACD_FADE_DECLINE_DAYS + 1  # 4：第4、3、2、1天
+MACD_FADE_MIN_MULTIPLIER = 4.0  # 今天 DIF ≥ 倍数 × max(|昨天 DIF|, ε)
+
+
+def _macd_extrapolate_dif_linear(d_prev3: float, d_prev2: float, d_prev1: float) -> float:
+    """用第4、3、2天的 DIF 拟合直线，外推到「若趋势延续」第1天（今天）的 DIF。"""
+    c = np.polyfit([0.0, 1.0, 2.0], [d_prev3, d_prev2, d_prev1], 1)
+    return float(np.polyval(c, 3.0))
+
+
+def _macd_dif_buy_fade_extrap_reversal(dif_tail: list) -> bool:
+    """第4→3→2 天 DIF 连跌；外推今天应穿到 0 或以下；实际今天 DIF 反包向上且倍率不低。"""
+    need = MACD_FADE_TAIL_BARS
+    if not isinstance(dif_tail, list) or len(dif_tail) < need:
+        return False
+    d4, d3, d2, d1 = [float(x) for x in dif_tail[-need:]]
+    if any(pd.isna(v) for v in (d4, d3, d2, d1)):
+        return False
+    # 今日之前三根严格走低（多头侧 DIF 往零轴「收」）
+    if not (d4 > d3 and d3 > d2):
+        return False
+    pred1 = _macd_extrapolate_dif_linear(d4, d3, d2)
+    if pred1 > 0:
+        return False
+    if d1 <= d2:
+        return False
+    if d1 <= 0:
+        return False
+    return d1 >= MACD_FADE_MIN_MULTIPLIER * max(abs(d2), 1e-9)
+
+
+def _macd_dif_sell_fade_extrap_reversal(dif_tail: list) -> bool:
+    """第4→3→2 天 DIF 连涨（负值侧向零轴收）；外推今天应穿到 0 或以上；实际今天 DIF 反转向下。"""
+    need = MACD_FADE_TAIL_BARS
+    if not isinstance(dif_tail, list) or len(dif_tail) < need:
+        return False
+    d4, d3, d2, d1 = [float(x) for x in dif_tail[-need:]]
+    if any(pd.isna(v) for v in (d4, d3, d2, d1)):
+        return False
+    if not (d4 < d3 and d3 < d2):
+        return False
+    pred1 = _macd_extrapolate_dif_linear(d4, d3, d2)
+    if pred1 < 0:
+        return False
+    if d1 >= d2:
+        return False
+    if d1 >= 0:
+        return False
+    return abs(d1) >= MACD_FADE_MIN_MULTIPLIER * max(abs(d2), 1e-9)
+
 
 def _get_expected_latest_trading_date_for_symbol(symbol):
     """
@@ -204,6 +258,12 @@ def carmen_indicator(stock_data):
             and (stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea'])
         )
 
+    surge_buy = _macd_dif_buy_fade_extrap_reversal(stock_data.get('macd_dif_tail') or [])
+    surge_sell = _macd_dif_sell_fade_extrap_reversal(stock_data.get('macd_dif_tail') or [])
+    if surge_buy:
+        macd_state_strict[0], macd_state_easy[0] = True, True
+    if surge_sell:
+        macd_state_strict[1], macd_state_easy[1] = True, True
 
     score = [0, 0]
     vol_flag, rsi_flag, macd_flag = [0, 0], [0, 0], [0, 0]
@@ -482,6 +542,12 @@ def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, g
         
         for i in range(max(14, macd_slow + macd_signal), len(historical_data) - 3):
             # 构建历史股票数据
+            hist_macd_tail = []
+            if i >= MACD_FADE_DECLINE_DAYS:
+                _sl = indicators['dif'].iloc[i - MACD_FADE_DECLINE_DAYS : i + 1]
+                if len(_sl) == MACD_FADE_TAIL_BARS and _sl.notna().all():
+                    hist_macd_tail = [float(v) for v in _sl.tolist()]
+
             hist_stock_data = {
                 'estimated_volume': indicators['volume'].iloc[i],
                 'avg_volume': indicators['avg_volume'].iloc[i],
@@ -490,7 +556,8 @@ def backtest_carmen_indicator(symbol, score, stock_data, historical_data=None, g
                 'dif': indicators['dif'].iloc[i] if not pd.isna(indicators['dif'].iloc[i]) else None,
                 'dea': indicators['dea'].iloc[i] if not pd.isna(indicators['dea'].iloc[i]) else None,
                 'dif_dea_slope': indicators['dif_dea_slope'].iloc[i] if not pd.isna(indicators['dif_dea_slope'].iloc[i]) else None,
-                'close': indicators['close'].iloc[i]
+                'close': indicators['close'].iloc[i],
+                'macd_dif_tail': hist_macd_tail,
             }
             
             # 计算历史Carmen指标
