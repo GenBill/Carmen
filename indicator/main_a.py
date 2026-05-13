@@ -343,7 +343,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             if submit_ai:
                                 opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                                 price_chk = stock_data.get('close', 0)
-                                if is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter):
+                                if opening_ctx.open_drop_filter_enabled and is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter):
                                     submit_ai = False
                                     print(
                                         f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过买入/后台分析"
@@ -383,6 +383,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                     dif_dea_slope=stock_data.get('dif_dea_slope'),
                                     open_for_gap_filter=opening_ctx.open_for_filter,
                                     opening_uncertain=opening_ctx.opening_uncertain,
+                                    open_gap_filter_enabled=opening_ctx.open_drop_filter_enabled,
                                     stock_cn_name=cn_name,
                                 )
 
@@ -428,7 +429,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     ):
                         continue
                     op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
-                    if is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
+                    if op_ctx.open_drop_filter_enabled and is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
                         continue
                     
                     stocks_data_for_html.append({

@@ -15,6 +15,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -68,6 +69,13 @@ WATCH_EVENT_NAMES = {
 PRE_ALERT_MIN_HOURS = 20
 PRE_ALERT_MAX_HOURS = 28
 POST_GRACE_DAYS = 3
+EARLY_ACTUAL_STALE_GRACE = timedelta(minutes=15)
+COUNTRY_TIMEZONES = {
+    # Nasdaq's economicevents API exposes the release clock as `gmt`, but for these
+    # rows it is the source-market wall-clock time (e.g. US CPI 08:30 ET), not UTC.
+    'United States': ZoneInfo('America/New_York'),
+    'China': ZoneInfo('Asia/Shanghai'),
+}
 
 
 def log(msg: str) -> None:
@@ -83,12 +91,13 @@ def load_state() -> Dict:
             data.setdefault('post_sent', {})  # legacy: treated as both raw+analysis sent
             data.setdefault('raw_sent', {})
             data.setdefault('analysis_sent', {})
+            data.setdefault('stale_actual', {})
             return data
     except FileNotFoundError:
         pass
     except Exception as e:
         log(f'failed to load state: {e}')
-    return {'pre_sent': {}, 'post_sent': {}, 'raw_sent': {}, 'analysis_sent': {}}
+    return {'pre_sent': {}, 'post_sent': {}, 'raw_sent': {}, 'analysis_sent': {}, 'stale_actual': {}}
 
 
 def save_state(state: Dict) -> None:
@@ -144,7 +153,9 @@ def parse_event_dt_utc(row: Dict) -> Optional[datetime]:
     try:
         hh, mm = map(int, gmt.split(':'))
         y, m, d = map(int, date_str.split('-'))
-        return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
+        country = clean_text(row.get('country'))
+        tz = COUNTRY_TIMEZONES.get(country, timezone.utc)
+        return datetime(y, m, d, hh, mm, tzinfo=tz).astimezone(timezone.utc)
     except Exception:
         return None
 
@@ -240,7 +251,7 @@ def build_raw_data_message(row: Dict, event_dt: datetime) -> str:
 
 def prune_state(state: Dict, now: datetime) -> None:
     cutoff = (now - timedelta(days=45)).strftime('%Y%m%d%H%M')
-    for section in ('pre_sent', 'post_sent', 'raw_sent', 'analysis_sent'):
+    for section in ('pre_sent', 'post_sent', 'raw_sent', 'analysis_sent', 'stale_actual'):
         items = state.get(section, {})
         state[section] = {k: v for k, v in items.items() if k[:12] >= cutoff}
 
@@ -410,10 +421,17 @@ def main() -> int:
             state['pre_sent'][key] = now.isoformat()
             pre_count += 1
 
+        has_actual = any(not blank_value(row.get('actual')) for row in group['rows'])
+        if has_actual and now < event_dt - EARLY_ACTUAL_STALE_GRACE:
+            # Nasdaq sometimes carries already-published values on a future-dated row.
+            # Mark it so it will not fire hours later as a fake "just released" alert.
+            state['stale_actual'].setdefault(key, now.isoformat())
+
         post_ready = (
             event_dt <= now
             and now - event_dt <= timedelta(days=POST_GRACE_DAYS)
-            and any(not blank_value(row.get('actual')) for row in group['rows'])
+            and has_actual
+            and key not in state.get('stale_actual', {})
         )
         legacy_post_done = (
             key in state.get('post_sent', {})

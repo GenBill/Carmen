@@ -24,11 +24,12 @@ def process_ai_task(
     dif_dea_slope=None,
     open_for_gap_filter=None,
     opening_uncertain=False,
+    open_gap_filter_enabled=None,
     stock_cn_name=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
-    开盘价跌幅闸门在所有量能闸门之后执行；open_for_gap_filter 由 scan_ai_common 解析（含 A 股 akshare 核对）。
+    开盘价跌幅闸门在所有量能闸门之后执行；仅 A 股 akshare 今开可信时启用。
     """
     try:
         from analysis import build_or_load_ai_result, empty_refined_info
@@ -56,7 +57,11 @@ def process_ai_task(
                 'refined_info': empty_refined_info(),
             }
 
-        if is_buy_blocked_by_open_gap(price, open_for_gap_filter):
+        if open_gap_filter_enabled is None:
+            upper_symbol = str(symbol or '').upper()
+            open_gap_filter_enabled = upper_symbol.endswith('.SS') or upper_symbol.endswith('.SZ')
+
+        if open_gap_filter_enabled and is_buy_blocked_by_open_gap(price, open_for_gap_filter):
             print(
                 f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过后台AI分析与通知"
             )
