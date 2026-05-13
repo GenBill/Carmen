@@ -23,4 +23,5 @@ autotube/monitor.py
 gemini_studio/*
 autotube/*cookies.txt
 runtime/telegram_listener.offset
+runtime/economic_data_alert_state.json
 indicator/runtime/*

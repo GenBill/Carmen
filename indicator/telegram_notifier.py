@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, Dict, List
 
+from earnings_proximity import earnings_proximity_note
 from scan_ai_common import MIN_POSITION_BUILD_SCORE
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
@@ -59,6 +60,7 @@ def format_signal_snapshot(
     telegram_html: bool = False,
     stock_cn_name: Optional[str] = None,
     opening_uncertain_warning: bool = False,
+    earnings_note: Optional[str] = None,
 ) -> str:
     
     split_symbol = symbol.split('.')
@@ -141,6 +143,9 @@ def format_signal_snapshot(
         parts.extend(tech_lines)
     parts.append("")
     parts.extend(footer_lines)
+    if earnings_note:
+        note_line = html.escape(earnings_note) if telegram_html else earnings_note
+        parts.append(note_line)
     return "\n".join(parts)
 
 
@@ -453,6 +458,7 @@ class TelegramNotifier:
             else:
                 volume_spike_text = "暂无"
 
+        earn_note = earnings_proximity_note(symbol)
         msg = format_signal_snapshot(
             title="📈 买入信号提醒",
             symbol=symbol,
@@ -478,6 +484,7 @@ class TelegramNotifier:
             telegram_html=True,
             stock_cn_name=stock_cn_name,
             opening_uncertain_warning=opening_uncertain,
+            earnings_note=earn_note,
         )
         reply_markup = {
             "inline_keyboard": [
