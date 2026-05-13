@@ -15,7 +15,6 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -70,12 +69,7 @@ PRE_ALERT_MIN_HOURS = 20
 PRE_ALERT_MAX_HOURS = 28
 POST_GRACE_DAYS = 3
 EARLY_ACTUAL_STALE_GRACE = timedelta(minutes=15)
-COUNTRY_TIMEZONES = {
-    # Nasdaq's economicevents API exposes the release clock as `gmt`, but for these
-    # rows it is the source-market wall-clock time (e.g. US CPI 08:30 ET), not UTC.
-    'United States': ZoneInfo('America/New_York'),
-    'China': ZoneInfo('Asia/Shanghai'),
-}
+HKT = timezone(timedelta(hours=8))
 
 
 def log(msg: str) -> None:
@@ -92,12 +86,22 @@ def load_state() -> Dict:
             data.setdefault('raw_sent', {})
             data.setdefault('analysis_sent', {})
             data.setdefault('stale_actual', {})
+            data.setdefault('value_sent', {})
+            data.setdefault('pre_guard', {})
             return data
     except FileNotFoundError:
         pass
     except Exception as e:
         log(f'failed to load state: {e}')
-    return {'pre_sent': {}, 'post_sent': {}, 'raw_sent': {}, 'analysis_sent': {}, 'stale_actual': {}}
+    return {
+        'pre_sent': {},
+        'post_sent': {},
+        'raw_sent': {},
+        'analysis_sent': {},
+        'stale_actual': {},
+        'value_sent': {},
+        'pre_guard': {},
+    }
 
 
 def save_state(state: Dict) -> None:
@@ -153,9 +157,7 @@ def parse_event_dt_utc(row: Dict) -> Optional[datetime]:
     try:
         hh, mm = map(int, gmt.split(':'))
         y, m, d = map(int, date_str.split('-'))
-        country = clean_text(row.get('country'))
-        tz = COUNTRY_TIMEZONES.get(country, timezone.utc)
-        return datetime(y, m, d, hh, mm, tzinfo=tz).astimezone(timezone.utc)
+        return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -198,7 +200,7 @@ def watched(row: Dict) -> bool:
 
 
 def format_dt_hkt(dt_utc: datetime) -> str:
-    return dt_utc.astimezone(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M HKT')
+    return dt_utc.astimezone(HKT).strftime('%Y-%m-%d %H:%M HKT')
 
 
 def send_message(text: str) -> None:
@@ -254,6 +256,9 @@ def prune_state(state: Dict, now: datetime) -> None:
     for section in ('pre_sent', 'post_sent', 'raw_sent', 'analysis_sent', 'stale_actual'):
         items = state.get(section, {})
         state[section] = {k: v for k, v in items.items() if k[:12] >= cutoff}
+    for section in ('value_sent', 'pre_guard'):
+        items = state.get(section, {})
+        state[section] = {k: v for k, v in items.items() if v >= (now - timedelta(days=45)).isoformat()}
 
 
 def collect_rows(now: datetime) -> Iterable[Dict]:
@@ -283,9 +288,31 @@ def group_category(row: Dict) -> str:
 
 
 def group_key(country: str, event_dt: datetime, rows: List[Dict]) -> str:
-    raw = '|'.join([country, event_dt.strftime('%Y-%m-%dT%H:%MZ'), group_category(rows[0]), release_group_name(rows)])
+    raw = '|'.join([country, event_dt.strftime('%Y-%m-%dT%H:%MZ'), group_category(rows[0])])
     digest = hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
     return f'{event_dt.strftime("%Y%m%d%H%M")}-{digest}'
+
+
+def pre_guard_key(group: Dict) -> str:
+    return '|'.join([
+        group['country'],
+        group_category(group['rows'][0]),
+        group['event_dt'].strftime('%Y-%m-%dT%H:%MZ'),
+    ])
+
+
+def value_key(group: Dict) -> str:
+    """Stable duplicate guard across Nasdaq date/key drift for same published values."""
+    parts = [group['country'], release_group_name(group['rows'])]
+    for row in sorted(group['rows'], key=lambda r: (clean_text(r.get('eventName')), clean_text(r.get('actual')), clean_text(r.get('consensus')), clean_text(r.get('previous')))):
+        parts.extend([
+            clean_text(row.get('eventName')),
+            clean_text(row.get('actual')),
+            clean_text(row.get('consensus')),
+            clean_text(row.get('previous')),
+        ])
+    digest = hashlib.sha1('|'.join(parts).encode('utf-8')).hexdigest()[:16]
+    return f'value-{digest}'
 
 
 def collect_groups(now: datetime) -> List[Dict]:
@@ -410,15 +437,23 @@ def main() -> int:
     pre_count = 0
     raw_count = 0
     analysis_count = 0
+    existing_pre_keys = set(state.get('pre_sent', {}))
     for group in collect_groups(now):
         event_dt = group['event_dt']
         key = group['key']
+        pkey = pre_guard_key(group)
         hours_until = (event_dt - now).total_seconds() / 3600
 
-        legacy_pre_done = any(event_key(row, event_dt) in state.get('pre_sent', {}) for row in group['rows'])
-        if PRE_ALERT_MIN_HOURS <= hours_until <= PRE_ALERT_MAX_HOURS and key not in state['pre_sent'] and not legacy_pre_done:
+        event_prefix = f'{event_dt.strftime("%Y%m%d%H%M")}-'
+        legacy_pre_done = (
+            any(event_key(row, event_dt) in state.get('pre_sent', {}) for row in group['rows'])
+            or any(old_key.startswith(event_prefix) for old_key in existing_pre_keys)
+        )
+        pre_done = pkey in state.get('pre_guard', {}) or key in state['pre_sent'] or legacy_pre_done
+        if PRE_ALERT_MIN_HOURS <= hours_until <= PRE_ALERT_MAX_HOURS and not pre_done:
             send_message(build_pre_group_message(group))
             state['pre_sent'][key] = now.isoformat()
+            state['pre_guard'][pkey] = now.isoformat()
             pre_count += 1
 
         has_actual = any(not blank_value(row.get('actual')) for row in group['rows'])
@@ -433,20 +468,24 @@ def main() -> int:
             and has_actual
             and key not in state.get('stale_actual', {})
         )
+        vkey = value_key(group) if has_actual else ''
+        value_done = bool(vkey and vkey in state.get('value_sent', {}))
         legacy_post_done = (
             key in state.get('post_sent', {})
             or any(event_key(row, event_dt) in state.get('post_sent', {}) for row in group['rows'])
         )
         legacy_raw_done = any(event_key(row, event_dt) in state.get('raw_sent', {}) for row in group['rows'])
         legacy_analysis_done = any(event_key(row, event_dt) in state.get('analysis_sent', {}) for row in group['rows'])
-        if post_ready and not legacy_post_done and not legacy_raw_done and key not in state['raw_sent']:
+        if post_ready and not value_done and not legacy_post_done and not legacy_raw_done and key not in state['raw_sent']:
             send_message(build_raw_group_message(group))
             state['raw_sent'][key] = now.isoformat()
+            state['value_sent'][vkey] = now.isoformat()
             raw_count += 1
 
-        if post_ready and not legacy_post_done and not legacy_analysis_done and key not in state['analysis_sent']:
+        if post_ready and not value_done and not legacy_post_done and not legacy_analysis_done and key not in state['analysis_sent']:
             trigger_wyrd_group_analysis(group)
             state['analysis_sent'][key] = now.isoformat()
+            state['value_sent'][vkey] = now.isoformat()
             analysis_count += 1
 
     save_state(state)
