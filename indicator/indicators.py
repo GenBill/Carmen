@@ -2,6 +2,7 @@ import time
 import os
 import pickle
 import yfinance as yf
+from yf_safe import yf_download
 import pandas as pd
 import numpy as np
 import pytz
@@ -455,7 +456,7 @@ def _get_historical_data_with_cache(symbol):
             try:
                 # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
                 # auto_adjust=False 保持与 stock.history() 默认行为一致
-                historical_data = yf.download(symbol, period="5y", progress=False, auto_adjust=False)
+                historical_data = yf_download(symbol, period="5y", progress=False, auto_adjust=False)
                 
                 if not historical_data.empty:
                     break

@@ -1,4 +1,5 @@
 import yfinance as yf
+from yf_safe import yf_download
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -20,6 +21,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # 全局内存缓存：{symbol: (timestamp, hist_data)}
 # 同时支持本地文件缓存，避免程序重启后重新获取数据
 _DATA_CACHE = {}
+
 
 # 损坏的股票代码列表（多次失败后不再尝试）
 broken_stock_symbols = []
@@ -950,6 +952,7 @@ def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=2
         return None
 
 
+
 def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_size=50, period="1y"):
     """
     批量下载股票数据（使用 yfinance 的多线程加速）
@@ -1014,9 +1017,10 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
             continue
 
         try:
-            # 使用 yf.download 批量下载，自动多线程加速
-            # 必须指定 group_by='ticker' 才能使 Ticker 作为第一层索引，方便按股票切分
-            hist_batch = yf.download(batch, period=period, progress=False, auto_adjust=False, threads=True, group_by='ticker')
+            # yfinance 0.2.x 的 multi.download 使用模块级 shared._DFS 聚合线程结果；
+            # 根因是多个 yf.download 调用在同一进程并发互相重置 shared._DFS。
+            # 用 yf_safe 序列化“download 调用之间”的并发；保留单次 batch 内部 threads=True 维持全市场扫描速度。
+            hist_batch = yf_download(batch, period=period, progress=False, auto_adjust=False, threads=True, group_by='ticker')
 
             if hist_batch.empty:
                 print(f"⚠️  批量下载返回空数据，批次: {i//batch_size + 1}")
@@ -1126,7 +1130,7 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                     # 使用1y获取约250天数据，精度最佳且API消耗不变
                     # 使用 yf.download 替代 stock.history，支持 progress=False 直接屏蔽输出
                     # auto_adjust=False 保持与 stock.history() 默认行为一致
-                    hist = yf.download(symbol, period="1y", progress=False, auto_adjust=False)
+                    hist = yf_download(symbol, period="1y", progress=False, auto_adjust=False)
                     
                     # 处理可能的双层列索引（单只股票时 yf.download 可能返回多层索引）
                     if not hist.empty and isinstance(hist.columns, pd.MultiIndex):

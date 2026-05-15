@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Set, Dict, List
 from tqdm import tqdm
 import yfinance as yf
+from yf_safe import yf_download
 import pandas as pd
 
 class VolumeFilter:
@@ -413,8 +414,8 @@ class VolumeFilter:
                 continue
             
             try:
-                # 使用 yf.download 批量下载，自动多线程加速
-                hist_batch = yf.download(
+                # yf_safe 序列化多个 download 调用；单次 batch 内部保留 threads=True 保持速度。
+                hist_batch = yf_download(
                     batch, 
                     period="1mo",  # 黑名单检查只需近期数据计算平均成交量
                     progress=False, 

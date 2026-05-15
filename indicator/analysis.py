@@ -4,6 +4,7 @@ AI股票分析模块 - 使用DeepSeek进行股票技术分析
 """
 import pytz
 import yfinance as yf
+from yf_safe import yf_download
 import pandas as pd
 import numpy as np
 import os
@@ -638,10 +639,10 @@ def get_stock_data(symbol: str, period_days: int = 250) -> Tuple[pd.DataFrame, p
         tuple: (日K线数据, 小时级数据)
     """
     with _YF_DOWNLOAD_LOCK:
-        daily_raw = yf.download(
+        daily_raw = yf_download(
             symbol, period=f"{period_days}d", interval="1d", auto_adjust=True, progress=False
         )
-        hourly_raw = yf.download(
+        hourly_raw = yf_download(
             symbol, period="30d", interval="1h", auto_adjust=True, progress=False
         )
     daily_data = _normalize_yf_dataframe(daily_raw, symbol)

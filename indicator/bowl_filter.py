@@ -14,6 +14,7 @@ import pandas as pd
 import numpy as np
 import json
 from pathlib import Path
+from yf_safe import yf_download
 
 try:
     from scipy.spatial.distance import euclidean as _scipy_euclidean
@@ -763,7 +764,7 @@ class B1PatternLibrary:
                 import yfinance as yf
 
                 def download_func(symbol, period="2y"):
-                    h = yf.download(symbol, period=period,
+                    h = yf_download(symbol, period=period,
                                     progress=False, auto_adjust=False)
                     return h
             except ImportError:
@@ -881,7 +882,7 @@ class B1PatternLibrary:
                 import yfinance as yf
 
                 def download_func(symbol, period="2y"):
-                    return yf.download(symbol, period=period,
+                    return yf_download(symbol, period=period,
                                        progress=False, auto_adjust=False)
             except ImportError:
                 print("⚠️ yfinance 未安装")
