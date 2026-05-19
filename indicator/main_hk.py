@@ -99,11 +99,11 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     
     # 初始化消息推送器：优先 Telegram，否则 QQ
     if enable_telegram_notify and telegram_bot_token and telegram_chat_id:
-        qq_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
+        bot_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
     elif enable_qq_notify and qq_key and qq_number:
-        qq_notifier = QQNotifier(key=qq_key, qq=qq_number)
+        bot_notifier = QQNotifier(key=qq_key, qq=qq_number)
     else:
-        qq_notifier = None
+        bot_notifier = None
     
     # 初始化线程池（限制并发数，避免API速率限制）
     executor = ThreadPoolExecutor(max_workers=3)
@@ -245,14 +245,14 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
 
                                 print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
-                                if not qq_notifier:
+                                if not bot_notifier:
                                     print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
 
                                 future = executor.submit(
                                     process_ai_task,
                                     symbol=symbol,
                                     market="HKA",
-                                    qq_notifier=qq_notifier,
+                                    bot_notifier=bot_notifier,
                                     price=price,
                                     score=score[0],
                                     backtest_str=backtest_str,
@@ -490,9 +490,9 @@ if __name__ == "__main__":
         market='HK',
         run_nodes_cfg=[
             {'hour': 12, 'minute': 10},
-            {'hour': 14, 'minute': 10},
-            {'hour': 15, 'minute': 10},
-            {'hour': 16, 'minute': 10}
+            # {'hour': 14, 'minute': 10},
+            # {'hour': 15, 'minute': 10},
+            # {'hour': 16, 'minute': 10}
         ]
     )
 

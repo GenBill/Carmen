@@ -7,7 +7,7 @@ from scan_ai_common import MIN_POSITION_BUILD_SCORE, OPEN_DROP_FILTER_PCT, is_bu
 def process_ai_task(
     symbol,
     market,
-    qq_notifier,
+    bot_notifier,
     price,
     score,
     backtest_str,
@@ -97,8 +97,8 @@ def process_ai_task(
             refined_info = empty_refined_info()
         result['refined_info'] = refined_info
 
-        if qq_notifier and result.get('status') == 'completed':
-            qq_notifier.send_buy_signal(
+        if bot_notifier and result.get('status') == 'completed':
+            bot_notifier.send_buy_signal(
                 signal_id=signal_id,
                 symbol=symbol,
                 price=price,

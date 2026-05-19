@@ -36,6 +36,11 @@ from scan_ai_common import (
     should_submit_scan_ai,
     skip_gate_log_suffix,
 )
+from a_share_rebound_alert import (
+    HIGH_BUILD_SCORE_THRESHOLD,
+    maybe_record_high_build_alert,
+    run_rebound_alert_scan,
+)
 from agent.deepseek import fetch_a_share_data
 
 import time
@@ -173,17 +178,17 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     
     # 初始化消息推送器：优先 Telegram，否则 QQ
     if enable_telegram_notify and telegram_bot_token and telegram_chat_id:
-        qq_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
+        bot_notifier = TelegramNotifier(bot_token=telegram_bot_token, chat_id=telegram_chat_id)
         try:
-            replayed = qq_notifier.flush_pending_queue()
+            replayed = bot_notifier.flush_pending_queue()
             if replayed > 0:
                 print(f"🔁 启动时补发 Telegram 待发送消息 {replayed} 条")
         except Exception as e:
             print(f"⚠️  启动补发 Telegram 待发送消息失败: {e}")
     elif enable_qq_notify and qq_key and qq_number:
-        qq_notifier = QQNotifier(key=qq_key, qq=qq_number)
+        bot_notifier = QQNotifier(key=qq_key, qq=qq_number)
     else:
-        qq_notifier = None
+        bot_notifier = None
     
     # 初始化线程池（限制并发数，避免API速率限制）
     executor = ThreadPoolExecutor(max_workers=3)
@@ -274,6 +279,18 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 gate_blocked = False
                 ai_launched = False
                 
+                volume_ma_info_early = stock_data.get('volume_ma_info') or {}
+                pbs_early = float(volume_ma_info_early.get('position_build_score', 0) or 0)
+                if pbs_early >= HIGH_BUILD_SCORE_THRESHOLD:
+                    cn_name_early = a_share_names_map.get(symbol) or a_share_names_map.get(symbol.strip())
+                    maybe_record_high_build_alert(
+                        symbol=symbol,
+                        alert_date=stock_data.get('date'),
+                        alert_close=stock_data.get('close'),
+                        position_build_score=pbs_early,
+                        stock_cn_name=cn_name_early,
+                    )
+
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
                 score_vegas = vegas_indicator(stock_data)
@@ -357,7 +374,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
 
                                 print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
-                                if not qq_notifier:
+                                if not bot_notifier:
                                     print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
 
                                 signal_id = _build_signal_id(symbol, stock_data, score[0])
@@ -366,7 +383,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                     process_ai_task,
                                     symbol,
                                     "HKA",
-                                    qq_notifier,
+                                    bot_notifier,
                                     price,
                                     score[0],
                                     backtest_str,
@@ -505,6 +522,20 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
 
     # 关闭线程池
     executor.shutdown(wait=True)
+
+    try:
+        run_rebound_alert_scan(
+            bot_notifier,
+            get_stock_data,
+            rsi_period=rsi_period,
+            macd_fast=macd_fast,
+            macd_slow=macd_slow,
+            macd_signal=macd_signal,
+            avg_volume_days=avg_volume_days,
+        )
+    except Exception as e:
+        print(f"⚠️  A股回撤均线金叉预警扫描失败: {e}")
+        traceback.print_exc()
     
     # 生成HTML报告并推送到GitHub Pages
     if git_publisher and stocks_data_for_html:
@@ -613,12 +644,17 @@ if __name__ == "__main__":
     scheduler = MarketScheduler(
         market='A',
         run_nodes_cfg=[
-            {'hour': 9, 'minute': 50},
+            {'hour': 8, 'minute': 00},
+            {'hour': 9, 'minute': 40},
             {'hour': 10, 'minute': 10},
+            {'hour': 10, 'minute': 40},
             {'hour': 11, 'minute': 10},
-            {'hour': 12, 'minute': 30},
-            {'hour': 14, 'minute': 00},
-            {'hour': 15, 'minute': 20}
+            {'hour': 12, 'minute': 10},
+            {'hour': 13, 'minute': 10},
+            {'hour': 13, 'minute': 40},
+            {'hour': 14, 'minute': 10},
+            {'hour': 14, 'minute': 40},
+            {'hour': 15, 'minute': 30}
         ]
     )
 
