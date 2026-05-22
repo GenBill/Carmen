@@ -1,21 +1,25 @@
 """
-A 股高建仓强度（>=10.0）30 日动态队列，及「回撤后均线」二次预警。
+A 股「主力建仓后洗盘低吸」策略：
+- 建仓强度 >= 9.0、信号触发后 3-14 日的窗口内观察；
+- 阶段高点回落（落入 [(3L-H)/2, (H+L)/2) 区间）+ 量能 5/10 死叉或即将死叉时预警；
+- 提示「当日收盘买入 或 次日开盘买入」；
+- 支持外部 on_signal 回调接入下游执行。
 """
 from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import pytz
 
 from rebound_ak_quote import fetch_rebound_quote
 
-HIGH_BUILD_SCORE_THRESHOLD = 10.0
-HISTORY_RETENTION_DAYS = 30
-MIN_DAYS_AFTER_FIRST_ALERT = 7
+HIGH_BUILD_SCORE_THRESHOLD = 9.0
+HISTORY_RETENTION_DAYS = 14
+MIN_DAYS_AFTER_FIRST_ALERT = 3
 
 QUEUE_FILE = Path(__file__).resolve().parent / "runtime" / "a_share_high_build_alerts.json"
 BEIJING_TZ = pytz.timezone("Asia/Shanghai")
@@ -75,7 +79,7 @@ def maybe_record_high_build_alert(
     stock_cn_name: Optional[str] = None,
 ) -> None:
     """
-    记录建仓强度 >= 10.0 的 A 股预警；同一标的保留首次预警日期与当日收盘价。
+    记录建仓强度 >= HIGH_BUILD_SCORE_THRESHOLD 的 A 股预警；同一标的保留首次预警日期与当日收盘价。
     """
     upper = (symbol or "").upper()
     if not (upper.endswith(".SS") or upper.endswith(".SZ")):
@@ -105,7 +109,6 @@ def maybe_record_high_build_alert(
             "first_alert_date": first_d.isoformat(),
             "alert_close": round(float(alert_close), 4),
             "position_build_score": round(float(position_build_score), 2),
-            "rebound_notified": False,
         }
     )
     _save_queue(queue)
@@ -115,25 +118,16 @@ def _ma_pair_df(short: pd.Series, long: pd.Series) -> pd.DataFrame:
     return pd.DataFrame({"short": short, "long": long}).dropna()
 
 
-def _has_cross_down(pair: pd.DataFrame) -> bool:
-    for i in range(1, len(pair)):
-        prev = pair.iloc[i - 1]
-        curr = pair.iloc[i]
-        if prev["short"] >= prev["long"] and curr["short"] < curr["long"]:
-            return True
-    return False
-
-
-def _has_cross_up(pair: pd.DataFrame) -> bool:
-    for i in range(1, len(pair)):
-        prev = pair.iloc[i - 1]
-        curr = pair.iloc[i]
-        if prev["short"] <= prev["long"] and curr["short"] > curr["long"]:
-            return True
-    return False
+def _just_cross_down(pair: pd.DataFrame) -> bool:
+    """仅判断最后两根：上一根 short >= long，当前根 short < long（今日刚死叉）。"""
+    if len(pair) < 2:
+        return False
+    prev, curr = pair.iloc[-2], pair.iloc[-1]
+    return prev["short"] >= prev["long"] and curr["short"] < curr["long"]
 
 
 def _has_imminent_cross_down(pair: pd.DataFrame) -> bool:
+    """仅判断最后两根：当前仍在上方但斜率向下，外推一根将翻下。"""
     if len(pair) < 2:
         return False
     prev, curr = pair.iloc[-2], pair.iloc[-1]
@@ -143,34 +137,13 @@ def _has_imminent_cross_down(pair: pd.DataFrame) -> bool:
     return gap_now > 0 and gap_now + 2 * slope < 0
 
 
-def _has_imminent_cross_up(pair: pd.DataFrame) -> bool:
-    if len(pair) < 2:
-        return False
-    prev, curr = pair.iloc[-2], pair.iloc[-1]
-    gap_prev = float(prev["short"] - prev["long"])
-    gap_now = float(curr["short"] - curr["long"])
-    slope = gap_now - gap_prev
-    return gap_now < 0 and gap_now + 2 * slope > 0
-
-
-def _ma_eight_pick_one(
-    vol_sma5: pd.Series, vol_sma10: pd.Series, price_sma5: pd.Series, price_sma10: pd.Series
-) -> Tuple[bool, Optional[str]]:
-    vol_pair = _ma_pair_df(vol_sma5, vol_sma10)
-    price_pair = _ma_pair_df(price_sma5, price_sma10)
-    checks = [
-        ("量能死叉", _has_cross_down(vol_pair)),
-        ("量能即将死叉", _has_imminent_cross_down(vol_pair)),
-        ("量能金叉", _has_cross_up(vol_pair)),
-        ("量能即将金叉", _has_imminent_cross_up(vol_pair)),
-        ("均价死叉", _has_cross_down(price_pair)),
-        ("均价即将死叉", _has_imminent_cross_down(price_pair)),
-        ("均价金叉", _has_cross_up(price_pair)),
-        ("均价即将金叉", _has_imminent_cross_up(price_pair)),
-    ]
-    for name, ok in checks:
-        if ok:
-            return True, name
+def _volume_cross_signal(vol_sma5: pd.Series, vol_sma10: pd.Series) -> Tuple[bool, Optional[str]]:
+    """量能 5/10 均线信号：仅看最后两根日线，判定"今日刚死叉"或"即将死叉"。"""
+    pair = _ma_pair_df(vol_sma5, vol_sma10)
+    if _just_cross_down(pair):
+        return True, "量能5/10死叉"
+    if _has_imminent_cross_down(pair):
+        return True, "量能5/10即将死叉"
     return False, None
 
 
@@ -194,31 +167,56 @@ def check_rebound_conditions(
     hist: pd.DataFrame,
     current_price: float,
     today: Optional[date] = None,
-) -> Tuple[bool, Optional[str]]:
+) -> Tuple[bool, Optional[str], Optional[float], Optional[float]]:
+    """
+    返回 (ok, ma_trigger, peak_high, peak_low)。
+
+    触发要件：
+    1) 距首次信号日 >= MIN_DAYS_AFTER_FIRST_ALERT 且 <= HISTORY_RETENTION_DAYS；
+    2) 阶段高低区间：取信号日之后的窗口，H = window.High.max()、L = window.Low.min()，
+       触发区间为 [(3L-H)/2, (H+L)/2)，落到区间内视为「主力建仓后回落但未撤退」；
+    3) 量能 MA5/MA10 在整段 hist 上滚动计算，仅判断最后两根：
+       「今日刚死叉」或「即将死叉」。
+    """
     first_d = _parse_date(entry.get("first_alert_date"))
     alert_close = float(entry.get("alert_close") or 0)
     if first_d is None or alert_close <= 0:
-        return False, None
+        return False, None, None, None
 
     today = today or _today_beijing()
-    if (today - first_d).days < MIN_DAYS_AFTER_FIRST_ALERT:
-        return False, None
+    days_after = (today - first_d).days
+    if days_after < MIN_DAYS_AFTER_FIRST_ALERT or days_after > HISTORY_RETENTION_DAYS:
+        return False, None, None, None
 
-    if float(current_price) >= alert_close:
-        return False, None
+    if hist is None or len(hist) < 11:
+        return False, None, None, None
+
+    vol_col = "Volume" if "Volume" in hist.columns else "成交量"
+    high_col = "High" if "High" in hist.columns else "最高"
+    low_col = "Low" if "Low" in hist.columns else "最低"
+    if vol_col not in hist.columns or high_col not in hist.columns or low_col not in hist.columns:
+        return False, None, None, None
 
     window = _slice_hist_after_first_alert(hist, first_d)
-    if window is None or len(window) < 12:
-        return False, None
+    if window is None or len(window) < 2:
+        return False, None, None, None
 
-    vol_col = "Volume" if "Volume" in window.columns else "成交量"
-    close_col = "Close" if "Close" in window.columns else "收盘"
-    vol_sma5 = window[vol_col].rolling(window=5, min_periods=5).mean()
-    vol_sma10 = window[vol_col].rolling(window=10, min_periods=10).mean()
-    price_sma5 = window[close_col].rolling(window=5, min_periods=5).mean()
-    price_sma10 = window[close_col].rolling(window=10, min_periods=10).mean()
+    peak_high = float(window[high_col].max())
+    peak_low = float(window[low_col].min())
+    hl_range = peak_high - peak_low
+    if hl_range <= 0:
+        return False, None, peak_high, peak_low
 
-    return _ma_eight_pick_one(vol_sma5, vol_sma10, price_sma5, price_sma10)
+    upper_bound = (peak_high + peak_low) / 2.0
+    lower_bound = peak_low - hl_range / 2.0
+    price = float(current_price)
+    if not (lower_bound <= price < upper_bound):
+        return False, None, peak_high, peak_low
+
+    vol_sma5 = hist[vol_col].rolling(window=5, min_periods=5).mean()
+    vol_sma10 = hist[vol_col].rolling(window=10, min_periods=10).mean()
+    ok, ma_trigger = _volume_cross_signal(vol_sma5, vol_sma10)
+    return ok, ma_trigger, peak_high, peak_low
 
 
 def _drop_display_lines(
@@ -245,8 +243,10 @@ def _drop_display_lines(
 def _format_rebound_message(
     entry: Dict[str, Any],
     ma_trigger: Optional[str],
+    peak_high: Optional[float],
+    peak_low: Optional[float],
+    scan_price: Optional[float],
     ak_quote: Optional[Dict[str, Any]] = None,
-    scan_price: Optional[float] = None,
 ) -> str:
     symbol = entry.get("symbol", "")
     cn = entry.get("stock_cn_name") or ""
@@ -255,17 +255,33 @@ def _format_rebound_message(
     alert_close = float(entry.get("alert_close") or 0)
     pbs = float(entry.get("position_build_score") or 0)
     now_text = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
-    ma_line = ma_trigger or "均线信号"
+    ma_line = ma_trigger or "量能5/10死叉"
+
+    stage_lines: List[str] = []
+    if peak_high is not None and peak_low is not None and peak_high > peak_low:
+        upper_bound = (peak_high + peak_low) / 2.0
+        lower_bound = peak_low - (peak_high - peak_low) / 2.0
+        stage_lines.extend([
+            f"信号后阶段高点: {peak_high:.2f}",
+            f"信号后阶段低点: {peak_low:.2f}",
+            f"中位回落线(上界): {upper_bound:.2f}",
+            f"撤退警戒线(下界): {lower_bound:.2f}",
+        ])
+    if scan_price is not None and float(scan_price) > 0:
+        stage_lines.append(f"当前价格: {float(scan_price):.2f}")
+
     body = [
-        "📉 A股回撤均线金叉预警",
+        "📉 A股洗盘低吸预警",
         f"时间: {now_text}",
         f"股票: {symbol}{cn_suffix}",
-        f"首次预警日: {first_d}",
-        f"预警日收盘: {alert_close:.2f}",
+        f"首次建仓信号日: {first_d}",
+        f"信号日收盘: {alert_close:.2f}",
         f"建仓强度(首次): {pbs:.1f}",
+        *stage_lines,
         *_drop_display_lines(ak_quote, scan_price),
-        f"触发: {ma_line}",
-        "条件: 入队>=7日 | 现价低于预警日收盘 | 量/价5/10均线八选一",
+        f"触发: {ma_line}（洗盘接近尾声）",
+        "建议: 当日收盘买入 或 次日开盘买入",
+        "条件: 信号后3-14日 | 阶段高点回落至中位线下且高于撤退线 | 量能5/10死叉或即将死叉",
     ]
     return "\n".join(body)
 
@@ -278,10 +294,17 @@ def run_rebound_alert_scan(
     macd_slow: int = 17,
     macd_signal: int = 9,
     avg_volume_days: int = 8,
+    on_signal: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> int:
     """
-    遍历 30 日高建仓队列，满足「入队>=7日 + 现价低于预警日收盘 + 均线八选一」则推送。
-    akshare 跌幅仅写入预警正文，不参与过滤。
+    遍历高建仓队列，按「主力建仓后洗盘低吸」策略扫描：
+    - 信号后 3-14 日窗口；
+    - 现价处于 [(3L-H)/2, (H+L)/2) 阶段回落区间；
+    - 量能 5/10 死叉或即将死叉。
+
+    满足条件时推送预警；同一标的每个交易日最多推送一次（按日去重）。
+    若提供 on_signal 回调，则在推送成功后以 payload 形式触达下游（如下单接口）。
+    akshare 跌幅仅写入预警正文展示，不参与过滤。
     返回本轮触发条数。
     """
     if notifier is None:
@@ -294,10 +317,11 @@ def run_rebound_alert_scan(
 
     triggered = 0
     today = _today_beijing()
+    today_iso = today.isoformat()
     updated = False
 
     for entry in queue:
-        if entry.get("rebound_notified"):
+        if entry.get("last_rebound_notified_date") == today_iso:
             continue
         symbol = entry.get("symbol")
         first_d = _parse_date(entry.get("first_alert_date"))
@@ -316,7 +340,7 @@ def run_rebound_alert_scan(
                 cache_minutes=5,
             )
         except Exception as e:
-            print(f"⚠️  回撤预警扫描 {symbol} 取数失败: {e}")
+            print(f"⚠️  洗盘低吸扫描 {symbol} 取数失败: {e}")
             continue
         if not stock_data:
             continue
@@ -326,21 +350,51 @@ def run_rebound_alert_scan(
         if hist is None or scan_price <= 0:
             continue
 
-        ok, ma_trigger = check_rebound_conditions(entry, hist, scan_price, today=today)
+        ok, ma_trigger, peak_high, peak_low = check_rebound_conditions(
+            entry, hist, scan_price, today=today
+        )
         if not ok:
             continue
 
         ak_quote = fetch_rebound_quote(symbol, first_d)
         if not ak_quote:
-            print(f"⚠️  {symbol} akshare 跌幅展示不可用，仍按均线条件推送")
-        msg = _format_rebound_message(entry, ma_trigger, ak_quote=ak_quote, scan_price=scan_price)
-        signal_id = f"rebound:{symbol}:{entry.get('first_alert_date')}"
+            print(f"⚠️  {symbol} akshare 跌幅展示不可用，仍按策略条件推送")
+        msg = _format_rebound_message(
+            entry,
+            ma_trigger,
+            peak_high=peak_high,
+            peak_low=peak_low,
+            scan_price=scan_price,
+            ak_quote=ak_quote,
+        )
+        signal_id = f"rebound:{symbol}:{entry.get('first_alert_date')}:{today_iso}"
         sent = notifier.send_message(msg, reply_markup=None, parse_mode=None)
         if sent:
-            entry["rebound_notified"] = True
+            entry["last_rebound_notified_date"] = today_iso
             entry["rebound_notified_at"] = datetime.now(BEIJING_TZ).isoformat()
             triggered += 1
             updated = True
+
+            payload: Dict[str, Any] = {
+                "signal_id": signal_id,
+                "symbol": symbol,
+                "stock_cn_name": entry.get("stock_cn_name"),
+                "first_alert_date": entry.get("first_alert_date"),
+                "alert_close": float(entry.get("alert_close") or 0),
+                "position_build_score": float(entry.get("position_build_score") or 0),
+                "current_price": scan_price,
+                "peak_high": peak_high,
+                "peak_low": peak_low,
+                "ma_trigger": ma_trigger,
+                "action_hint": "当日收盘买入 或 次日开盘买入",
+                "notified_at": entry["rebound_notified_at"],
+            }
+            if on_signal is not None:
+                try:
+                    on_signal(payload)
+                except Exception as e:
+                    print(f"⚠️  {symbol} on_signal 回调异常: {e}")
+
             try:
                 from telegram_notifier import append_signal_audit
 
@@ -355,12 +409,12 @@ def run_rebound_alert_scan(
                 )
             except Exception:
                 pass
-            print(f"📉 {symbol} 回撤均线预警已推送 ({ma_trigger})")
+            print(f"📉 {symbol} 洗盘低吸预警已推送 ({ma_trigger})")
         else:
-            print(f"⚠️  {symbol} 回撤均线预警推送失败")
+            print(f"⚠️  {symbol} 洗盘低吸预警推送失败")
 
     if updated:
         _save_queue(queue)
     if triggered:
-        print(f"📉 本轮回撤均线预警: {triggered} 条")
+        print(f"📉 本轮洗盘低吸预警: {triggered} 条")
     return triggered
