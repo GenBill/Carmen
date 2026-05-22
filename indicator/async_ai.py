@@ -1,6 +1,7 @@
 import traceback
 from datetime import datetime
 
+from a_share_rebound_alert import maybe_record_high_build_alert
 from scan_ai_common import MIN_POSITION_BUILD_SCORE, OPEN_DROP_FILTER_PCT, is_buy_blocked_by_open_gap
 
 
@@ -26,6 +27,7 @@ def process_ai_task(
     opening_uncertain=False,
     open_gap_filter_enabled=None,
     stock_cn_name=None,
+    alert_date=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
@@ -98,7 +100,7 @@ def process_ai_task(
         result['refined_info'] = refined_info
 
         if bot_notifier and result.get('status') == 'completed':
-            bot_notifier.send_buy_signal(
+            sent_ok = bot_notifier.send_buy_signal(
                 signal_id=signal_id,
                 symbol=symbol,
                 price=price,
@@ -124,6 +126,16 @@ def process_ai_task(
                 stock_cn_name=stock_cn_name,
                 opening_uncertain=opening_uncertain,
             )
+            if sent_ok:
+                try:
+                    maybe_record_high_build_alert(
+                        symbol=symbol,
+                        alert_date=alert_date,
+                        position_build_score=float(position_build_score or 0),
+                        stock_cn_name=stock_cn_name,
+                    )
+                except Exception as e:
+                    print(f"⚠️ {symbol} 高建仓队列入队失败: {e}")
 
         return result
 

@@ -8,7 +8,7 @@ import time
 import html
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, List
 
 from earnings_proximity import earnings_proximity_note
@@ -20,7 +20,46 @@ _global_push_cache = {}
 
 QUEUE_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_pending_queue.json'
 AUDIT_FILE = Path(__file__).resolve().parent / 'runtime' / 'telegram_signal_audit.jsonl'
+ALERT_STATE_FILE = Path(__file__).resolve().parent / 'runtime' / 'carmen_alert_state.json'
 DEFAULT_TELEGRAM_PROXY = os.environ.get('TELEGRAM_PROXY_URL', 'http://127.0.0.1:7890')
+HK_TZ = timezone(timedelta(hours=8))
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=HK_TZ)
+    return parsed.astimezone(HK_TZ)
+
+
+def load_alert_state() -> Dict:
+    if not ALERT_STATE_FILE.exists():
+        return {}
+    try:
+        with open(ALERT_STATE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"⚠️  读取 Carmen 预警状态失败: {e}")
+        return {}
+
+
+def carmen_alerts_muted() -> Tuple[bool, Optional[str]]:
+    state = load_alert_state()
+    muted_until = _parse_iso_datetime(str(state.get('muted_until', '') or ''))
+    if not muted_until:
+        return False, None
+    now = datetime.now(HK_TZ)
+    if now < muted_until:
+        reason = str(state.get('reason', '') or '').strip() or None
+        return True, reason
+    return False, None
 
 
 def build_telegram_request_kwargs(timeout: int = 10) -> Dict:
@@ -226,6 +265,11 @@ class TelegramNotifier:
         print(f"📝 {symbol} 已写入 Telegram 待发送队列")
 
     def flush_pending_queue(self, max_items: int = 20) -> int:
+        muted, reason = carmen_alerts_muted()
+        if muted:
+            append_signal_audit({'event': 'flush_skipped_muted', 'reason': reason})
+            return 0
+
         queue = self._load_pending_queue()
         if not queue:
             return 0
@@ -359,6 +403,12 @@ class TelegramNotifier:
         volume_ratio: Optional[float] = None,
     ) -> bool:
         """发送卖出信号通知（与 QQNotifier 接口兼容）"""
+        muted, reason = carmen_alerts_muted()
+        if muted:
+            print(f"🔕 Carmen Telegram 卖出预警已静音，跳过 {symbol}: {reason or 'no reason'}")
+            append_signal_audit({'event': 'muted_sell_skipped', 'symbol': symbol, 'reason': reason})
+            return False
+
         current_time = time.time()
         if symbol in _global_push_cache:
             last_push_time = _global_push_cache[symbol]
@@ -419,6 +469,12 @@ class TelegramNotifier:
         opening_uncertain: bool = False,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
+        muted, reason = carmen_alerts_muted()
+        if muted:
+            print(f"🔕 Carmen Telegram 买入预警已静音，跳过 {symbol}: {reason or 'no reason'}")
+            append_signal_audit({'event': 'muted_buy_skipped', 'symbol': symbol, 'signal_id': signal_id, 'reason': reason})
+            return False
+
         current_time = time.time()
         append_signal_audit({'event': 'send_attempt', 'symbol': symbol, 'signal_id': signal_id, 'price': price, 'score': score})
         if symbol in _global_push_cache:

@@ -8,6 +8,8 @@ A 股「主力建仓后洗盘低吸」策略：
 from __future__ import annotations
 
 import json
+import html
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -16,6 +18,7 @@ import pandas as pd
 import pytz
 
 from rebound_ak_quote import fetch_rebound_quote
+from telegram_notifier import append_signal_audit, carmen_alerts_muted
 
 HIGH_BUILD_SCORE_THRESHOLD = 9.0
 HISTORY_RETENTION_DAYS = 14
@@ -23,6 +26,7 @@ MIN_DAYS_AFTER_FIRST_ALERT = 3
 
 QUEUE_FILE = Path(__file__).resolve().parent / "runtime" / "a_share_high_build_alerts.json"
 BEIJING_TZ = pytz.timezone("Asia/Shanghai")
+_QUEUE_LOCK = threading.RLock()
 
 
 def _today_beijing() -> date:
@@ -74,12 +78,11 @@ def prune_old_alerts(queue: Optional[List[Dict[str, Any]]] = None) -> List[Dict[
 def maybe_record_high_build_alert(
     symbol: str,
     alert_date: str,
-    alert_close: float,
     position_build_score: float,
     stock_cn_name: Optional[str] = None,
 ) -> None:
     """
-    记录建仓强度 >= HIGH_BUILD_SCORE_THRESHOLD 的 A 股预警；同一标的保留首次预警日期与当日收盘价。
+    记录建仓强度 >= HIGH_BUILD_SCORE_THRESHOLD 的 A 股预警；同一标的保留首次预警日期。
     """
     upper = (symbol or "").upper()
     if not (upper.endswith(".SS") or upper.endswith(".SZ")):
@@ -87,31 +90,31 @@ def maybe_record_high_build_alert(
     if float(position_build_score or 0) < HIGH_BUILD_SCORE_THRESHOLD:
         return
     first_d = _parse_date(alert_date)
-    if first_d is None or alert_close is None or float(alert_close) <= 0:
+    if first_d is None:
         return
 
-    queue = prune_old_alerts()
-    for item in queue:
-        if item.get("symbol") == symbol:
-            item["position_build_score"] = max(
-                float(item.get("position_build_score") or 0),
-                float(position_build_score),
-            )
-            if stock_cn_name and not item.get("stock_cn_name"):
-                item["stock_cn_name"] = stock_cn_name
-            _save_queue(queue)
-            return
+    with _QUEUE_LOCK:
+        queue = prune_old_alerts()
+        for item in queue:
+            if item.get("symbol") == symbol:
+                item["position_build_score"] = max(
+                    float(item.get("position_build_score") or 0),
+                    float(position_build_score),
+                )
+                if stock_cn_name and not item.get("stock_cn_name"):
+                    item["stock_cn_name"] = stock_cn_name
+                _save_queue(queue)
+                return
 
-    queue.append(
-        {
-            "symbol": symbol,
-            "stock_cn_name": (stock_cn_name or "").strip() or None,
-            "first_alert_date": first_d.isoformat(),
-            "alert_close": round(float(alert_close), 4),
-            "position_build_score": round(float(position_build_score), 2),
-        }
-    )
-    _save_queue(queue)
+        queue.append(
+            {
+                "symbol": symbol,
+                "stock_cn_name": (stock_cn_name or "").strip() or None,
+                "first_alert_date": first_d.isoformat(),
+                "position_build_score": round(float(position_build_score), 2),
+            }
+        )
+        _save_queue(queue)
 
 
 def _ma_pair_df(short: pd.Series, long: pd.Series) -> pd.DataFrame:
@@ -179,8 +182,7 @@ def check_rebound_conditions(
        「今日刚死叉」或「即将死叉」。
     """
     first_d = _parse_date(entry.get("first_alert_date"))
-    alert_close = float(entry.get("alert_close") or 0)
-    if first_d is None or alert_close <= 0:
+    if first_d is None:
         return False, None, None, None
 
     today = today or _today_beijing()
@@ -249,39 +251,27 @@ def _format_rebound_message(
     ak_quote: Optional[Dict[str, Any]] = None,
 ) -> str:
     symbol = entry.get("symbol", "")
-    cn = entry.get("stock_cn_name") or ""
-    cn_suffix = f" {cn}" if cn else ""
+    split_symbol = str(symbol).split(".")
+    split_symbol_0 = split_symbol[0]
+    split_symbol_1 = f"[{split_symbol[1]}]" if len(split_symbol) == 2 else ""
+    cn = (entry.get("stock_cn_name") or "").strip()
+    cn_suffix = f" {html.escape(cn)}" if cn else ""
     first_d = entry.get("first_alert_date", "")
-    alert_close = float(entry.get("alert_close") or 0)
     pbs = float(entry.get("position_build_score") or 0)
     now_text = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
     ma_line = ma_trigger or "量能5/10死叉"
-
-    stage_lines: List[str] = []
-    if peak_high is not None and peak_low is not None and peak_high > peak_low:
-        upper_bound = (peak_high + peak_low) / 2.0
-        lower_bound = peak_low - (peak_high - peak_low) / 2.0
-        stage_lines.extend([
-            f"信号后阶段高点: {peak_high:.2f}",
-            f"信号后阶段低点: {peak_low:.2f}",
-            f"中位回落线(上界): {upper_bound:.2f}",
-            f"撤退警戒线(下界): {lower_bound:.2f}",
-        ])
-    if scan_price is not None and float(scan_price) > 0:
-        stage_lines.append(f"当前价格: {float(scan_price):.2f}")
+    stock_line = f"股票: <code>{html.escape(split_symbol_0)}</code>{split_symbol_1}{cn_suffix}"
 
     body = [
         "📉 A股洗盘低吸预警",
         f"时间: {now_text}",
-        f"股票: {symbol}{cn_suffix}",
+        stock_line,
         f"首次建仓信号日: {first_d}",
-        f"信号日收盘: {alert_close:.2f}",
         f"建仓强度(首次): {pbs:.1f}",
-        *stage_lines,
-        *_drop_display_lines(ak_quote, scan_price),
-        f"触发: {ma_line}（洗盘接近尾声）",
+        f"当前价格: {float(scan_price):.2f}",
+        "",
+        f"触发: {html.escape(ma_line)}（洗盘接近尾声）",
         "建议: 当日收盘买入 或 次日开盘买入",
-        "条件: 信号后3-14日 | 阶段高点回落至中位线下且高于撤退线 | 量能5/10死叉或即将死叉",
     ]
     return "\n".join(body)
 
@@ -356,6 +346,20 @@ def run_rebound_alert_scan(
         if not ok:
             continue
 
+        muted, reason = carmen_alerts_muted()
+        if muted:
+            print(f"🔕 Carmen 洗盘低吸预警已静音，跳过 {symbol}: {reason or 'no reason'}")
+            append_signal_audit(
+                {
+                    "event": "muted_rebound_skipped",
+                    "symbol": symbol,
+                    "first_alert_date": entry.get("first_alert_date"),
+                    "ma_trigger": ma_trigger,
+                    "reason": reason,
+                }
+            )
+            continue
+
         ak_quote = fetch_rebound_quote(symbol, first_d)
         if not ak_quote:
             print(f"⚠️  {symbol} akshare 跌幅展示不可用，仍按策略条件推送")
@@ -368,7 +372,7 @@ def run_rebound_alert_scan(
             ak_quote=ak_quote,
         )
         signal_id = f"rebound:{symbol}:{entry.get('first_alert_date')}:{today_iso}"
-        sent = notifier.send_message(msg, reply_markup=None, parse_mode=None)
+        sent = notifier.send_message(msg, reply_markup=None, parse_mode="HTML")
         if sent:
             entry["last_rebound_notified_date"] = today_iso
             entry["rebound_notified_at"] = datetime.now(BEIJING_TZ).isoformat()
@@ -380,7 +384,6 @@ def run_rebound_alert_scan(
                 "symbol": symbol,
                 "stock_cn_name": entry.get("stock_cn_name"),
                 "first_alert_date": entry.get("first_alert_date"),
-                "alert_close": float(entry.get("alert_close") or 0),
                 "position_build_score": float(entry.get("position_build_score") or 0),
                 "current_price": scan_price,
                 "peak_high": peak_high,

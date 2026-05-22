@@ -37,8 +37,6 @@ from scan_ai_common import (
     skip_gate_log_suffix,
 )
 from a_share_rebound_alert import (
-    HIGH_BUILD_SCORE_THRESHOLD,
-    maybe_record_high_build_alert,
     run_rebound_alert_scan,
 )
 from agent.deepseek import fetch_a_share_data
@@ -279,18 +277,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 gate_blocked = False
                 ai_launched = False
                 
-                volume_ma_info_early = stock_data.get('volume_ma_info') or {}
-                pbs_early = float(volume_ma_info_early.get('position_build_score', 0) or 0)
-                if pbs_early >= HIGH_BUILD_SCORE_THRESHOLD:
-                    cn_name_early = a_share_names_map.get(symbol) or a_share_names_map.get(symbol.strip())
-                    maybe_record_high_build_alert(
-                        symbol=symbol,
-                        alert_date=stock_data.get('date'),
-                        alert_close=stock_data.get('close'),
-                        position_build_score=pbs_early,
-                        stock_cn_name=cn_name_early,
-                    )
-
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
                 score_vegas = vegas_indicator(stock_data)
@@ -402,6 +388,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                     opening_uncertain=opening_ctx.opening_uncertain,
                                     open_gap_filter_enabled=opening_ctx.open_drop_filter_enabled,
                                     stock_cn_name=cn_name,
+                                    alert_date=stock_data.get('date'),
                                 )
 
                                 stock_data['_ai_future'] = future
