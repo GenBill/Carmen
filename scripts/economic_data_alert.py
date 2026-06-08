@@ -23,7 +23,7 @@ INDICATOR_DIR = os.path.join(BASE_DIR, 'indicator')
 if INDICATOR_DIR not in sys.path:
     sys.path.append(INDICATOR_DIR)
 
-from telegram_notifier import load_telegram_token, build_telegram_request_kwargs  # noqa: E402
+from telegram_notifier import load_telegram_token, build_telegram_request_kwargs, parse_telegram_chat_ids  # noqa: E402
 
 INFO_BOT_TOKEN_PATH = '/home/serv/.openclaw/secrets/telegram_daily_news.token'
 STATE_PATH = '/home/serv/Carmen/runtime/economic_data_alert_state.json'
@@ -205,16 +205,23 @@ def format_dt_hkt(dt_utc: datetime) -> str:
 
 def send_message(text: str) -> None:
     bot_token, chat_id = load_telegram_token(INFO_BOT_TOKEN_PATH)
-    resp = requests.post(
-        f'https://api.telegram.org/bot{bot_token}/sendMessage',
-        data={
-            'chat_id': chat_id,
-            'text': text,
-            'disable_web_page_preview': True,
-        },
-        **TELEGRAM_REQUEST_KWARGS,
-    )
-    resp.raise_for_status()
+    chat_ids = parse_telegram_chat_ids(chat_id)
+    for idx, target_chat_id in enumerate(chat_ids):
+        try:
+            resp = requests.post(
+                f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                data={
+                    'chat_id': target_chat_id,
+                    'text': text,
+                    'disable_web_page_preview': True,
+                },
+                **TELEGRAM_REQUEST_KWARGS,
+            )
+            resp.raise_for_status()
+        except Exception:
+            if idx == 0:
+                raise
+            log(f'Daily News extra forward failed chat_id={target_chat_id}')
 
 
 def build_pre_message(row: Dict, event_dt: datetime) -> str:

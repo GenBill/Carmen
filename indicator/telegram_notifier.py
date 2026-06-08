@@ -7,6 +7,7 @@ import os
 import time
 import html
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, List
@@ -212,6 +213,7 @@ class TelegramNotifier:
         """
         self.bot_token = bot_token
         self.chat_id = chat_id
+        self.chat_ids = parse_telegram_chat_ids(chat_id)
         self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         self.request_kwargs = build_telegram_request_kwargs(timeout=10)
         self.cache_hours = 2
@@ -311,13 +313,25 @@ class TelegramNotifier:
 
         for attempt in range(self.max_retries + 1):
             try:
-                data = {
-                    "chat_id": self.chat_id,
-                    "text": msg,
-                    "disable_web_page_preview": True,
-                }
-                response = requests.post(self.api_url, data=data, **self.request_kwargs)
-                response.raise_for_status()
+                response = None
+                primary_ok = False
+                for idx, target_chat_id in enumerate(self.chat_ids):
+                    data = {
+                        "chat_id": target_chat_id,
+                        "text": msg,
+                        "disable_web_page_preview": True,
+                    }
+                    try:
+                        response = requests.post(self.api_url, data=data, **self.request_kwargs)
+                        response.raise_for_status()
+                        if idx == 0:
+                            primary_ok = True
+                    except Exception as extra_e:
+                        if idx == 0:
+                            raise
+                        print(f"⚠️  Telegram 额外转发失败 chat_id={target_chat_id}: {extra_e}")
+                if not primary_ok:
+                    raise RuntimeError("primary Telegram target not sent")
 
                 if attempt > 0:
                     print(f"✅ Telegram 纯文本推送成功（第{attempt + 1}次尝试）")
@@ -362,17 +376,29 @@ class TelegramNotifier:
 
         for attempt in range(self.max_retries + 1):
             try:
-                data = {
-                    "chat_id": self.chat_id,
-                    "text": msg,
-                    "disable_web_page_preview": True,
-                }
-                if parse_mode is not None:
-                    data["parse_mode"] = parse_mode
-                if reply_markup:
-                    data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-                response = requests.post(self.api_url, data=data, **self.request_kwargs)
-                response.raise_for_status()
+                response = None
+                primary_ok = False
+                for idx, target_chat_id in enumerate(self.chat_ids):
+                    data = {
+                        "chat_id": target_chat_id,
+                        "text": msg,
+                        "disable_web_page_preview": True,
+                    }
+                    if parse_mode is not None:
+                        data["parse_mode"] = parse_mode
+                    if reply_markup:
+                        data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+                    try:
+                        response = requests.post(self.api_url, data=data, **self.request_kwargs)
+                        response.raise_for_status()
+                        if idx == 0:
+                            primary_ok = True
+                    except Exception as extra_e:
+                        if idx == 0:
+                            raise
+                        print(f"⚠️  Telegram 额外转发失败 chat_id={target_chat_id}: {extra_e}")
+                if not primary_ok:
+                    raise RuntimeError("primary Telegram target not sent")
 
                 if attempt > 0:
                     print(f"✅ Telegram 推送成功（第{attempt + 1}次尝试）")
@@ -392,6 +418,34 @@ class TelegramNotifier:
                 wait_time = min(wait_time * self.backoff_multiplier, self.max_wait)
 
         return False
+
+    def send_serenity_analysis(
+        self,
+        symbol: str,
+        msg: str,
+        queue_on_fail: bool = True,
+        signal_id: Optional[str] = None,
+    ) -> bool:
+        """发送买入信号后的 Serenity 模拟人格分析（第二条消息）。"""
+        muted, reason = carmen_alerts_muted()
+        if muted:
+            print(f"🔕 Carmen Telegram Serenity 分析已静音，跳过 {symbol}: {reason or 'no reason'}")
+            append_signal_audit({'event': 'muted_serenity_skipped', 'symbol': symbol, 'signal_id': signal_id, 'reason': reason})
+            return False
+
+        text = (msg or '').strip()
+        if not text:
+            append_signal_audit({'event': 'serenity_empty_skipped', 'symbol': symbol, 'signal_id': signal_id})
+            return False
+
+        append_signal_audit({'event': 'serenity_send_attempt', 'symbol': symbol, 'signal_id': signal_id})
+        success = self.send_message(text, parse_mode='HTML')
+        if success:
+            append_signal_audit({'event': 'serenity_sent', 'symbol': symbol, 'signal_id': signal_id})
+        elif queue_on_fail:
+            append_signal_audit({'event': 'serenity_send_failed', 'symbol': symbol, 'signal_id': signal_id})
+            self._queue_pending_message(symbol, text, signal_id=signal_id, parse_mode='HTML')
+        return success
 
     def send_sell_signal(
         self,
@@ -560,6 +614,16 @@ class TelegramNotifier:
         return success
 
 
+def parse_telegram_chat_ids(chat_id: str) -> List[str]:
+    """Parse one or more Telegram chat IDs. First ID is primary; rest are best-effort forwards."""
+    out = []
+    for item in re.split(r"[\s,;]+", str(chat_id or "")):
+        item = item.strip()
+        if item and item not in out:
+            out.append(item)
+    return out or [str(chat_id).strip()]
+
+
 def load_telegram_token(token_path: str = None) -> Tuple[str, str]:
     """
     从 token 文件加载 Telegram 配置
@@ -587,4 +651,5 @@ def load_telegram_token(token_path: str = None) -> Tuple[str, str]:
     if len(lines) < 2:
         raise ValueError("Telegram token 文件格式不正确，需要两行：第一行是 Bot Token，第二行是 Chat ID")
 
-    return lines[0], lines[1]
+    chat_ids = parse_telegram_chat_ids(" ".join(lines[1:]))
+    return lines[0], " ".join(chat_ids)

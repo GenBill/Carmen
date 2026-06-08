@@ -1,6 +1,6 @@
 """
 扫描阶段是否启动后台 AI 的共用规则（美股 / A股 / 港股一致）。
-闸门：近7日量能金叉 + 建仓评分>=7.0；与回测置信度组合见 buy_signal_ok。
+闸门：近7日量能金叉 + 建仓评分>=9.0；与回测置信度组合见 buy_signal_ok。
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import math
 from datetime import date
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
-MIN_POSITION_BUILD_SCORE = 7.0
+MIN_POSITION_BUILD_SCORE = 9.0
 OPEN_DROP_FILTER_PCT = 4.0
 OPEN_PRICE_VERIFY_TOLERANCE_PCT = 1.0
 

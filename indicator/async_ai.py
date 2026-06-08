@@ -128,6 +128,38 @@ def process_ai_task(
             )
             if sent_ok:
                 try:
+                    from serenity_analysis import claim_serenity_daily_slot, generate_serenity_analysis
+
+                    if not claim_serenity_daily_slot(symbol):
+                        append_signal_audit({'event':'serenity_daily_deduped','symbol':symbol,'signal_id':signal_id})
+                    else:
+                        serenity_text = generate_serenity_analysis(
+                            symbol=symbol,
+                            market=market,
+                            price=price,
+                            score=score,
+                            backtest_str=backtest_str,
+                            rsi=rsi,
+                            volume_ratio=volume_ratio,
+                            turnover_rate=turnover_rate,
+                            volume_ma_info=volume_ma_info,
+                            refined_info=refined_info,
+                            refine_analysis=(result.get('refine_analysis') or '').strip(),
+                            summary_analysis=(result.get('summary_analysis') or '').strip(),
+                            full_analysis=(result.get('full_analysis') or '').strip(),
+                            stock_cn_name=stock_cn_name,
+                        )
+                        if serenity_text:
+                            bot_notifier.send_serenity_analysis(
+                                symbol=symbol,
+                                msg=serenity_text,
+                                signal_id=f"{signal_id}:serenity" if signal_id else None,
+                            )
+                except Exception as e:
+                    print(f"⚠️ {symbol} Serenity 模拟分析链路失败: {e}")
+                    append_signal_audit({'event':'serenity_failed','symbol':symbol,'signal_id':signal_id,'error':str(e)})
+
+                try:
                     maybe_record_high_build_alert(
                         symbol=symbol,
                         alert_date=alert_date,

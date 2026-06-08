@@ -15,7 +15,7 @@ INDICATOR_DIR = os.path.join(BASE_DIR, 'indicator')
 if INDICATOR_DIR not in sys.path:
     sys.path.append(INDICATOR_DIR)
 
-from telegram_notifier import TelegramNotifier, load_telegram_token, build_telegram_request_kwargs  # noqa: E402
+from telegram_notifier import TelegramNotifier, load_telegram_token, build_telegram_request_kwargs, parse_telegram_chat_ids  # noqa: E402
 
 # Dedicated earnings-alert watchlist. Keep this independent from trading/buy-signal watchlists.
 WATCHLIST_PATH = os.path.join(BASE_DIR, 'data', 'earnings_watchlist_us.txt')
@@ -158,16 +158,23 @@ def main() -> int:
     while True:
         attempt += 1
         try:
-            response = requests.post(
-                notifier.api_url,
-                data={
-                    'chat_id': notifier.chat_id,
-                    'text': message,
-                    'disable_web_page_preview': True,
-                },
-                **TELEGRAM_REQUEST_KWARGS,
-            )
-            response.raise_for_status()
+            response = None
+            for idx, target_chat_id in enumerate(parse_telegram_chat_ids(notifier.chat_id)):
+                try:
+                    response = requests.post(
+                        notifier.api_url,
+                        data={
+                            'chat_id': target_chat_id,
+                            'text': message,
+                            'disable_web_page_preview': True,
+                        },
+                        **TELEGRAM_REQUEST_KWARGS,
+                    )
+                    response.raise_for_status()
+                except Exception:
+                    if idx == 0:
+                        raise
+                    log(f'Daily News extra forward failed chat_id={target_chat_id}')
             if attempt > 1:
                 log(f'plain text telegram push finally succeeded on attempt {attempt}')
             log(f'sent {len(matches)} earnings alerts')

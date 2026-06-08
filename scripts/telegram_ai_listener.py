@@ -32,7 +32,7 @@ WATCHLIST_FILE = os.path.join(INDICATOR_DIR, 'daily_watchlist.json')
 if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
 
-from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot, build_telegram_request_kwargs  # noqa: E402
+from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot, build_telegram_request_kwargs, parse_telegram_chat_ids  # noqa: E402
 from scan_ai_common import resolve_opening_price_context_for_filter  # noqa: E402
 from analysis import (  # noqa: E402
     get_analysis_context,
@@ -475,7 +475,8 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
 
 
 def main():
-    bot_token, chat_id = load_telegram_token()
+    bot_token, configured_chat_id = load_telegram_token()
+    chat_id = parse_telegram_chat_ids(configured_chat_id)[0]
     offset = load_offset()
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
     register_bot_commands(bot_token)
@@ -494,7 +495,7 @@ def main():
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
-            flush_pending_telegram_queue(bot_token, chat_id)
+            flush_pending_telegram_queue(bot_token, configured_chat_id)
             for update in payload.get('result', []):
                 offset = max(offset, update['update_id'] + 1)
                 handle_update(bot_token, chat_id, update)

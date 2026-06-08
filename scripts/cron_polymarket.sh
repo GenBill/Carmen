@@ -14,33 +14,46 @@ RETRY_SLEEP=1800
 send_report() {
   local raw_output="$1"
   local bot_token
-  local chat_id
+  local chat_ids
 
   bot_token=$(sed -n '1p' "$INFO_BOT_TOKEN_FILE" | tr -d '\r')
-  chat_id=$(sed -n '2p' "$INFO_BOT_TOKEN_FILE" | tr -d '\r')
+  chat_ids=$(sed -n '2,$p' "$INFO_BOT_TOKEN_FILE" | grep -v '^#' | tr '\n' ' ' | tr -d '\r')
 
-  BOT_TOKEN="$bot_token" CHAT_ID="$chat_id" TEXT_REPORT="$raw_output" "$PYTHON_BIN" - <<'PY'
+  BOT_TOKEN="$bot_token" CHAT_IDS="$chat_ids" TEXT_REPORT="$raw_output" "$PYTHON_BIN" - <<'PY'
 import os
+import re
 import requests
 
 bot_token = os.environ['BOT_TOKEN']
-chat_id = os.environ['CHAT_ID']
+chat_ids = []
+for item in re.split(r'[\s,;]+', os.environ.get('CHAT_IDS', '')):
+    item = item.strip()
+    if item and item not in chat_ids:
+        chat_ids.append(item)
 text_report = os.environ['TEXT_REPORT']
 proxy = os.environ.get('TELEGRAM_PROXY_URL', 'http://127.0.0.1:7890')
 request_kwargs = {'timeout': 20}
 if proxy:
     request_kwargs['proxies'] = {'http': proxy, 'https': proxy}
-resp = requests.post(
-    f"https://api.telegram.org/bot{bot_token}/sendMessage",
-    data={
-        "chat_id": chat_id,
-        "text": text_report,
-        "disable_web_page_preview": True,
-    },
-    **request_kwargs,
-)
-print(resp.text)
-resp.raise_for_status()
+if not chat_ids:
+    raise RuntimeError('no Telegram chat ids configured')
+for idx, chat_id in enumerate(chat_ids):
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": text_report,
+                "disable_web_page_preview": True,
+            },
+            **request_kwargs,
+        )
+        print(resp.text)
+        resp.raise_for_status()
+    except Exception as e:
+        if idx == 0:
+            raise
+        print(f"WARN extra forward failed chat_id={chat_id}: {e}")
 PY
 }
 
