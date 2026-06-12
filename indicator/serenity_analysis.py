@@ -6,11 +6,13 @@ The Serenity perspective itself is supplied by the OpenClaw AgentSkill layer.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -261,11 +263,16 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
     )
     agent_id = os.environ.get("CARMEN_SERENITY_OPENCLAW_AGENT", "main")
     model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip()
+    session_prefix = os.environ.get("CARMEN_SERENITY_OPENCLAW_SESSION_PREFIX", "tmp-carmen-serenity").strip() or "tmp-carmen-serenity"
+    prompt_hash = hashlib.sha1(prompt.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    session_id = f"{session_prefix}-{int(time.time())}-{prompt_hash}"
     cmd = [
         openclaw_bin,
         "agent",
         "--agent",
         agent_id,
+        "--session-id",
+        session_id,
         "--message",
         prompt,
         "--json",

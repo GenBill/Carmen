@@ -7,7 +7,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
 def exclude_st_stocks(df: pd.DataFrame) -> pd.DataFrame:
-    """过滤掉名称以 ST/*ST/S*ST 开头的股票"""
+    """过滤掉 ST 及退市整理/已退市股票。"""
     if 'Name' not in df.columns:
         return df
 
@@ -19,25 +19,40 @@ def exclude_st_stocks(df: pd.DataFrame) -> pd.DataFrame:
         .str.replace('\u3000', '', regex=False)
         .str.upper()
     )
-    st_mask = name_series.str.startswith(('ST', '*ST', 'S*ST'))
-    return df[~st_mask].copy()
+    invalid_mask = name_series.str.startswith(('ST', '*ST', 'S*ST', '退市'))
+    return df[~invalid_mask].copy()
+
+
+def _read_sse_stock_file(file_path: str) -> pd.DataFrame:
+    """读取上交所下载的 TSV 股票列表。"""
+    try:
+        return pd.read_csv(file_path, sep='\t', encoding='gb18030', dtype=str)
+    except Exception:
+        return pd.read_csv(file_path, sep='\t', encoding='gbk', dtype=str)
 
 
 def process_sh_stock():
-    """处理上海证券交易所股票数据"""
-    file_path = 'stocks_list/cache/SH_stock_list.csv'
-    
-    # SH 文件实际上是制表符分隔的文本文件 (TSV)，编码为 GB18030
-    try:
-        # 使用 read_csv 读取
-        df = pd.read_csv(file_path, sep='\t', encoding='gb18030', dtype=str)
-    except Exception:
-        # 备用尝试
-        df = pd.read_csv(file_path, sep='\t', encoding='gbk', dtype=str)
-    
+    """处理上海证券交易所股票数据，包含主板 + 科创板。"""
+    file_paths = [
+        'stocks_list/cache/SH_stock_list.csv',
+        # stockType=8: 科创板。保留独立文件，避免上交所 stockType=1 口径变化时漏掉 688/689。
+        'stocks_list/cache/SH_star_stock_list.csv',
+    ]
+
+    frames = []
+    for file_path in file_paths:
+        if not os.path.exists(file_path):
+            continue
+        frames.append(_read_sse_stock_file(file_path))
+
+    if not frames:
+        raise FileNotFoundError('未找到上交所股票列表缓存')
+
+    df = pd.concat(frames, ignore_index=True)
+
     # 清理列名空格
     df.columns = df.columns.str.strip()
-    
+
     # 提取A股代码和证券简称
     # 目标列: '公司代码', '公司简称'
     if '公司代码' in df.columns:
@@ -45,21 +60,22 @@ def process_sh_stock():
     else:
         # 如果列名不对，尝试使用索引（第1列和第2列）
         result = df.iloc[:, [0, 1]].copy()
-    
+
     result.columns = ['Symbol', 'Name']
-    
+
     # 过滤掉空值
     result = result.dropna()
-    
+
     # 清理数据空格
     result['Symbol'] = result['Symbol'].str.strip()
     result['Name'] = result['Name'].str.strip()
-    
+
     # 确保代码是6位
     result['Symbol'] = result['Symbol'].str.zfill(6)
-    
+
     # 添加.SS后缀（上海）
     result['Symbol'] = result['Symbol'] + '.SS'
+    result = result.drop_duplicates(subset=['Symbol'], keep='first')
     return exclude_st_stocks(result)
 
 

@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import math
 import os
+import re
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -21,6 +22,27 @@ BLACKLIST_TAG_SLUGS = {
 BLACKLIST_TITLE_KEYWORDS = {
     'gta', 'jesus', 'movie', 'oscar', 'grammy',
 }
+
+ELECTION_KEYWORDS = {
+    'election', 'electoral', 'presidential election', 'general election',
+    'primary election', 'runoff election',
+}
+
+US_CONTEXT_KEYWORDS = {
+    'united states', 'america', 'american',
+}
+
+US_CONTEXT_PATTERN = re.compile(r'(?<![a-z])(?:us|u\.s\.|u\.s\.a\.|usa)(?![a-z])', re.IGNORECASE)
+
+
+def is_non_us_election_market(text):
+    text_lower = text.lower()
+    if not any(keyword in text_lower for keyword in ELECTION_KEYWORDS):
+        return False
+    return not (
+        any(keyword in text_lower for keyword in US_CONTEXT_KEYWORDS)
+        or US_CONTEXT_PATTERN.search(text)
+    )
 
 
 def get_popular_events():
@@ -49,8 +71,11 @@ def build_report(events):
         markets = event.get('markets', [])
         for m in markets:
             question_text = str(m.get('question', event.get('title', '')))
+            market_context = f"{event.get('title', '')} {question_text}"
             question_lower = question_text.lower()
             if any(keyword in question_lower for keyword in BLACKLIST_TITLE_KEYWORDS):
+                continue
+            if is_non_us_election_market(market_context):
                 continue
             if not m.get('active') or m.get('closed'):
                 continue

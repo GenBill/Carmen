@@ -15,6 +15,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -69,7 +70,10 @@ PRE_ALERT_MIN_HOURS = 20
 PRE_ALERT_MAX_HOURS = 28
 POST_GRACE_DAYS = 3
 EARLY_ACTUAL_STALE_GRACE = timedelta(minutes=15)
+ANALYSIS_RETRY_DELAYS = [timedelta(minutes=5), timedelta(minutes=15), timedelta(hours=1), timedelta(hours=3), timedelta(hours=6)]
+ANALYSIS_MAX_RETRIES = len(ANALYSIS_RETRY_DELAYS)
 HKT = timezone(timedelta(hours=8))
+NASDAQ_CALENDAR_TZ = ZoneInfo('America/New_York')
 
 
 def log(msg: str) -> None:
@@ -85,6 +89,7 @@ def load_state() -> Dict:
             data.setdefault('post_sent', {})  # legacy: treated as both raw+analysis sent
             data.setdefault('raw_sent', {})
             data.setdefault('analysis_sent', {})
+            data.setdefault('analysis_retry', {})
             data.setdefault('stale_actual', {})
             data.setdefault('value_sent', {})
             data.setdefault('pre_guard', {})
@@ -98,6 +103,7 @@ def load_state() -> Dict:
         'post_sent': {},
         'raw_sent': {},
         'analysis_sent': {},
+        'analysis_retry': {},
         'stale_actual': {},
         'value_sent': {},
         'pre_guard': {},
@@ -151,13 +157,13 @@ def fetch_calendar(day: datetime) -> List[Dict]:
 
 def parse_event_dt_utc(row: Dict) -> Optional[datetime]:
     date_str = row.get('_calendar_date')
-    gmt = clean_text(row.get('gmt'))
-    if not date_str or not gmt or not re.match(r'^\d{1,2}:\d{2}$', gmt):
+    time_text = clean_text(row.get('gmt'))
+    if not date_str or not time_text or not re.match(r'^\d{1,2}:\d{2}$', time_text):
         return None
     try:
-        hh, mm = map(int, gmt.split(':'))
+        hh, mm = map(int, time_text.split(':'))
         y, m, d = map(int, date_str.split('-'))
-        return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
+        return datetime(y, m, d, hh, mm, tzinfo=NASDAQ_CALENDAR_TZ).astimezone(timezone.utc)
     except Exception:
         return None
 
@@ -266,6 +272,43 @@ def prune_state(state: Dict, now: datetime) -> None:
     for section in ('value_sent', 'pre_guard'):
         items = state.get(section, {})
         state[section] = {k: v for k, v in items.items() if v >= (now - timedelta(days=45)).isoformat()}
+    retry_cutoff = now - timedelta(days=45)
+    retry_items = state.get('analysis_retry', {})
+    kept_retries = {}
+    for k, v in retry_items.items():
+        if not isinstance(v, dict):
+            continue
+        if k[:12] >= cutoff or parse_iso_dt(clean_text(v.get('last_attempt_at'))) >= retry_cutoff:
+            kept_retries[k] = v
+    state['analysis_retry'] = kept_retries
+
+
+def parse_iso_dt(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def analysis_retry_ready(state: Dict, key: str, now: datetime) -> bool:
+    retry = state.get('analysis_retry', {}).get(key)
+    if not retry:
+        return True
+    if int(retry.get('attempts', 0) or 0) >= ANALYSIS_MAX_RETRIES:
+        return False
+    return parse_iso_dt(clean_text(retry.get('next_retry_at'))) <= now
+
+
+def record_analysis_retry(state: Dict, key: str, now: datetime, error: Exception) -> None:
+    retry = state.setdefault('analysis_retry', {}).get(key, {})
+    attempts = int(retry.get('attempts', 0) or 0) + 1
+    delay = ANALYSIS_RETRY_DELAYS[min(attempts - 1, len(ANALYSIS_RETRY_DELAYS) - 1)]
+    state['analysis_retry'][key] = {
+        'attempts': attempts,
+        'last_attempt_at': now.isoformat(),
+        'next_retry_at': (now + delay).isoformat(),
+        'last_error': str(error)[:500],
+    }
 
 
 def collect_rows(now: datetime) -> Iterable[Dict]:
@@ -487,13 +530,27 @@ def main() -> int:
             send_message(build_raw_group_message(group))
             state['raw_sent'][key] = now.isoformat()
             state['value_sent'][vkey] = now.isoformat()
+            save_state(state)
             raw_count += 1
 
-        if post_ready and not value_done and not legacy_post_done and not legacy_analysis_done and key not in state['analysis_sent']:
-            trigger_wyrd_group_analysis(group)
-            state['analysis_sent'][key] = now.isoformat()
-            state['value_sent'][vkey] = now.isoformat()
-            analysis_count += 1
+        analysis_ready = (
+            post_ready
+            and not legacy_post_done
+            and not legacy_analysis_done
+            and key not in state['analysis_sent']
+            and analysis_retry_ready(state, key, now)
+        )
+        if analysis_ready:
+            try:
+                trigger_wyrd_group_analysis(group)
+                state['analysis_sent'][key] = now.isoformat()
+                state.get('analysis_retry', {}).pop(key, None)
+                save_state(state)
+                analysis_count += 1
+            except Exception as e:
+                record_analysis_retry(state, key, now, e)
+                save_state(state)
+                log(f'wyrd analysis failed key={key}: {e}')
 
     save_state(state)
     log(f'done pre={pre_count} raw={raw_count} wyrd_analysis={analysis_count}')

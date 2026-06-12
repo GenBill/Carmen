@@ -128,11 +128,16 @@ def update_stock_lists_cache():
     hk_file = cache_dir / "HK_stock_list.xlsx"
     download_file_generic(hk_url, hk_file, headers={'User-Agent': 'Mozilla/5.0'})
     
-    # SH (上海)
-    # Referer 是必须的
+    # SH (上海主板 + 科创板)
+    # Referer 是必须的；stockType=8 为科创板，单独缓存后在 get_China_A_stock.py 合并。
+    sse_headers = {'Referer': 'http://www.sse.com.cn/', 'User-Agent': 'Mozilla/5.0'}
     sh_url = "http://query.sse.com.cn/security/stock/downloadStockListFile.do?csrcCode=&stockCode=&areaName=&stockType=1"
     sh_file = cache_dir / "SH_stock_list.csv"
-    download_file_generic(sh_url, sh_file, headers={'Referer': 'http://www.sse.com.cn/', 'User-Agent': 'Mozilla/5.0'})
+    download_file_generic(sh_url, sh_file, headers=sse_headers)
+
+    sh_star_url = "http://query.sse.com.cn/security/stock/downloadStockListFile.do?csrcCode=&stockCode=&areaName=&stockType=8"
+    sh_star_file = cache_dir / "SH_star_stock_list.csv"
+    download_file_generic(sh_star_url, sh_star_file, headers=sse_headers)
     
     # SZ (深圳)
     rand_val = random.random()
