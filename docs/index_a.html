@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="ae269f3154af8f9469df0aff3a5e2733">
+    <meta data-hash="aa17c928c191fff8a95b787dd7fc137b">
     <title>Carmen Stock Scanner - A股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -152,40 +152,14 @@
         <pre id="output"></pre>
         
         <!-- AI分析结果部分 -->
-        <div class="ai-analysis-section"><div class="ai-analysis-header">AI深度分析报告</div>
-        <div class="ai-analysis-item">
-            <div class="ai-analysis-header-item">
-                <div>
-                    <span class="ai-analysis-symbol">688131.SS</span>
-                    <span class="ai-analysis-price">当前价格: $86.37</span>
-                </div>
-                <span class="ai-analysis-score">买入评分: 2.4</span>
-            </div>
-            <div class="ai-analysis-content">### 688131.SS 皓元医药 短线技术分析执行摘要
-
-**结论：谨慎看多，严格控仓**
-
-- **多空判断**：短线技术面**偏强**，MACD金叉加速、倍量突破，属主升浪加速段。但**RSI(7)=77.62**进入超买区，价格偏离均线达13.6%，回调风险显著。
-- **关键价位**：
-  - **买入区间**：$83.50 ~ $85.00（逢回调介入）
-  - **止损位**：$81.50（-5.6%，跌破坚决离场）
-  - **目标止盈**：$89.00 ~ $90.00（+3%~+4%）
-  - **放弃买入**：若高开＞$88（+2%）
-- **风险提示**：
-  - **技术回调**：近5日涨12.1%，获利盘巨大，RSI超买预示回调。
-  - **天量见顶**：今日成交量比2.65（近24日最高），历史类似天量后常回调。
-  - **周末持仓**：周五买入需跨周末，消息面不可控。
-  - **均线乖离**：价格偏离EMA(20)达+13.6%，短线严重超买。
-- **操作建议**：**仓位≤5%**，严格止损$81.50；若高开过多则放弃，等待下次机会。</div>
-        </div>
-        </div>
         
-        <div class="upload-time">📤 上传时间: 2026-06-19 12:01:51</div>
+        
+        <div class="upload-time">📤 上传时间: 2026-06-19 14:17:30</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ A股市场扫描 | 2026-06-19 11:52:48 CST
+        const terminalOutput = `⏰ A股市场扫描 | 2026-06-19 13:14:00 CST
 查询 4664 只股票 | RSI8 | MACD(8,17,9) | A股市场
 
 ========================================================================================================================
@@ -206,10 +180,10 @@
 300943.SZ |  $41.40 [91m+20.98%[0m | 量比:[91m[1m   275.0%[0m | RSI:  45.0 [91m↑[0m 68.1 | DIF:[91m  0.01[0m DEA:[92m -0.36[0m 斜率: [91m+0.54[0m | [91m[1mBuy 2.4[0m (28/42) vs [92mSell 0.0[0m
 301111.SZ |  $27.95 [92m -9.87%[0m | 量比:[91m[1m   256.4%[0m | RSI:  66.4 [92m↓[0m 53.0 | DIF:[91m  0.41[0m DEA:[91m  0.57[0m 斜率: [91m+0.12[0m | [91m[1mBuy 2.4[0m (19/28) vs [92mSell 0.0[0m
 ========================================================================================================================
-⚠️ 本轮查询: 成功 4648 | 失败 16
+⚠️ 本轮查询: 成功 4651 | 失败 13
 🔔 本次扫描发现 11 个信号！
 
-📋 黑名单摘要: 6901 只股票 | 最近7天新增: 13 | 今日已检查: 0 | 平均成交金额: $2,264,493 | 移除阈值: $20,000,000 (2.0x)`;
+📋 黑名单摘要: 6901 只股票 | 最近7天新增: 12 | 今日已检查: 0 | 平均成交金额: $2,264,493 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
     </script>
