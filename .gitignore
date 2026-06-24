@@ -25,3 +25,8 @@ autotube/*cookies.txt
 runtime/telegram_listener.offset
 runtime/economic_data_alert_state.json
 indicator/runtime/*
+
+overfit_data/*.csv
+overfit_data/*.json
+overfit_data/*.jsonl
+overfit_data/market_cache/yfinance/*.json

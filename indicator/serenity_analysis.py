@@ -165,19 +165,55 @@ def build_serenity_prompt(
         if item:
             lines.append(item)
 
+    carmen_ai_context = {
+        "refine_analysis": _compact_text(refine_analysis, 1800),
+        "summary_analysis": _compact_text(summary_analysis, 1800),
+        "full_analysis": _compact_text(full_analysis, 3600),
+    }
     request = {
-        "task": "用 Serenity 的视角，为 Carmen 买入预警生成紧跟其后的第二条 Telegram 分析消息。必须进行联网搜索确认。",
-        "output_requirements": {
+        "task": "调用 serenity-skill。先完成长版 Serenity 深度分析，再把长版压缩成紧跟 Carmen 买入预警发送的 Telegram 短消息。",
+        "workflow_requirements": {
+            "step_1": "先生成长版深度分析，必须按 Serenity workflow 走：产业链层级、稀缺层/行业chokepoint、公司所在位置、联网证据、证据强弱、反方/失效条件、下一步验证。",
+            "step_2": "再只基于长版分析，整理成 Telegram 短消息。",
+            "must_use_live_search": True,
+            "must_state_if_industry_chokepoint": True,
+            "do_not_fabricate_unprovided_fundamentals": True,
+        },
+        "long_analysis_requirements": {
             "language": "zh-CN",
-            "max_chars": 240,
+            "format": "plain_text",
+            "include_sections": [
+                "结论",
+                "产业链位置",
+                "是否行业chokepoint",
+                "联网证据",
+                "证据强弱",
+                "技术触发与基本面关系",
+                "反方/失效条件",
+                "下一步验证",
+            ],
+        },
+        "telegram_message_requirements": {
+            "language": "zh-CN",
+            "min_chars": 240,
+            "max_chars": 360,
             "do_not_include_title": True,
             "disclaimer": "",
             "no_markdown_table": True,
-            "do_not_fabricate_unprovided_fundamentals": True,
+            "style": "结论优先，保留产业链/chokepoint判断、1-2条关键证据、技术面含义、主要风险；不要写成泛泛而谈。",
+        },
+        "output_contract": {
+            "return_both_blocks": True,
+            "long_block_start": "BEGIN_SERENITY_LONG_ANALYSIS",
+            "long_block_end": "END_SERENITY_LONG_ANALYSIS",
+            "telegram_block_start": "BEGIN_TELEGRAM_MESSAGE",
+            "telegram_block_end": "END_TELEGRAM_MESSAGE",
+            "telegram_bot_will_send_only": "BEGIN_TELEGRAM_MESSAGE 和 END_TELEGRAM_MESSAGE 中间的内容",
         },
         "carmen_signal_context": lines,
+        "carmen_ai_context": carmen_ai_context,
     }
-    return "请调用 Serenity skill 处理以下结构化请求；Carmen 只提供数据，不提供人格提示词：\n" + json.dumps(
+    return "请调用 serenity-skill 处理以下结构化请求；Carmen 只提供数据，不提供人格提示词：\n" + json.dumps(
         request,
         ensure_ascii=False,
         indent=2,
@@ -254,6 +290,27 @@ def _extract_openclaw_reply(raw: str) -> str:
     if not text.startswith("{"):
         return text
     return ""
+
+
+def _extract_telegram_message(reply: str) -> str:
+    text = (reply or "").strip()
+    if not text:
+        return ""
+
+    start = "BEGIN_TELEGRAM_MESSAGE"
+    end = "END_TELEGRAM_MESSAGE"
+    if start in text and end in text:
+        chunk = text.split(start, 1)[1].split(end, 1)[0].strip()
+        if chunk:
+            return chunk
+
+    if start in text:
+        chunk = text.split(start, 1)[1].strip()
+        if chunk:
+            return chunk
+
+    # Backward-compatible fallback for older or malformed agent replies.
+    return text
 
 
 def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
@@ -337,8 +394,9 @@ def generate_serenity_analysis(
     try:
         body = _call_openclaw_serenity_skill(
             prompt,
-            timeout_seconds=int(os.environ.get("CARMEN_SERENITY_OPENCLAW_TIMEOUT", "180")),
+            timeout_seconds=int(os.environ.get("CARMEN_SERENITY_OPENCLAW_TIMEOUT", "300")),
         ).strip()
+        body = _extract_telegram_message(body).strip()
         if not body:
             return ""
         title_line = build_serenity_title_line(symbol, stock_cn_name)

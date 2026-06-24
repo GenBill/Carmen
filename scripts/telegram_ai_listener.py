@@ -130,6 +130,7 @@ def register_bot_commands(bot_token: str):
         {'command': 'help', 'description': '查看 Carmen Telegram 指令'},
         {'command': 'ai_analysis', 'description': '仅读缓存：/ai_analysis 600519SS'},
         {'command': 'score', 'description': '实时评分：/score 002930'},
+        {'command': 'duanxian', 'description': '短线是银分析：/duanxian 002930'},
         {'command': 'audit', 'description': '审计链：/audit 002930'}
     ]
     response = requests.post(api_url, data={'commands': json.dumps(commands, ensure_ascii=False)}, **TELEGRAM_REQUEST_KWARGS_FAST)
@@ -141,6 +142,22 @@ def extract_symbol_from_message(text: str, command: str = 'ai_analysis') -> Opti
     if not match:
         return None
     return normalize_symbol(match.group(1))
+
+
+def extract_duanxian_symbol_from_message(text: str) -> Optional[str]:
+    value = text.strip()
+    patterns = [
+        r'^/duanxian(?:@\w+)?\s+(.+?)\s*$',
+        r'^短线是银分析\s+(.+?)\s*$',
+        r'^短线是银\s+(.+?)\s*$',
+        r'^唐能通模式\s+(.+?)\s*$',
+        r'^唐能通分析\s+(.+?)\s*$',
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, value, flags=re.IGNORECASE)
+        if match:
+            return normalize_symbol(match.group(1))
+    return None
 
 
 def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
@@ -279,6 +296,8 @@ def build_help_text() -> str:
         "/help 查看帮助\n"
         "/ai_analysis 002930 读取已缓存 AI 分析\n"
         "/score 002930 实时计算当前评分\n"
+        "/duanxian 002930 OpenClaw 短线是银 AI 分析\n"
+        "短线是银分析 002930 自然语言触发\n"
         "/audit 002930 查看最近审计链"
     )
 
@@ -397,7 +416,7 @@ def spawn_fundamental_worker(symbol: str, bot_token: str, chat_id: str, reply_to
         with open(log_path, 'w', encoding='utf-8') as log_file:
             subprocess.Popen(
                 [
-                    'python', '-u', worker_script,
+                    sys.executable, '-u', worker_script,
                     '--symbol', symbol,
                     '--bot-token', bot_token,
                     '--chat-id', str(chat_id),
@@ -413,6 +432,35 @@ def spawn_fundamental_worker(symbol: str, bot_token: str, chat_id: str, reply_to
         return True
     except Exception as e:
         print(f"⚠️ spawn worker failed: {e}")
+        return False
+
+
+def spawn_duanxian_worker(symbol: str, bot_token: str, chat_id: str, reply_to_message_id: Optional[int] = None) -> bool:
+    ensure_runtime_dir()
+    log_path = os.path.join(RUNTIME_DIR, f"duanxian_{symbol.replace('.', '_')}_{int(time.time())}.log")
+    worker_script = os.path.join(SCRIPT_DIR, 'duanxian_shiyin_analysis.py')
+    env = os.environ.copy()
+    env.setdefault('PYTHONUNBUFFERED', '1')
+    try:
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            subprocess.Popen(
+                [
+                    sys.executable, '-u', worker_script,
+                    '--symbol', symbol,
+                    '--bot-token', bot_token,
+                    '--chat-id', str(chat_id),
+                    '--reply-to-message-id', str(reply_to_message_id or ''),
+                ],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                cwd=CARMEN_ROOT,
+                env=env,
+                start_new_session=True,
+            )
+        print(f"🚀 duanxian worker spawned: symbol={symbol} log={log_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ spawn duanxian worker failed: {e}")
         return False
 
 
@@ -465,6 +513,18 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
                 score_body,
                 reply_to_message_id=message.get('message_id'),
                 parse_mode=score_mode,
+            )
+            return
+
+        symbol = extract_duanxian_symbol_from_message(text)
+        if symbol:
+            ok = spawn_duanxian_worker(symbol, bot_token, chat_id, reply_to_message_id=message.get('message_id'))
+            send_message(
+                bot_token,
+                chat_id,
+                f"📘 已收到 短线是银 AI 分析 {html.escape(symbol)}，正在启动 OpenClaw 临时 session…"
+                if ok else f"📘 短线是银分析启动失败: {html.escape(symbol)}",
+                reply_to_message_id=message.get('message_id'),
             )
             return
 
