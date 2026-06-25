@@ -240,6 +240,33 @@ def format_bowl_tag(bowl_score):
         return f"{Colors.YELLOW}[碗外]{Colors.RESET}"
 
 
+def format_stock_character_tag(stock_character_info):
+    """格式化股性标签：好/一般/差/数据缺失。"""
+    if not isinstance(stock_character_info, dict):
+        return ""
+
+    warning = stock_character_info.get('warning')
+    status = stock_character_info.get('status') or '未知'
+    score = stock_character_info.get('score')
+    reasons = stock_character_info.get('reasons') or []
+
+    if warning:
+        return f" | {Colors.YELLOW}股性:数据缺失(未拦截){Colors.RESET}"
+
+    if status == '好':
+        color = Colors.RED
+    elif status == '一般':
+        color = Colors.YELLOW
+    else:
+        color = Colors.GREEN + Colors.BOLD
+
+    score_text = f"{score:.1f}" if isinstance(score, (int, float)) else "N/A"
+    tag = f" | {color}股性:{status}{Colors.RESET}({score_text})"
+    if reasons:
+        tag += f" {Colors.YELLOW}{';'.join(reasons[:2])}{Colors.RESET}"
+    return tag
+
+
 def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_result=None, bowl_score=None):
     """
     打印单个股票的信息（简化版）
@@ -317,7 +344,8 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
     should_print = is_watchlist_stock or buy_signal or sell_signal
     
     if should_print:
-        line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}"
+        stock_character_tag = format_stock_character_tag(stock_data.get('stock_character_info'))
+        line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}{stock_character_tag}"
         capture_output(line)
     return True
 

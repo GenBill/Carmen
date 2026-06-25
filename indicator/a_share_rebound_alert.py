@@ -1,6 +1,6 @@
 """
 A 股「主力建仓后洗盘低吸」策略：
-- 建仓强度 >= 9.0、信号触发后 3-14 日的窗口内观察；
+- 建仓强度 >= 8.0、信号触发后 3-14 日的窗口内观察；
 - 阶段高点回落（落入 [(3L-H)/2, (H+L)/2) 区间）+ 量能 5/10 死叉或即将死叉时预警；
 - 提示「当日收盘买入 或 次日开盘买入」；
 - 支持外部 on_signal 回调接入下游执行。
@@ -20,7 +20,7 @@ import pytz
 from rebound_ak_quote import fetch_rebound_quote
 from telegram_notifier import append_signal_audit, carmen_alerts_muted
 
-HIGH_BUILD_SCORE_THRESHOLD = 9.0
+HIGH_BUILD_SCORE_THRESHOLD = 8.0
 HISTORY_RETENTION_DAYS = 14
 MIN_DAYS_AFTER_FIRST_ALERT = 3
 

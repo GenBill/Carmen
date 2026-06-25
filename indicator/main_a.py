@@ -31,12 +31,14 @@ from async_ai import process_ai_task
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
+    buy_signal_ok,
     duanxian_tuo_gate_ok,
     is_buy_blocked_by_open_gap,
     resolve_opening_price_context_for_filter,
     should_submit_scan_ai,
     skip_gate_log_suffix,
 )
+from stock_character_filter import evaluate_stock_character
 from a_share_rebound_alert import (
     run_rebound_alert_scan,
 )
@@ -277,6 +279,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 has_recent_golden_cross = False
                 gate_blocked = False
                 ai_launched = False
+                stock_character_info = None
+                stock_character_blocked = False
                 
                 # 计算Carmen指标
                 score_carmen = carmen_indicator(stock_data)
@@ -316,11 +320,27 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             # 后台 AI（与是否配置 Telegram/QQ 解耦；闸门见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
-                            submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
-                                should_submit_scan_ai(score[0], confidence, volume_ma_info, duanxian_tuo_info)
-                            )
-                            submit_ai = submit_ai_vol
-                            gate_blocked = signal_ok and not submit_ai_vol
+                            signal_ok = buy_signal_ok(score[0], confidence)
+
+                            # D 股性过滤：A 标准候选之后、B/C 放行之前，一票否决。
+                            if signal_ok:
+                                stock_character_info = evaluate_stock_character(stock_data)
+                                stock_data['stock_character_info'] = stock_character_info
+                                if not stock_character_info.get('passed', True):
+                                    stock_character_blocked = True
+                                    reasons = '；'.join(stock_character_info.get('reasons') or ['股性过滤未通过'])
+                                    print(f"⏭️  {symbol} 股性过滤D一票否决：{reasons}")
+
+                            if stock_character_blocked:
+                                submit_ai = False
+                                position_build_score = float(volume_ma_info.get('position_build_score', 0) or 0)
+                                has_recent_golden_cross = bool(volume_ma_info.get('has_recent_golden_cross', False))
+                            else:
+                                submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
+                                    should_submit_scan_ai(score[0], confidence, volume_ma_info, duanxian_tuo_info)
+                                )
+                                submit_ai = submit_ai_vol
+                                gate_blocked = signal_ok and not submit_ai_vol
                             if submit_ai:
                                 min_tp = _a_share_min_turnover_pct_now()
                                 a_data: dict = {}
@@ -408,6 +428,9 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         traceback.print_exc()
                 
                 # 不因换手低而跳过终端打印；未知换手一律照常打印
+                if score[0] >= 2.0 and stock_data.get('stock_character_info') is None:
+                    stock_data['stock_character_info'] = evaluate_stock_character(stock_data)
+
                 # 打印股票信息
                 is_watchlist = symbol in watchlist_stocks
                 print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result, bowl_score=bowl_score)
@@ -429,6 +452,12 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
                     volume_ma_info = stock_data.get('volume_ma_info') or {}
                     duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
+                    stock_character_info = stock_data.get('stock_character_info')
+                    if stock_character_info is None:
+                        stock_character_info = evaluate_stock_character(stock_data)
+                        stock_data['stock_character_info'] = stock_character_info
+                    if not stock_character_info.get('passed', True):
+                        continue
                     position_build_score = volume_ma_info.get('position_build_score', 0)
                     has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
                     volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
@@ -462,6 +491,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         '_ai_launched': ai_launched,
                         'volume_ma_info': volume_ma_info,
                         'duanxian_tuo_info': duanxian_tuo_info,
+                        'stock_character_info': stock_character_info,
                     })
                 
                 flush_output()

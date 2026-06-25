@@ -33,15 +33,14 @@ if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
 
 from telegram_notifier import load_telegram_token, TelegramNotifier, format_signal_snapshot, build_telegram_request_kwargs, parse_telegram_chat_ids  # noqa: E402
-from scan_ai_common import resolve_opening_price_context_for_filter  # noqa: E402
 from analysis import (  # noqa: E402
     get_analysis_context,
     read_analysis_cache_entry,
     validate_cache_for_use,
 )
 from get_stock_price import get_stock_data  # noqa: E402
-from indicators import carmen_indicator, vegas_indicator, silver_indicator, backtest_carmen_indicator  # noqa: E402
-from agent.deepseek import fetch_a_share_data  # noqa: E402
+from stock_character_filter import evaluate_stock_character  # noqa: E402
+from indicators import carmen_indicator, vegas_indicator, silver_indicator  # noqa: E402
 
 TELEGRAM_REQUEST_KWARGS = build_telegram_request_kwargs(timeout=30)
 TELEGRAM_REQUEST_KWARGS_FAST = build_telegram_request_kwargs(timeout=15)
@@ -129,7 +128,8 @@ def register_bot_commands(bot_token: str):
     commands = [
         {'command': 'help', 'description': '查看 Carmen Telegram 指令'},
         {'command': 'ai_analysis', 'description': '仅读缓存：/ai_analysis 600519SS'},
-        {'command': 'score', 'description': '实时评分：/score 002930'},
+        {'command': 'score', 'description': '实时评分+股性：/score 002930'},
+        {'command': 'stock_character', 'description': '股性评分：/stock_character 002930'},
         {'command': 'duanxian', 'description': '短线是银分析：/duanxian 002930'},
         {'command': 'audit', 'description': '审计链：/audit 002930'}
     ]
@@ -160,6 +160,103 @@ def extract_duanxian_symbol_from_message(text: str) -> Optional[str]:
     return None
 
 
+def extract_stock_character_symbol_from_message(text: str) -> Optional[str]:
+    value = text.strip()
+    patterns = [
+        r'^/股性(?:@\w+)?\s+(.+?)\s*$',
+        r'^/stock_character(?:@\w+)?\s+(.+?)\s*$',
+        r'^/character(?:@\w+)?\s+(.+?)\s*$',
+        r'^股性\s+(.+?)\s*$',
+        r'^股性检查\s+(.+?)\s*$',
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, value, flags=re.IGNORECASE)
+        if match:
+            return normalize_symbol(match.group(1))
+    return None
+
+
+def _fmt_yuan_amount(value) -> str:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return 'N/A'
+    if x >= 1e8:
+        return f'{x / 1e8:.2f}亿'
+    if x >= 1e4:
+        return f'{x / 1e4:.0f}万'
+    return f'{x:.0f}'
+
+
+def format_stock_character_report(symbol: str, stock_data: dict, info: dict, telegram_html: bool = True) -> str:
+    display_code = symbol.split('.')[0] if symbol.upper().endswith(('.SZ', '.SS', '.HK')) else symbol
+    safe_symbol = html.escape(display_code if telegram_html else symbol)
+    status = info.get('status') or '未知'
+    score = info.get('score')
+    score_text = f'{float(score):.1f}/100' if isinstance(score, (int, float)) else 'N/A'
+    passed = bool(info.get('passed', True))
+    if passed and status == '差':
+        conclusion = '通过；低分观察'
+    else:
+        conclusion = '通过' if passed else 'D一票否决'
+    warning = info.get('warning')
+    reasons = info.get('reasons') or []
+    metrics = info.get('metrics') or {}
+    amount_currency = metrics.get('amount_currency') or ''
+
+    code_text = f'<code>{safe_symbol}</code>' if telegram_html else safe_symbol
+    lines = [
+        '🧬 股性评分',
+        f'股票: {code_text}',
+        f'日期: {html.escape(str(stock_data.get("date") or "N/A"))}',
+        f'状态: {html.escape(status)} | 评分: {html.escape(score_text)} | 结论: {html.escape(conclusion)}',
+    ]
+    if warning:
+        lines.append(f'⚠️ {html.escape(str(warning))}')
+    if reasons:
+        lines.append('否决/扣分原因:')
+        lines.extend(f'- {html.escape(str(reason))}' for reason in reasons[:5])
+    else:
+        lines.append('否决/扣分原因: 无')
+
+    lines.extend([
+        '',
+        '核心统计:',
+        f'- 20日均额: {html.escape(_fmt_yuan_amount(metrics.get("avg_amount_20")))} {html.escape(str(amount_currency))}',
+        f'- 60日均额: {html.escape(_fmt_yuan_amount(metrics.get("avg_amount_60")))} {html.escape(str(amount_currency))}',
+        f'- 冲高回落: 20日{metrics.get("upper_shadow_exhaust_20", "N/A")}次 / 60日{metrics.get("upper_shadow_exhaust_60", "N/A")}次 / 1年{metrics.get("upper_shadow_exhaust_1y", "N/A")}次',
+        f'- 假突破: 60日{metrics.get("false_breakout_60", "N/A")}次 / 1年{metrics.get("false_breakout_1y", "N/A")}次',
+        f'- 杀跌: 20日{metrics.get("large_down_20", "N/A")}次 / 60日{metrics.get("large_down_60", "N/A")}次 / 1年{metrics.get("large_down_1y", "N/A")}次',
+        f'- 放量阴线: 60日{metrics.get("bearish_volume_60", "N/A")}次 / 1年{metrics.get("bearish_volume_1y", "N/A")}次',
+        f'- 1年均线交叉: {metrics.get("ma_cross_count_1y", "N/A")}次',
+        f'- MA20斜率20日: {metrics.get("ma20_slope_20d_pct", "N/A")}%',
+        f'- MA60斜率20日: {metrics.get("ma60_slope_20d_pct", "N/A")}%',
+    ])
+    return '\n'.join(lines)
+
+
+def query_stock_character(symbol: str) -> Tuple[str, Optional[str]]:
+    try:
+        stock_data = get_stock_data(
+            symbol,
+            rsi_period=8,
+            macd_fast=8,
+            macd_slow=17,
+            macd_signal=9,
+            avg_volume_days=8,
+            use_cache=True,
+            cache_minutes=15,
+        )
+    except Exception as e:
+        return f'股性评分失败: {symbol} | {e}', None
+
+    if not stock_data:
+        return f'未获取到 {symbol} 行情/指标数据', None
+
+    info = evaluate_stock_character(stock_data)
+    return format_stock_character_report(symbol, stock_data, info, telegram_html=True), 'HTML'
+
+
 def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     try:
         stock_data = get_stock_data(
@@ -183,40 +280,14 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     score_silver = silver_indicator(stock_data)
     score_buy = round(score_carmen[0] * score_vegas[0] * score_silver, 2)
     score_sell = round(score_carmen[1] * score_vegas[1], 2)
-    backtest_result = None
-    try:
-        backtest_result = backtest_carmen_indicator(
-            symbol, [score_buy, score_sell], stock_data,
-            gate=2.0, rsi_period=8, macd_fast=8, macd_slow=17, macd_signal=9, avg_volume_days=8
-        )
-    except Exception:
-        backtest_result = None
-
     entry = read_analysis_cache_entry(symbol) or {}
     refined = entry.get('refined_info') or {}
     v = stock_data.get('volume_ma_info') or {}
     recent_crosses = v.get('recent_golden_crosses') or []
     cross_text = ' / '.join(c.replace('上穿', 'x') for c in recent_crosses) if recent_crosses else '无'
     volume_ratio = (stock_data.get('estimated_volume', 0) / stock_data.get('avg_volume', 1) * 100) if stock_data.get('avg_volume') else 0
-    turnover_rate = None
-    try:
-        if symbol.endswith('.SZ') or symbol.endswith('.SS'):
-            a_data = fetch_a_share_data(symbol.split('.')[0]) or {}
-            x = a_data.get('换手率')
-            turnover_rate = float(x) if x is not None else None
-    except Exception:
-        turnover_rate = None
-
     stock_cn_name = None
-    usym = symbol.upper()
-    if usym.endswith('.SZ') or usym.endswith('.SS'):
-        try:
-            ad = fetch_a_share_data(symbol.split('.')[0]) or {}
-            nm = ad.get('名称')
-            if nm is not None and str(nm).strip():
-                stock_cn_name = str(nm).strip()
-        except Exception:
-            pass
+    turnover_rate = None
 
     current_above_ma = v.get('current_above_ma') or []
     current_multiple_vs_ma = v.get('current_multiple_vs_ma') or {}
@@ -226,18 +297,13 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     else:
         volume_spike_text = '暂无'
 
-    backtest_text = None
-    if backtest_result and backtest_result.get('buy_prob'):
-        a, b = backtest_result.get('buy_prob')
-        backtest_text = f'{a}/{b}'
-    op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
-    return (
-        format_signal_snapshot(
+    stock_character_info = evaluate_stock_character(stock_data)
+    score_text = format_signal_snapshot(
             title='📊 实时评分',
             symbol=symbol,
             price=float(stock_data.get('close') or 0),
             score=score_buy,
-            backtest_text=backtest_text,
+            backtest_text=None,
             min_buy_price=refined.get('min_buy_price'),
             max_buy_price=refined.get('max_buy_price'),
             buy_time=refined.get('buy_time'),
@@ -257,8 +323,11 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
             now_text=time.strftime('%Y-%m-%d %H:%M'),
             telegram_html=True,
             stock_cn_name=stock_cn_name,
-            opening_uncertain_warning=op_ctx.opening_uncertain,
-        ),
+            opening_uncertain_warning=False,
+        )
+    score_text += '\n\n' + format_stock_character_report(symbol, stock_data, stock_character_info, telegram_html=True)
+    return (
+        score_text,
         'HTML',
     )
 
@@ -295,7 +364,9 @@ def build_help_text() -> str:
         "🤖 Carmen Telegram 指令\n"
         "/help 查看帮助\n"
         "/ai_analysis 002930 读取已缓存 AI 分析\n"
-        "/score 002930 实时计算当前评分\n"
+        "/score 002930 实时计算当前评分 + 股性评分\n"
+        "/股性 002930 只看股性评分\n"
+        "/stock_character 002930 只看股性评分\n"
         "/duanxian 002930 OpenClaw 短线是银 AI 分析\n"
         "短线是银分析 002930 自然语言触发\n"
         "/audit 002930 查看最近审计链"
@@ -513,6 +584,18 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
                 score_body,
                 reply_to_message_id=message.get('message_id'),
                 parse_mode=score_mode,
+            )
+            return
+
+        symbol = extract_stock_character_symbol_from_message(text)
+        if symbol:
+            body, mode = query_stock_character(symbol)
+            send_message(
+                bot_token,
+                chat_id,
+                body,
+                reply_to_message_id=message.get('message_id'),
+                parse_mode=mode,
             )
             return
 
