@@ -143,6 +143,7 @@ class QQNotifier:
                        stop_loss: Optional[float] = None, ai_win_rate: Optional[float] = None,
                        refined_text: Optional[str] = None, bowl_score: Optional[float] = None,
                        volume_ma_info: Optional[dict] = None, turnover_rate: Optional[float] = None,
+                       duanxian_tuo_info: Optional[dict] = None,
                        turnover_warning: Optional[str] = None, queue_on_fail: bool = True,
                        signal_id: Optional[str] = None, rsi_prev: Optional[float] = None,
                        dif: Optional[float] = None, dea: Optional[float] = None,
@@ -224,6 +225,10 @@ class QQNotifier:
         
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
+
+        if duanxian_tuo_info:
+            tuo_summary = duanxian_tuo_info.get('summary') or '无'
+            msg_parts.append(f"短线是银托形态: {tuo_summary}")
         
         msg = "\n".join(msg_parts)
         
@@ -344,4 +349,3 @@ def load_qq_token(token_path: str = None) -> Tuple[str, str]:
         raise ValueError(f"QQ token文件格式不正确，需要两行：第一行是KEY，第二行是QQ号")
     
     return lines[0], lines[1]
-

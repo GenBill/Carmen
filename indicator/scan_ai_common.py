@@ -151,23 +151,42 @@ def volume_ma_ai_gate_ok(volume_ma_info: Optional[Dict[str, Any]]) -> Tuple[bool
     return (gcx and pbs >= MIN_POSITION_BUILD_SCORE), pbs, gcx
 
 
+def duanxian_tuo_gate_ok(duanxian_tuo_info: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    """
+    短线是银 价托/量托闸门。
+    Returns:
+        (gate_ok, summary)
+    """
+    info = duanxian_tuo_info or {}
+    ok = bool(info.get('gate_ok') or info.get('price_tuo_ok') or info.get('volume_tuo_ok'))
+    summary = str(info.get('summary') or '无')
+    return ok, summary
+
+
 def should_submit_scan_ai(
     score_buy: float,
     confidence: float,
     volume_ma_info: Optional[Dict[str, Any]],
+    duanxian_tuo_info: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, bool, float, bool]:
     """
     Returns:
         (submit_background_ai, signal_ok, position_build_score, has_recent_golden_cross)
     """
     sig = buy_signal_ok(score_buy, confidence)
-    gate_ok, pbs, gcx = volume_ma_ai_gate_ok(volume_ma_info)
-    return (sig and gate_ok), sig, pbs, gcx
+    volume_gate_ok, pbs, gcx = volume_ma_ai_gate_ok(volume_ma_info)
+    tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
+    return (sig and (volume_gate_ok or tuo_gate_ok)), sig, pbs, gcx
 
 
-def skip_gate_log_suffix(position_build_score: float, has_recent_golden_cross: bool) -> str:
+def skip_gate_log_suffix(
+    position_build_score: float,
+    has_recent_golden_cross: bool,
+    duanxian_tuo_info: Optional[Dict[str, Any]] = None,
+) -> str:
     """与量能闸门不满足时打印的说明（三市场共用文案）。"""
+    _, tuo_summary = duanxian_tuo_gate_ok(duanxian_tuo_info)
     return (
         f"position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」"
-        f"或近7日无量能金叉（当前金叉={has_recent_golden_cross}），跳过后台AI分析"
+        f"或近7日无量能金叉（当前金叉={has_recent_golden_cross}），且短线是银托形态={tuo_summary}，跳过后台AI分析"
     )

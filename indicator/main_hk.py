@@ -31,6 +31,7 @@ from async_ai import process_ai_task
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
+    duanxian_tuo_gate_ok,
     is_buy_blocked_by_open_gap,
     resolve_opening_price_context_for_filter,
     should_submit_scan_ai,
@@ -221,8 +222,9 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             
                             # 后台 AI（与 A 股同款量能+金叉闸门，见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
+                            duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
                             submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
-                                should_submit_scan_ai(score[0], confidence, volume_ma_info)
+                                should_submit_scan_ai(score[0], confidence, volume_ma_info, duanxian_tuo_info)
                             )
                             submit_ai = submit_ai_vol
                             gate_blocked = signal_ok and not submit_ai_vol
@@ -260,6 +262,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                     volume_ratio=volume_ratio,
                                     bowl_score=bowl_score,
                                     volume_ma_info=stock_data.get('volume_ma_info'),
+                                    duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
                                     rsi_prev=stock_data.get('rsi_prev'),
                                     dif=stock_data.get('dif'),
                                     dea=stock_data.get('dea'),
@@ -272,7 +275,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 stock_data['_ai_future'] = future
 
                             elif gate_blocked:
-                                print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross)}")
+                                print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross, stock_data.get('duanxian_tuo_info'))}")
                             elif (symbol in watchlist_stocks) and score[1] >= 2.0:
                                 # 按需求关闭自选股卖出信号推送：保留内部评分，但不发Telegram/QQ
                                 pass
@@ -301,12 +304,12 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     change_pct = ((price - open_price) / open_price * 100) if open_price > 0 else 0
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
                     volume_ma_info = stock_data.get('volume_ma_info') or {}
+                    duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
                     position_build_score = volume_ma_info.get('position_build_score', 0)
                     has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                    if volume_ma_info and (
-                        not has_recent_golden_cross
-                        or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE
-                    ):
+                    volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
+                    tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
+                    if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
                         continue
                     op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                     if op_ctx.open_drop_filter_enabled and is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
@@ -330,6 +333,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                         # 保存Future供后续获取结果
                         '_ai_future': stock_data.get('_ai_future'),
                         '_ai_result': None,
+                        'volume_ma_info': volume_ma_info,
+                        'duanxian_tuo_info': duanxian_tuo_info,
                     })
                 
                 flush_output()

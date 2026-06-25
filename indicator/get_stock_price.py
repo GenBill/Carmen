@@ -33,6 +33,153 @@ try:
 except:
     broken_stock_symbols = []
 
+
+def _cross_up(short_series, long_series):
+    if short_series is None or long_series is None:
+        return pd.Series(dtype=bool)
+    pair = pd.DataFrame({'short': short_series, 'long': long_series}).dropna()
+    if len(pair) < 2:
+        return pd.Series(dtype=bool)
+    return (pair['short'].shift(1) <= pair['long'].shift(1)) & (pair['short'] > pair['long'])
+
+
+def _recent_cross_names(series_map, pairs, window_days):
+    names = []
+    event_days = []
+    for short_label, long_label in pairs:
+        short_series = series_map.get(short_label)
+        long_series = series_map.get(long_label)
+        cross = _cross_up(short_series, long_series)
+        if cross.empty:
+            continue
+        recent = cross.tail(window_days + 1)
+        if bool(recent.any()):
+            names.append(f'{short_label}上穿{long_label}')
+            idxs = recent[recent].index
+            if len(idxs) > 0:
+                event_days.append(idxs[-1])
+    return names, event_days
+
+
+def _calculate_duanxian_tuo_info(hist, current_close):
+    """
+    短线是银 5/10/20 价托、量托程序化判定。
+    C 条件：价托或量托成立，作为 position_build_score+量能金叉之外的并列放行条件。
+    """
+    default = {
+        'gate_ok': False,
+        'price_tuo_ok': False,
+        'volume_tuo_ok': False,
+        'summary': '无',
+        'price_tuo': {},
+        'volume_tuo': {},
+    }
+    if hist is None or hist.empty or len(hist) < 30:
+        return default
+
+    close = hist['Close'].astype(float)
+    volume = hist['Volume'].astype(float)
+    ma5 = close.rolling(window=5, min_periods=5).mean()
+    ma10 = close.rolling(window=10, min_periods=10).mean()
+    ma20 = close.rolling(window=20, min_periods=20).mean()
+    vma5 = volume.rolling(window=5, min_periods=5).mean()
+    vma10 = volume.rolling(window=10, min_periods=10).mean()
+    vma20 = volume.rolling(window=20, min_periods=20).mean()
+
+    lookback_days = 30
+    cross_window_days = 10
+    price_spread_threshold = 0.04
+    volume_spread_threshold = 0.45
+
+    price_bear = (ma5 < ma10) & (ma10 < ma20)
+    price_bear_recent = bool(price_bear.tail(lookback_days).fillna(False).any())
+    price_lines = pd.concat([ma5, ma10, ma20], axis=1)
+    price_spread = price_lines.max(axis=1) - price_lines.min(axis=1)
+    price_converged = (price_spread / close.replace(0, np.nan)) <= price_spread_threshold
+    price_converged_recent = bool(price_converged.tail(cross_window_days + 1).fillna(False).any())
+    price_crosses, price_cross_days = _recent_cross_names(
+        {'5': ma5, '10': ma10, '20': ma20},
+        [('5', '10'), ('5', '20'), ('10', '20')],
+        cross_window_days,
+    )
+    price_order = bool(
+        pd.notna(ma5.iloc[-1]) and pd.notna(ma10.iloc[-1]) and pd.notna(ma20.iloc[-1])
+        and ma5.iloc[-1] > ma10.iloc[-1] > ma20.iloc[-1]
+    )
+    price_above_tuo = bool(
+        current_close and pd.notna(price_lines.iloc[-1]).all()
+        and float(current_close) > float(price_lines.iloc[-1].max())
+    )
+    price_tuo_ok = (
+        price_bear_recent
+        and price_converged_recent
+        and len(price_crosses) >= 3
+        and price_order
+        and price_above_tuo
+    )
+
+    volume_bear = (vma5 < vma10) & (vma10 < vma20)
+    volume_bear_recent = bool(volume_bear.tail(lookback_days).fillna(False).any())
+    volume_lines = pd.concat([vma5, vma10, vma20], axis=1)
+    volume_spread = volume_lines.max(axis=1) - volume_lines.min(axis=1)
+    volume_base = vma20.replace(0, np.nan)
+    volume_converged = (volume_spread / volume_base) <= volume_spread_threshold
+    volume_converged_recent = bool(volume_converged.tail(cross_window_days + 1).fillna(False).any())
+    volume_crosses, volume_cross_days = _recent_cross_names(
+        {'5': vma5, '10': vma10, '20': vma20},
+        [('5', '10'), ('5', '20'), ('10', '20')],
+        cross_window_days,
+    )
+    volume_order = bool(
+        pd.notna(vma5.iloc[-1]) and pd.notna(vma10.iloc[-1]) and pd.notna(vma20.iloc[-1])
+        and vma5.iloc[-1] > vma10.iloc[-1] > vma20.iloc[-1]
+    )
+    volume_tuo_ok = (
+        volume_bear_recent
+        and volume_converged_recent
+        and len(volume_crosses) >= 3
+        and volume_order
+    )
+
+    summary_parts = []
+    if price_tuo_ok:
+        summary_parts.append('价托确认')
+    if volume_tuo_ok:
+        summary_parts.append('量托确认')
+    summary = ' / '.join(summary_parts) if summary_parts else '无'
+
+    return {
+        'gate_ok': bool(price_tuo_ok or volume_tuo_ok),
+        'price_tuo_ok': bool(price_tuo_ok),
+        'volume_tuo_ok': bool(volume_tuo_ok),
+        'summary': summary,
+        'lookback_days': lookback_days,
+        'cross_window_days': cross_window_days,
+        'price_tuo': {
+            'bear_recent': price_bear_recent,
+            'converged_recent': price_converged_recent,
+            'crosses': price_crosses,
+            'cross_count': len(price_crosses),
+            'cross_start': str(min(price_cross_days).date()) if price_cross_days else None,
+            'cross_end': str(max(price_cross_days).date()) if price_cross_days else None,
+            'current_order': '5>10>20' if price_order else '',
+            'close_above_tuo': price_above_tuo,
+            'spread_pct': round(float((price_spread.iloc[-1] / current_close) * 100), 2)
+            if current_close and pd.notna(price_spread.iloc[-1]) else None,
+        },
+        'volume_tuo': {
+            'bear_recent': volume_bear_recent,
+            'converged_recent': volume_converged_recent,
+            'crosses': volume_crosses,
+            'cross_count': len(volume_crosses),
+            'cross_start': str(min(volume_cross_days).date()) if volume_cross_days else None,
+            'cross_end': str(max(volume_cross_days).date()) if volume_cross_days else None,
+            'current_order': '5>10>20' if volume_order else '',
+            'spread_pct': round(float((volume_spread.iloc[-1] / vma20.iloc[-1]) * 100), 2)
+            if pd.notna(volume_spread.iloc[-1]) and pd.notna(vma20.iloc[-1]) and vma20.iloc[-1] else None,
+        },
+    }
+
 def calculate_rsi(prices, period=14, return_series=False):
     """
     计算 RSI 指标（使用 Wilder's Smoothing 方法，与富途等主流平台一致）
@@ -798,6 +945,8 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'current_volume_spike_score': current_volume_spike_score,
         'position_build_score': position_build_score,
     }
+
+    duanxian_tuo_info = _calculate_duanxian_tuo_info(hist, last_trading_day['Close'])
     
     # 计算 RSI（获取完整序列以便提取前一日数据）
     rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
@@ -890,6 +1039,7 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
         'volume_ma30': round(volume_ma30, 2) if volume_ma30 else None,
         'volume_ma60': round(volume_ma60, 2) if volume_ma60 else None,
         'volume_ma_info': volume_ma_info,
+        'duanxian_tuo_info': duanxian_tuo_info,
         'rsi': round(rsi, 2) if rsi else None,
         'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
         'dif': macd_data['dif'],

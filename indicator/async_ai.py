@@ -2,7 +2,12 @@ import traceback
 from datetime import datetime
 
 from a_share_rebound_alert import maybe_record_high_build_alert
-from scan_ai_common import MIN_POSITION_BUILD_SCORE, OPEN_DROP_FILTER_PCT, is_buy_blocked_by_open_gap
+from scan_ai_common import (
+    MIN_POSITION_BUILD_SCORE,
+    OPEN_DROP_FILTER_PCT,
+    duanxian_tuo_gate_ok,
+    is_buy_blocked_by_open_gap,
+)
 
 
 def process_ai_task(
@@ -16,6 +21,7 @@ def process_ai_task(
     volume_ratio,
     bowl_score=None,
     volume_ma_info=None,
+    duanxian_tuo_info=None,
     turnover_rate=None,
     turnover_warning=None,
     signal_id=None,
@@ -41,13 +47,13 @@ def process_ai_task(
 
         position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
-        if volume_ma_info and (
-            not has_recent_golden_cross or float(position_build_score or 0) < MIN_POSITION_BUILD_SCORE
-        ):
+        volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
+        tuo_gate_ok, tuo_summary = duanxian_tuo_gate_ok(duanxian_tuo_info)
+        if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
             print(
-                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」或近7日无量能金叉，跳过后台AI分析与通知"
+                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」或近7日无量能金叉，且短线是银托形态={tuo_summary}，跳过后台AI分析与通知"
             )
-            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross})
+            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross,'duanxian_tuo':tuo_summary})
             return {
                 'symbol': symbol,
                 'market': market,
@@ -117,6 +123,7 @@ def process_ai_task(
                 refined_text=(result.get('refine_analysis') or '').strip() or None,
                 bowl_score=bowl_score,
                 volume_ma_info=volume_ma_info,
+                duanxian_tuo_info=duanxian_tuo_info,
                 turnover_rate=turnover_rate,
                 turnover_warning=turnover_warning,
                 rsi_prev=rsi_prev,
