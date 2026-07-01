@@ -102,6 +102,8 @@ def format_signal_snapshot(
     stock_cn_name: Optional[str] = None,
     opening_uncertain_warning: bool = False,
     earnings_note: Optional[str] = None,
+    stock_character_info: Optional[Dict] = None,
+    rsi_rebound_volatility: Optional[Dict] = None,
 ) -> str:
     
     split_symbol = symbol.split('.')
@@ -155,12 +157,37 @@ def format_signal_snapshot(
         tech_lines.append(f"RSI: {rsi_span}")
     elif rsi is not None:
         tech_lines.append(f"RSI: {rsi:.2f}")
+    if isinstance(rsi_rebound_volatility, dict):
+        try:
+            elasticity_line = (
+                f"弹性评分: {float(rsi_rebound_volatility.get('rebound_elasticity_score') or 0):.1f} | "
+                f"6个月平均 +{float(rsi_rebound_volatility.get('avg_up_pct') or 0):.1f}%/"
+                f"-{float(rsi_rebound_volatility.get('avg_down_pct') or 0):.1f}% | "
+                f"上下比 {float(rsi_rebound_volatility.get('up_down_ratio') or 0):.2f}"
+            )
+            if telegram_html:
+                elasticity_line = html.escape(elasticity_line)
+            tech_lines.append(elasticity_line)
+        except (TypeError, ValueError):
+            pass
     if dif is not None and dea is not None and dif_dea_slope is not None:
         tech_lines.append(f"MACD: DIF {dif:.2f} | DEA {dea:.2f} | 斜率 {dif_dea_slope:.2f}")
     if volume_ratio is not None:
         tech_lines.append(f"量比: {volume_ratio:.2f}")
     if turnover_rate is not None:
         tech_lines.append(f"换手率: {turnover_rate:.2f}%")
+    if isinstance(stock_character_info, dict):
+        sc_status = stock_character_info.get('status') or '未知'
+        sc_score = stock_character_info.get('score')
+        sc_score_text = f"{float(sc_score):.1f}" if isinstance(sc_score, (int, float)) else 'N/A'
+        sc_reasons = stock_character_info.get('reasons') or stock_character_info.get('risk_reasons') or []
+        sc_prefix = '辅助否决项' if stock_character_info.get('reasons') else '观察项'
+        sc_line = f"股性: {sc_status}({sc_score_text})"
+        if sc_reasons:
+            sc_line += f" | {sc_prefix}: {'；'.join(str(x) for x in sc_reasons[:2])}"
+        if telegram_html:
+            sc_line = html.escape(sc_line)
+        tech_lines.append(sc_line)
 
     cross_text = ' / '.join(recent_crosses or []) if recent_crosses else '无'
     if telegram_html:
@@ -467,6 +494,7 @@ class TelegramNotifier:
             return False
 
         current_time = time.time()
+        is_rsi_rebound_signal = str(backtest_str or '').startswith('(RSI')
         if symbol in _global_push_cache:
             last_push_time = _global_push_cache[symbol]
             hours_passed = (current_time - last_push_time) / 3600
@@ -525,6 +553,9 @@ class TelegramNotifier:
         dif_dea_slope: Optional[float] = None,
         stock_cn_name: Optional[str] = None,
         opening_uncertain: bool = False,
+        stock_character_info: Optional[Dict] = None,
+        signal_title: Optional[str] = None,
+        rsi_rebound_volatility: Optional[Dict] = None,
     ) -> bool:
         """发送买入信号通知（与 QQNotifier 接口兼容）"""
         muted, reason = carmen_alerts_muted()
@@ -534,6 +565,7 @@ class TelegramNotifier:
             return False
 
         current_time = time.time()
+        is_rsi_rebound_signal = str(backtest_str or '').startswith('(RSI')
         append_signal_audit({'event': 'send_attempt', 'symbol': symbol, 'signal_id': signal_id, 'price': price, 'score': score})
         if symbol in _global_push_cache:
             last_push_time = _global_push_cache[symbol]
@@ -569,7 +601,7 @@ class TelegramNotifier:
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
             volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-            if not (volume_gate_ok or tuo_gate_ok):
+            if not is_rsi_rebound_signal and not (volume_gate_ok or tuo_gate_ok):
                 print(
                     f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<{MIN_POSITION_BUILD_SCORE:g})，且短线是银托形态={tuo_summary}，跳过 Telegram 买入推送"
                 )
@@ -588,7 +620,7 @@ class TelegramNotifier:
 
         earn_note = earnings_proximity_note(symbol)
         msg = format_signal_snapshot(
-            title="📈 买入信号提醒",
+            title=signal_title or ("📈反弹抄底信号" if is_rsi_rebound_signal else "📈 买入信号提醒"),
             symbol=symbol,
             price=price,
             score=score,
@@ -614,6 +646,8 @@ class TelegramNotifier:
             stock_cn_name=stock_cn_name,
             opening_uncertain_warning=opening_uncertain,
             earnings_note=earn_note,
+            stock_character_info=stock_character_info,
+            rsi_rebound_volatility=rsi_rebound_volatility,
         )
         reply_markup = {
             "inline_keyboard": [

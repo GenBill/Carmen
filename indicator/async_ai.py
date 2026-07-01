@@ -34,6 +34,9 @@ def process_ai_task(
     open_gap_filter_enabled=None,
     stock_cn_name=None,
     alert_date=None,
+    stock_character_info=None,
+    signal_title=None,
+    rsi_rebound_volatility=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
@@ -44,12 +47,13 @@ def process_ai_task(
         from telegram_notifier import append_signal_audit
 
         append_signal_audit({'event':'ai_started','symbol':symbol,'signal_id':signal_id,'market':market})
+        is_rsi_rebound_signal = str(backtest_str or '').startswith('(RSI')
 
         position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
         volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
         tuo_gate_ok, tuo_summary = duanxian_tuo_gate_ok(duanxian_tuo_info)
-        if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
+        if volume_ma_info and not is_rsi_rebound_signal and not (volume_gate_ok or tuo_gate_ok):
             print(
                 f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」或近7日无量能金叉，且短线是银托形态={tuo_summary}，跳过后台AI分析与通知"
             )
@@ -69,7 +73,7 @@ def process_ai_task(
             upper_symbol = str(symbol or '').upper()
             open_gap_filter_enabled = upper_symbol.endswith('.SS') or upper_symbol.endswith('.SZ')
 
-        if open_gap_filter_enabled and is_buy_blocked_by_open_gap(price, open_for_gap_filter):
+        if open_gap_filter_enabled and not is_rsi_rebound_signal and is_buy_blocked_by_open_gap(price, open_for_gap_filter):
             print(
                 f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过后台AI分析与通知"
             )
@@ -132,6 +136,9 @@ def process_ai_task(
                 dif_dea_slope=dif_dea_slope,
                 stock_cn_name=stock_cn_name,
                 opening_uncertain=opening_uncertain,
+                stock_character_info=stock_character_info,
+                signal_title=signal_title,
+                rsi_rebound_volatility=rsi_rebound_volatility,
             )
             if sent_ok:
                 try:

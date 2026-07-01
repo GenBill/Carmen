@@ -149,7 +149,8 @@ class QQNotifier:
                        dif: Optional[float] = None, dea: Optional[float] = None,
                        dif_dea_slope: Optional[float] = None,
                        stock_cn_name: Optional[str] = None,
-                       opening_uncertain: bool = False) -> bool:
+                       opening_uncertain: bool = False,
+                       stock_character_info: Optional[dict] = None) -> bool:
         """
         发送买入信号通知（带缓存，避免重复推送）
         
@@ -229,6 +230,17 @@ class QQNotifier:
         if duanxian_tuo_info:
             tuo_summary = duanxian_tuo_info.get('summary') or '无'
             msg_parts.append(f"短线是银托形态: {tuo_summary}")
+
+        if isinstance(stock_character_info, dict):
+            sc_status = stock_character_info.get('status') or '未知'
+            sc_score = stock_character_info.get('score')
+            sc_score_text = f"{float(sc_score):.1f}" if isinstance(sc_score, (int, float)) else 'N/A'
+            sc_reasons = stock_character_info.get('reasons') or stock_character_info.get('risk_reasons') or []
+            sc_prefix = '辅助否决项' if stock_character_info.get('reasons') else '观察项'
+            sc_line = f"股性: {sc_status}({sc_score_text})"
+            if sc_reasons:
+                sc_line += f" | {sc_prefix}: {'；'.join(str(x) for x in sc_reasons[:2])}"
+            msg_parts.append(sc_line)
         
         msg = "\n".join(msg_parts)
         

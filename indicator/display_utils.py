@@ -249,6 +249,7 @@ def format_stock_character_tag(stock_character_info):
     status = stock_character_info.get('status') or '未知'
     score = stock_character_info.get('score')
     reasons = stock_character_info.get('reasons') or []
+    risk_reasons = stock_character_info.get('risk_reasons') or []
 
     if warning:
         return f" | {Colors.YELLOW}股性:数据缺失(未拦截){Colors.RESET}"
@@ -264,6 +265,8 @@ def format_stock_character_tag(stock_character_info):
     tag = f" | {color}股性:{status}{Colors.RESET}({score_text})"
     if reasons:
         tag += f" {Colors.YELLOW}{';'.join(reasons[:2])}{Colors.RESET}"
+    elif risk_reasons:
+        tag += f" {Colors.YELLOW}{';'.join(risk_reasons[:2])}{Colors.RESET}"
     return tag
 
 

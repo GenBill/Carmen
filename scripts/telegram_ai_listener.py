@@ -80,8 +80,6 @@ def normalize_symbol(raw: str) -> str:
         return f"{value[:-2]}.SS"
     if value.endswith('SZ') and '.' not in value and value[:-2].isdigit():
         return f"{value[:-2]}.SZ"
-    if value.endswith('SH') and '.' not in value and value[:-2].isdigit():
-        return f"{value[:-2]}.SS"
     if value.isdigit():
         if len(value) == 6:
             if value.startswith(('5', '6', '9')):
@@ -198,9 +196,10 @@ def format_stock_character_report(symbol: str, stock_data: dict, info: dict, tel
     if passed and status == '差':
         conclusion = '通过；低分观察'
     else:
-        conclusion = '通过' if passed else 'D一票否决'
+        conclusion = '通过' if passed else '辅助否决'
     warning = info.get('warning')
     reasons = info.get('reasons') or []
+    risk_reasons = info.get('risk_reasons') or []
     metrics = info.get('metrics') or {}
     amount_currency = metrics.get('amount_currency') or ''
 
@@ -214,17 +213,25 @@ def format_stock_character_report(symbol: str, stock_data: dict, info: dict, tel
     if warning:
         lines.append(f'⚠️ {html.escape(str(warning))}')
     if reasons:
-        lines.append('否决/扣分原因:')
+        lines.append('辅助否决项:')
         lines.extend(f'- {html.escape(str(reason))}' for reason in reasons[:5])
     else:
-        lines.append('否决/扣分原因: 无')
+        lines.append('辅助否决项: 无')
+    if risk_reasons:
+        lines.append('扣分/观察项:')
+        lines.extend(f'- {html.escape(str(reason))}' for reason in risk_reasons[:5])
 
     lines.extend([
         '',
         '核心统计:',
         f'- 20日均额: {html.escape(_fmt_yuan_amount(metrics.get("avg_amount_20")))} {html.escape(str(amount_currency))}',
         f'- 60日均额: {html.escape(_fmt_yuan_amount(metrics.get("avg_amount_60")))} {html.escape(str(amount_currency))}',
-        f'- 冲高回落: 20日{metrics.get("upper_shadow_exhaust_20", "N/A")}次 / 60日{metrics.get("upper_shadow_exhaust_60", "N/A")}次 / 1年{metrics.get("upper_shadow_exhaust_1y", "N/A")}次',
+        f'- 1日游冲高回落(破位): 20日{metrics.get("pump_fade_20", metrics.get("upper_shadow_exhaust_20", "N/A"))}次'
+        f'(当日{metrics.get("pump_fade_same_day_20", "N/A")}/阴跌未收回{metrics.get("pump_fade_next_day_20", "N/A")})'
+        f' / 60日{metrics.get("pump_fade_60", metrics.get("upper_shadow_exhaust_60", "N/A"))}次'
+        f'(当日{metrics.get("pump_fade_same_day_60", "N/A")}/阴跌未收回{metrics.get("pump_fade_next_day_60", "N/A")})'
+        f' / 1年{metrics.get("pump_fade_1y", metrics.get("upper_shadow_exhaust_1y", "N/A"))}次'
+        f'(当日{metrics.get("pump_fade_same_day_1y", "N/A")}/阴跌未收回{metrics.get("pump_fade_next_day_1y", "N/A")})',
         f'- 假突破: 60日{metrics.get("false_breakout_60", "N/A")}次 / 1年{metrics.get("false_breakout_1y", "N/A")}次',
         f'- 杀跌: 20日{metrics.get("large_down_20", "N/A")}次 / 60日{metrics.get("large_down_60", "N/A")}次 / 1年{metrics.get("large_down_1y", "N/A")}次',
         f'- 放量阴线: 60日{metrics.get("bearish_volume_60", "N/A")}次 / 1年{metrics.get("bearish_volume_1y", "N/A")}次',
