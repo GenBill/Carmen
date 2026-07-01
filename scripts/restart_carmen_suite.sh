@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd /home/serv/Carmen
 
+export CARMEN_EARNINGS_LOOKUP_ENABLED="${CARMEN_EARNINGS_LOOKUP_ENABLED:-0}"
+
 start_fresh_session() {
   local session="$1"
   local cmd="$2"

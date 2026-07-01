@@ -752,6 +752,138 @@ def _load_from_cache(symbol: str, cache_minutes=5, ignore_expiry=False):
     return None, None
 
 
+def _calculate_fast_scan_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow,
+                                             macd_signal, avg_volume_days, volume_lut):
+    """
+    Fast first-pass indicators for full-market scans.
+    Keeps fields needed by carmen/silver/vegas + RSI rebound, but skips
+    volume MA structure, duanxian tuo, and other detail-only scans.
+    """
+    if hist.empty or len(hist) < avg_volume_days + 1:
+        return None
+
+    last_trading_day = hist.iloc[-1]
+    if pd.isna(last_trading_day['Close']):
+        return None
+
+    trading_date_timestamp = hist.index[-1]
+    trading_date = trading_date_timestamp.strftime('%Y-%m-%d')
+
+    if len(hist) >= avg_volume_days + 1:
+        avg_volume = hist.iloc[-(avg_volume_days+1):-1]['Volume'].mean()
+    else:
+        avg_volume = hist.iloc[:-1]['Volume'].mean()
+    if pd.isna(avg_volume):
+        avg_volume = 0
+
+    current_volume = last_trading_day['Volume']
+    if pd.isna(current_volume):
+        current_volume = 0
+
+    is_hk_stock = symbol.endswith('.HK')
+    is_a_stock = symbol.endswith('.SS') or symbol.endswith('.SZ')
+    if is_hk_stock:
+        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_HK)
+    elif is_a_stock:
+        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_A)
+    else:
+        estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
+
+    close_series = hist['Close']
+    rsi_series = calculate_rsi(close_series, period=rsi_period, return_series=True)
+    rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else None
+    rsi_prev = rsi_series.iloc[-2] if len(rsi_series) >= 2 and not pd.isna(rsi_series.iloc[-2]) else None
+
+    macd_data = calculate_macd(close_series, fast=macd_fast, slow=macd_slow, signal=macd_signal)
+
+    macd_dif_tail = []
+    try:
+        exp1_hist = close_series.ewm(span=macd_fast, adjust=False).mean()
+        exp2_hist = close_series.ewm(span=macd_slow, adjust=False).mean()
+        dif_series_hist = exp1_hist - exp2_hist
+        if len(dif_series_hist) >= _MACD_FADE_TAIL_BARS:
+            chunk = dif_series_hist.iloc[-_MACD_FADE_TAIL_BARS:]
+            if chunk.notna().all():
+                macd_dif_tail = [float(v) for v in chunk.tolist()]
+    except Exception:
+        macd_dif_tail = []
+
+    ema_5_series = calculate_ema(close_series, period=5, return_series=True)
+    ema_12_series = calculate_ema(close_series, period=12, return_series=True)
+    ema_60_series = calculate_ema(close_series, period=60, return_series=True)
+    ema_144_series = calculate_ema(close_series, period=144, return_series=True)
+
+    ema_5 = ema_5_series.iloc[-1] if not pd.isna(ema_5_series.iloc[-1]) else None
+    ema_12 = ema_12_series.iloc[-1] if not pd.isna(ema_12_series.iloc[-1]) else None
+    ema_60 = ema_60_series.iloc[-1] if not pd.isna(ema_60_series.iloc[-1]) else None
+    ema_144 = ema_144_series.iloc[-1] if not pd.isna(ema_144_series.iloc[-1]) else None
+
+    ema_5_prev = ema_5_series.iloc[-2] if len(ema_5_series) >= 2 and not pd.isna(ema_5_series.iloc[-2]) else None
+    ema_12_prev = ema_12_series.iloc[-2] if len(ema_12_series) >= 2 and not pd.isna(ema_12_series.iloc[-2]) else None
+    ema_60_prev = ema_60_series.iloc[-2] if len(ema_60_series) >= 2 and not pd.isna(ema_60_series.iloc[-2]) else None
+    ema_144_prev = ema_144_series.iloc[-2] if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]) else None
+
+    ema_5_hist = ema_5_series.iloc[-90:].tolist() if not ema_5_series.empty else []
+    ema_60_hist = ema_60_series.iloc[-90:].tolist() if not ema_60_series.empty else []
+
+    weekly_dif = None
+    weekly_dea = None
+    weekly_dif_dea_slope = None
+    try:
+        weekly_data = hist.resample('W').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna()
+        if len(weekly_data) >= 34:
+            weekly_macd = calculate_macd(weekly_data['Close'], fast=12, slow=26, signal=9)
+            weekly_dif = weekly_macd['dif']
+            weekly_dea = weekly_macd['dea']
+            weekly_dif_dea_slope = weekly_macd['dif_dea_slope']
+    except Exception:
+        pass
+
+    return {
+        'symbol': symbol,
+        'date': trading_date,
+        'hist': hist,
+        'open': round(last_trading_day['Open'], 2),
+        'close': round(last_trading_day['Close'], 2),
+        'volume': int(current_volume),
+        'estimated_volume': estimated_volume,
+        'avg_volume': int(avg_volume),
+        'volume_ma5': None,
+        'volume_ma10': None,
+        'volume_ma30': None,
+        'volume_ma60': None,
+        'volume_ma_info': None,
+        'duanxian_tuo_info': None,
+        'rsi': round(rsi, 2) if rsi else None,
+        'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
+        'dif': macd_data['dif'],
+        'dea': macd_data['dea'],
+        'macd_histogram': macd_data['histogram'],
+        'dif_dea_slope': macd_data['dif_dea_slope'],
+        'macd_dif_tail': macd_dif_tail,
+        'ema_5': round(ema_5, 2) if ema_5 else None,
+        'ema_12': round(ema_12, 2) if ema_12 else None,
+        'ema_60': round(ema_60, 2) if ema_60 else None,
+        'ema_144': round(ema_144, 2) if ema_144 else None,
+        'ema_5_prev': round(ema_5_prev, 2) if ema_5_prev else None,
+        'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
+        'ema_60_prev': round(ema_60_prev, 2) if ema_60_prev else None,
+        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None,
+        'ema_5_hist': ema_5_hist,
+        'ema_60_hist': ema_60_hist,
+        'weekly_dif': weekly_dif,
+        'weekly_dea': weekly_dea,
+        'weekly_dif_dea_slope': weekly_dif_dea_slope,
+        '_fast_scan': True,
+    }
+
+
 def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow, 
                                     macd_signal, avg_volume_days, volume_lut):
     """
@@ -1064,7 +1196,8 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
 
 
 def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 
-                           avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5):
+                           avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5,
+                           fast_scan=False):
     """
     离线模式：仅从缓存读取数据，不调用API（忽略缓存过期时间）
     
@@ -1091,6 +1224,11 @@ def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=2
             return None
         
         # 使用历史数据计算指标（公共计算逻辑）
+        if fast_scan:
+            return _calculate_fast_scan_indicators_from_hist(
+                hist, symbol, rsi_period, macd_fast, macd_slow,
+                macd_signal, avg_volume_days, volume_lut
+            )
         return _calculate_indicators_from_hist(
             hist, symbol, rsi_period, macd_fast, macd_slow,
             macd_signal, avg_volume_days, volume_lut
@@ -1103,7 +1241,7 @@ def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=2
 
 
 
-def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_size=50, period="1y"):
+def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_size=50, period="1y", retry_failed_once=True):
     """
     批量下载股票数据（使用 yfinance 的多线程加速）
 
@@ -1113,6 +1251,7 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
         cache_minutes: 缓存有效期（分钟），默认 5分钟
         batch_size: 每批下载的股票数量，默认 50
         period: 下载数据的时间周期，默认 "1y"
+        retry_failed_once: 首轮批量失败后，对非确认退市标的再补拉一次
 
     Returns:
         dict: 失败分类结果，包含 missing_delisted / rate_limited / empty_data
@@ -1202,7 +1341,8 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
                             print(f"⚠️  处理 {symbol} 数据时出错: {e}")
                             continue
                     else:
-                        result['missing_delisted'].append(symbol)
+                        # 批量返回缺口不一定是退市，也可能是临时漏拉；先放入可重试池。
+                        result['empty_data'].append(symbol)
             else:
                 # 单层索引：只有一只股票的情况
                 if len(batch) == 1:
@@ -1231,11 +1371,44 @@ def batch_download_stocks(symbols: list, use_cache=True, cache_minutes=5, batch_
             else:
                 result['empty_data'].extend(batch)
             continue
+    if retry_failed_once:
+        retry_symbols = []
+        seen_retry = set()
+        confirmed_missing = set(result.get('missing_delisted') or [])
+        for symbol in list(result.get('rate_limited') or []) + list(result.get('empty_data') or []):
+            if symbol in confirmed_missing or symbol in broken_stock_symbols or symbol in seen_retry:
+                continue
+            hist, _ = _load_from_cache(symbol, cache_minutes, ignore_expiry=False) if use_cache else (None, None)
+            if hist is not None:
+                continue
+            retry_symbols.append(symbol)
+            seen_retry.add(symbol)
+
+        if retry_symbols:
+            print(f"🔁 批量下载失败补拉 {len(retry_symbols)} 只股票（小批量重试一次）")
+            retry_result = batch_download_stocks(
+                retry_symbols,
+                use_cache=use_cache,
+                cache_minutes=cache_minutes,
+                batch_size=max(1, min(10, batch_size)),
+                period=period,
+                retry_failed_once=False,
+            )
+            for key in ('rate_limited', 'empty_data', 'missing_delisted'):
+                retry_failed = set(retry_result.get(key) or [])
+                result[key] = [s for s in result.get(key, []) if s not in seen_retry]
+                result[key].extend(sorted(retry_failed))
+
+            recovered = len(retry_symbols) - sum(len(retry_result.get(k) or []) for k in ('rate_limited', 'empty_data', 'missing_delisted'))
+            if recovered > 0:
+                print(f"✅ 补拉恢复 {recovered} 只股票")
+
     return result
 
 
 def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 
-                   avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5):
+                   avg_volume_days=8, volume_lut=None, use_cache=True, cache_minutes=5,
+                   fast_scan=False):
     """
     获取股票的全面数据，包括价格、成交量和技术指标
     
@@ -1308,6 +1481,11 @@ def get_stock_data(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_
                         return None
         
         # 3. 使用历史数据计算指标（公共计算逻辑）
+        if fast_scan:
+            return _calculate_fast_scan_indicators_from_hist(
+                hist, symbol, rsi_period, macd_fast, macd_slow,
+                macd_signal, avg_volume_days, volume_lut
+            )
         return _calculate_indicators_from_hist(
             hist, symbol, rsi_period, macd_fast, macd_slow,
             macd_signal, avg_volume_days, volume_lut

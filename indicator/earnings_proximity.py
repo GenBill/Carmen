@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutTimeout
@@ -17,6 +18,12 @@ _CACHE_TTL_SEC = 6 * 3600
 _CACHE: Dict[str, Tuple[float, Optional["EarningsSnapshot"]]] = {}
 
 MAX_PROXIMITY_DAYS = 14
+EARNINGS_LOOKUP_ENABLED = str(os.getenv("CARMEN_EARNINGS_LOOKUP_ENABLED", "0")).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 NASDAQ_CALENDAR_URL = "https://api.nasdaq.com/api/calendar/earnings"
 NASDAQ_HEADERS = {
@@ -252,6 +259,9 @@ def _fetch_snapshot_uncached(symbol: str) -> Optional[EarningsSnapshot]:
 
 
 def get_earnings_snapshot(symbol: str) -> Optional[EarningsSnapshot]:
+    if not EARNINGS_LOOKUP_ENABLED:
+        return None
+
     ysym = _normalize_yfinance_ticker(symbol)
     key = ysym or symbol.strip().upper()
     now_m = time.monotonic()
@@ -261,14 +271,19 @@ def get_earnings_snapshot(symbol: str) -> Optional[EarningsSnapshot]:
             return cached
 
     snap: Optional[EarningsSnapshot] = None
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(_fetch_snapshot_uncached, symbol)
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(_fetch_snapshot_uncached, symbol)
-            snap = fut.result(timeout=_FETCH_TIMEOUT_SEC)
+        snap = fut.result(timeout=_FETCH_TIMEOUT_SEC)
     except FutTimeout:
+        fut.cancel()
         snap = None
     except Exception:
         snap = None
+    finally:
+        # Do not wait for a stuck yfinance earnings request.  This function is
+        # best-effort footer decoration and must never block market scans.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     _CACHE[key] = (now_m, snap)
     return snap

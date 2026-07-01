@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
-from get_stock_price import get_stock_data, batch_download_stocks
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
@@ -26,7 +26,7 @@ from alert_system import add_to_watchlist, print_watchlist_summary
 from qq_notifier import QQNotifier, load_qq_token
 from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from async_ai import process_ai_task
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
@@ -42,7 +42,6 @@ from stock_character_filter import evaluate_stock_character
 from rsi_rebound_signal import (
     evaluate_rsi_rebound_setup,
     is_rsi_oversold_today,
-    select_top_rsi_oversold_candidates,
 )
 from a_share_rebound_alert import (
     run_rebound_alert_scan,
@@ -70,6 +69,35 @@ RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
 RSI_REBOUND_MIN_AVG_RANGE_PCT = 5.0
 RSI_REBOUND_MIN_UP_DOWN_RATIO = 0.75
 RSI_REBOUND_TOP_N = 3
+
+PERF_LOG_MODE = str(os.getenv("CARMEN_PERF_LOG", "")).strip().lower()
+PERF_LOG_ENABLED = PERF_LOG_MODE in ("1", "true", "yes", "all", "debug")
+PERF_LOG_ALL_STEPS = PERF_LOG_MODE in ("all", "debug")
+PERF_SLOW_MS = float(os.getenv("CARMEN_PERF_SLOW_MS", "200") or 200)
+A_FAST_SCAN_WORKERS = max(1, int(os.getenv("CARMEN_A_FAST_SCAN_WORKERS", os.getenv("CARMEN_FAST_SCAN_WORKERS", "4")) or 4))
+AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") or 180)
+
+
+def _perf_record(records, name: str, started_at: float) -> float:
+    now = time.perf_counter()
+    elapsed_ms = (now - started_at) * 1000.0
+    records.append((name, elapsed_ms))
+    if PERF_LOG_ENABLED and (PERF_LOG_ALL_STEPS or elapsed_ms >= PERF_SLOW_MS):
+        print(f"⏱️  PERF step {name}: {elapsed_ms:.1f}ms")
+    return now
+
+
+def _perf_summary(symbol: str, records, started_at: float, status: str = "ok") -> None:
+    if not PERF_LOG_ENABLED:
+        return
+    total_ms = (time.perf_counter() - started_at) * 1000.0
+    slow_parts = [
+        f"{name}={ms:.0f}ms"
+        for name, ms in sorted(records, key=lambda x: x[1], reverse=True)[:6]
+        if PERF_LOG_ALL_STEPS or ms >= PERF_SLOW_MS
+    ]
+    detail = " | " + ", ".join(slow_parts) if slow_parts else ""
+    print(f"⏱️  PERF {symbol} total={total_ms:.0f}ms status={status}{detail}")
 
 
 def _a_share_min_turnover_pct_now() -> float:
@@ -150,6 +178,30 @@ def _select_top_rsi_rebound_candidates(candidates, limit: int = RSI_REBOUND_TOP_
         ),
         reverse=True,
     )[:limit]
+
+
+def _rsi_candidate_volatility_info(stock_data: dict) -> dict:
+    rsi_vol = (
+        (stock_data or {}).get('rsi_rebound_volatility')
+        or (stock_data or {}).get('_rsi_rebound_volatility')
+    )
+    if isinstance(rsi_vol, dict) and rsi_vol.get('rebound_elasticity_score') is not None:
+        return rsi_vol
+
+    _, _, rsi_vol = _rsi_rebound_volatility_ok(stock_data)
+    if rsi_vol:
+        stock_data['_rsi_rebound_volatility'] = rsi_vol
+    return rsi_vol or {}
+
+
+def _format_rsi_candidate_elasticity(item: dict) -> str:
+    rsi_vol = item.get('rsi_rebound_volatility') or {}
+    return (
+        f"弹性评分={float(item.get('rebound_elasticity_score') or 0):.1f}，"
+        f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
+        f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，"
+        f"上下比={float(rsi_vol.get('up_down_ratio') or 0):.2f}"
+    )
 
 
 def _rsi_rebound_volatility_ok(stock_data: dict) -> tuple[bool, str, dict]:
@@ -398,6 +450,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     flush_output()
 
     # 批量下载股票数据（多线程加速）
+    perf_batch_started = time.perf_counter()
     batch_result = batch_download_stocks(
         stock_symbols, 
         use_cache=True, 
@@ -411,6 +464,50 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         if added:
             capture_output(f"🚫 已将 {added} 只疑似退市/无历史数据股票加入永久排除列表")
     flush_output()
+    if PERF_LOG_ENABLED:
+        print(f"⏱️  PERF batch_download total={(time.perf_counter() - perf_batch_started) * 1000.0:.0f}ms symbols={len(stock_symbols)}")
+
+    fast_scan_results = {}
+    fast_scan_timings = {}
+    fast_scan_started = time.perf_counter()
+    fast_scan_symbols = [s for s in stock_symbols if s and '.' in s]
+
+    def load_fast_scan(symbol: str):
+        started = time.perf_counter()
+        data = get_stock_data_offline(
+            symbol,
+            rsi_period=rsi_period,
+            macd_fast=macd_fast,
+            macd_slow=macd_slow,
+            macd_signal=macd_signal,
+            avg_volume_days=avg_volume_days,
+            use_cache=True,
+            cache_minutes=5,
+            fast_scan=True,
+        )
+        return symbol, data, (time.perf_counter() - started) * 1000.0
+
+    if fast_scan_symbols:
+        workers = min(A_FAST_SCAN_WORKERS, len(fast_scan_symbols))
+        if PERF_LOG_ENABLED:
+            print(f"⏱️  PERF fast_scan preload start workers={workers} symbols={len(fast_scan_symbols)}")
+        with ThreadPoolExecutor(max_workers=workers) as scan_executor:
+            futures = {scan_executor.submit(load_fast_scan, symbol): symbol for symbol in fast_scan_symbols}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    result_symbol, data, elapsed_ms = future.result()
+                    fast_scan_results[result_symbol] = data
+                    fast_scan_timings[result_symbol] = elapsed_ms
+                except Exception as e:
+                    fast_scan_results[symbol] = None
+                    fast_scan_timings[symbol] = 0.0
+                    print(f"⚠️  {symbol} fast_scan离线初筛失败: {e}")
+        if PERF_LOG_ENABLED:
+            print(
+                f"⏱️  PERF fast_scan preload total={(time.perf_counter() - fast_scan_started) * 1000.0:.0f}ms "
+                f"workers={workers} symbols={len(fast_scan_symbols)}"
+            )
     
     # 扫描股票
     alert_count = 0
@@ -420,28 +517,28 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     rsi_oversold_candidates = []
 
     for symbol in stock_symbols:
+        symbol_perf_started = time.perf_counter()
+        symbol_perf_records = []
+        symbol_perf_mark = symbol_perf_started
         try:
             # 跳过明显无法获取的数据
             if not symbol or '.' not in symbol:
                 failed_count += 1
+                _perf_summary(symbol or '<empty>', symbol_perf_records, symbol_perf_started, 'invalid_symbol')
                 continue
             
-            stock_data = get_stock_data(
-                symbol, 
-                rsi_period=rsi_period,
-                macd_fast=macd_fast,
-                macd_slow=macd_slow,
-                macd_signal=macd_signal,
-                avg_volume_days=avg_volume_days,
-                use_cache=True,
-                cache_minutes=5
-            )
+            stock_data = fast_scan_results.get(symbol)
+            symbol_perf_records.append(('fast_scan_preload', fast_scan_timings.get(symbol, 0.0)))
+            symbol_perf_mark = _perf_record(symbol_perf_records, 'load_fast_result', symbol_perf_mark)
             
             if stock_data:
                 # 检查成交量过滤条件
                 if should_filter_stock(symbol, stock_data):
                     failed_count += 1
+                    symbol_perf_mark = _perf_record(symbol_perf_records, 'volume_filter', symbol_perf_mark)
+                    _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'filtered_low_volume')
                     continue
+                symbol_perf_mark = _perf_record(symbol_perf_records, 'volume_filter', symbol_perf_mark)
 
                 # 每只股票独立初始化，避免沿用上一只股票的状态
                 turnover_rate = None
@@ -453,13 +550,16 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 ai_launched = False
                 stock_character_info = None
                 stock_character_blocked = False
+                turnover_blocked = False
 
                 def get_stock_character_info():
                     nonlocal stock_character_info
                     if stock_character_info is None:
                         stock_character_info = stock_data.get('stock_character_info')
                     if stock_character_info is None:
+                        stock_character_started = time.perf_counter()
                         stock_character_info = evaluate_stock_character(stock_data)
+                        _perf_record(symbol_perf_records, 'stock_character', stock_character_started)
                         stock_data['stock_character_info'] = stock_character_info
                     return stock_character_info
                 
@@ -484,15 +584,80 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 stock_data['_rsi_oversold_today'] = rsi_oversold_today
                 stock_data['_rsi_rebound_setup'] = rsi_rebound_setup
                 stock_data['_rsi_oversold_candidate'] = rsi_signal_active
+                symbol_perf_mark = _perf_record(symbol_perf_records, 'score_rsi', symbol_perf_mark)
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
+
+                if pre_candidate:
+                    min_tp = _a_share_min_turnover_pct_now()
+                    turnover_started = time.perf_counter()
+                    try:
+                        turnover_rate = _a_share_turnover_effective(
+                            fetch_a_share_turnover_rate(symbol.split('.')[0])
+                        )
+                    except Exception as e:
+                        print(
+                            f"⚠️  {symbol} 东财/ak 换手率拉取失败（{e}），"
+                            f"本标的换手不做 {min_tp:g}% 拦截，信号照常"
+                        )
+                        turnover_rate = None
+                    _perf_record(symbol_perf_records, 'turnover_fetch', turnover_started)
+                    if turnover_rate is None:
+                        turnover_warning = (
+                            f'A股换手率未获取到有效值，本次不执行换手率>{min_tp:g}% 过滤'
+                        )
+                    elif turnover_rate <= min_tp:
+                        turnover_blocked = True
+                        print(
+                            f"⏭️  {symbol} A股换手率{turnover_rate:.2f}%，"
+                            f"未超过{min_tp:g}%，跳过买入/后台分析"
+                        )
                 
+                if pre_candidate and not turnover_blocked:
+                    full_data_started = time.perf_counter()
+                    full_stock_data = get_stock_data_offline(
+                        symbol,
+                        rsi_period=rsi_period,
+                        macd_fast=macd_fast,
+                        macd_slow=macd_slow,
+                        macd_signal=macd_signal,
+                        avg_volume_days=avg_volume_days,
+                        use_cache=True,
+                        cache_minutes=5,
+                        fast_scan=False,
+                    )
+                    _perf_record(symbol_perf_records, 'detail_enrich', full_data_started)
+                    if full_stock_data:
+                        stock_data = full_stock_data
+                        score_carmen = carmen_indicator(stock_data)
+                        score_vegas = vegas_indicator(stock_data)
+                        score_silver = silver_indicator(stock_data)
+                        score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
+                        rsi_oversold_today = _is_rsi_oversold_candidate(stock_data)
+                        rsi_rebound_setup, rsi_rebound_setup_reason, rsi_vol_info = evaluate_rsi_rebound_setup(
+                            stock_data,
+                            RSI_REBOUND_THRESHOLD,
+                            _rsi_rebound_volatility_ok,
+                        )
+                        if rsi_vol_info:
+                            stock_data['_rsi_rebound_volatility'] = rsi_vol_info
+                        elif rsi_rebound_setup_reason and not rsi_oversold_today:
+                            stock_data['_rsi_rebound_block_reason'] = rsi_rebound_setup_reason
+                        rsi_signal_active = rsi_oversold_today or rsi_rebound_setup
+                        carmen_candidate = score[0] >= 2.0 or score[1] >= 2.0
+                        pre_candidate = carmen_candidate or rsi_signal_active
+                        stock_data['_rsi_oversold_today'] = rsi_oversold_today
+                        stock_data['_rsi_rebound_setup'] = rsi_rebound_setup
+                        stock_data['_rsi_oversold_candidate'] = rsi_signal_active
+                    else:
+                        pre_candidate = False
+
                 # 进行回测
                 backtest_result = None
                 backtest_str = ''
                 confidence = 0.0
-                if pre_candidate:
+                if pre_candidate and not turnover_blocked:
                     try:
                         if carmen_candidate:
                             backtest_result = backtest_carmen_indicator(
@@ -550,32 +715,11 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                     )
                                 )
                                 gate_blocked = signal_ok and not submit_ai
-                            if submit_ai:
-                                min_tp = _a_share_min_turnover_pct_now()
-                                try:
-                                    turnover_rate = _a_share_turnover_effective(
-                                        fetch_a_share_turnover_rate(symbol.split('.')[0])
-                                    )
-                                except Exception as e:
-                                    print(
-                                        f"⚠️  {symbol} 东财/ak 换手率拉取失败（{e}），"
-                                        f"本标的换手不做 {min_tp:g}% 拦截，信号照常"
-                                    )
-                                    turnover_rate = None
-                                if turnover_rate is None:
-                                    turnover_warning = (
-                                        f'A股换手率未获取到有效值，本次不执行换手率>{min_tp:g}% 过滤'
-                                    )
-                                elif turnover_rate <= min_tp:
-                                    submit_ai = False
-                                    print(
-                                        f"⏭️  {symbol} A股换手率{turnover_rate:.2f}%，"
-                                        f"未超过{min_tp:g}%，跳过买入/后台分析"
-                                    )
-
                             opening_ctx = None
                             if submit_ai:
+                                opening_started = time.perf_counter()
                                 opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                                _perf_record(symbol_perf_records, 'opening_context_signal', opening_started)
                                 price_chk = stock_data.get('close', 0)
                                 if (
                                     not rsi_signal_active
@@ -622,18 +766,29 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 }
                                 rsi_enqueued = False
                                 if rsi_oversold_today:
+                                    rsi_vol = _rsi_candidate_volatility_info(stock_data)
+                                    rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
                                     oversold_payload = {
                                         **base_payload,
                                         'signal_id': _build_signal_id(symbol, stock_data, score[0], 'rsi_oversold'),
                                         'signal_title': "📉RSI超卖信号",
+                                        'rsi_rebound_volatility': rsi_vol,
                                     }
+                                    stock_data['rebound_elasticity_score'] = rebound_score
+                                    stock_data['rsi_rebound_volatility'] = rsi_vol
                                     rsi_oversold_candidates.append({
                                         'symbol': symbol,
                                         'stock_data': stock_data,
                                         'ai_payload': oversold_payload,
                                         'rsi': rsi,
+                                        'signal_label': 'RSI超卖',
+                                        'rebound_elasticity_score': rebound_score,
+                                        'rsi_rebound_volatility': rsi_vol,
                                     })
-                                    print(f"🧺 {symbol} RSI超卖候选入队：RSI={float(rsi or 0):.1f}")
+                                    print(
+                                        f"🧺 {symbol} RSI超卖候选入队："
+                                        f"RSI={float(rsi or 0):.1f}，{_format_rsi_candidate_elasticity(rsi_oversold_candidates[-1])}"
+                                    )
                                     rsi_enqueued = True
                                 if rsi_rebound_setup:
                                     rsi_vol = stock_data.get('_rsi_rebound_volatility') or {}
@@ -650,6 +805,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                         'symbol': symbol,
                                         'stock_data': stock_data,
                                         'ai_payload': rebound_payload,
+                                        'signal_label': 'RSI反弹',
                                         'rebound_elasticity_score': rebound_score,
                                         'rsi_rebound_volatility': rsi_vol,
                                     })
@@ -681,21 +837,30 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     except Exception as e:
                         print(f"⚠️  处理 {symbol} 回测时出错:")
                         traceback.print_exc()
+                symbol_perf_mark = _perf_record(symbol_perf_records, 'candidate_pipeline', symbol_perf_mark)
                 
                 # 不因换手低而跳过终端打印；未知换手一律照常打印
                 # 打印股票信息
                 is_watchlist = symbol in watchlist_stocks
                 print_success = print_stock_info(stock_data, score, is_watchlist, backtest_result, bowl_score=bowl_score)
+                symbol_perf_mark = _perf_record(symbol_perf_records, 'print_stock_info', symbol_perf_mark)
                 
                 if not print_success:
                     failed_count += 1
+                    _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'print_failed')
                 else:
                     # 统计信号 (仅统计实际展示/保留的信号)
                     if score[0] >= 2.0 or rsi_signal_active:
                         alert_count += 1
 
-                    if not pre_candidate:
+                    if not pre_candidate or turnover_blocked:
                         flush_output()
+                        _perf_summary(
+                            symbol,
+                            symbol_perf_records,
+                            symbol_perf_started,
+                            'turnover_blocked' if turnover_blocked else 'no_candidate',
+                        )
                         continue
                     
                     # 收集数据用于HTML生成
@@ -710,6 +875,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
                     stock_character_info = get_stock_character_info()
                     if not stock_character_info.get('passed', True):
+                        _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'stock_character_blocked_html')
                         continue
                     if not rsi_signal_active:
                         position_build_score = volume_ma_info.get('position_build_score', 0)
@@ -717,15 +883,20 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
                         tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
                         if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
+                            _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'volume_gate_blocked_html')
                             continue
+                    html_opening_started = time.perf_counter()
                     op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
+                    _perf_record(symbol_perf_records, 'opening_context_html', html_opening_started)
                     if (
                         not rsi_signal_active
                         and op_ctx.open_drop_filter_enabled
                         and is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter)
                     ):
+                        _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'open_gap_blocked_html')
                         continue
                     
+                    html_collect_started = time.perf_counter()
                     stocks_data_for_html.append({
                         'symbol': symbol,
                         'price': price,
@@ -756,10 +927,13 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         'rsi_rebound_volatility': stock_data.get('rsi_rebound_volatility') or stock_data.get('_rsi_rebound_volatility'),
                         'rebound_elasticity_score': stock_data.get('rebound_elasticity_score'),
                     })
+                    _perf_record(symbol_perf_records, 'html_collect', html_collect_started)
                 
                 flush_output()
+                _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'ok')
             else:
                 failed_count += 1
+                _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'no_stock_data')
                 
         except KeyboardInterrupt:
             print("\n\n⚠️  用户中断程序...")
@@ -767,66 +941,30 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         except Exception as e:
             failed_count += 1
             print(f"⚠️  处理 {symbol} 时出错: {e}")
+            _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'exception')
             continue
     
     row_by_symbol = {row.get('symbol'): row for row in stocks_data_for_html}
 
-    if rsi_oversold_candidates:
-        selected_oversold = select_top_rsi_oversold_candidates(
-            rsi_oversold_candidates,
-            RSI_REBOUND_TOP_N,
-        )
-        selected_oversold_symbols = {item.get('symbol') for item in selected_oversold}
-        print(
-            f"\n📊 RSI超卖候选 {len(rsi_oversold_candidates)} 只，"
-            f"按RSI从低到高选 Top{min(RSI_REBOUND_TOP_N, len(selected_oversold))} 播报"
-        )
-        for item in selected_oversold:
-            symbol = item.get('symbol')
-            stock_data = item.get('stock_data') or {}
-            payload = item.get('ai_payload') or {}
-            rsi_v = float(item.get('rsi') or 0)
-            print(f"🤖 {symbol} RSI超卖Top候选，后台启动AI分析：RSI={rsi_v:.1f}")
-            if not bot_notifier:
-                print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
-            future = executor.submit(process_ai_task, **payload)
-            stock_data['_ai_future'] = future
-            stock_data['_ai_launched'] = True
-            row = row_by_symbol.get(symbol)
-            if row is not None:
-                row['_ai_future'] = future
-                row['_ai_launched'] = True
-        for item in rsi_oversold_candidates:
-            symbol = item.get('symbol')
-            if symbol in selected_oversold_symbols:
-                continue
-            print(
-                f"⏭️  {symbol} RSI超卖候选未入Top{RSI_REBOUND_TOP_N}，本轮不播报："
-                f"RSI={float(item.get('rsi') or 0):.1f}"
-            )
-
-    if rsi_rebound_candidates:
+    all_rsi_candidates = rsi_oversold_candidates + rsi_rebound_candidates
+    if all_rsi_candidates:
         selected_rsi_candidates = _select_top_rsi_rebound_candidates(
-            rsi_rebound_candidates,
+            all_rsi_candidates,
             RSI_REBOUND_TOP_N,
         )
-        selected_symbols = {item.get('symbol') for item in selected_rsi_candidates}
+        selected_candidate_ids = {id(item) for item in selected_rsi_candidates}
         print(
-            f"\n📊 RSI反弹抄底候选 {len(rsi_rebound_candidates)} 只，"
+            f"\n📊 RSI超卖/反弹抄底候选 {len(all_rsi_candidates)} 只，"
             f"按弹性评分选 Top{min(RSI_REBOUND_TOP_N, len(selected_rsi_candidates))} 播报"
         )
         for item in selected_rsi_candidates:
             symbol = item.get('symbol')
             stock_data = item.get('stock_data') or {}
             payload = item.get('ai_payload') or {}
-            rsi_vol = item.get('rsi_rebound_volatility') or {}
-            rebound_score = float(item.get('rebound_elasticity_score') or 0.0)
+            signal_label = item.get('signal_label') or 'RSI候选'
             print(
-                f"🤖 {symbol} RSI反弹Top候选，后台启动AI分析："
-                f"弹性评分={rebound_score:.1f}，"
-                f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
-                f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，"
-                f"上下比={float(rsi_vol.get('up_down_ratio') or 0):.2f}"
+                f"🤖 {symbol} {signal_label}Top候选，后台启动AI分析："
+                f"{_format_rsi_candidate_elasticity(item)}"
             )
             if not bot_notifier:
                 print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
@@ -837,16 +975,14 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
             if row is not None:
                 row['_ai_future'] = future
                 row['_ai_launched'] = True
-        for item in rsi_rebound_candidates:
-            symbol = item.get('symbol')
-            if symbol in selected_symbols:
+        for item in all_rsi_candidates:
+            if id(item) in selected_candidate_ids:
                 continue
-            rsi_vol = item.get('rsi_rebound_volatility') or {}
+            symbol = item.get('symbol')
+            signal_label = item.get('signal_label') or 'RSI候选'
             print(
-                f"⏭️  {symbol} RSI反弹候选未入Top{RSI_REBOUND_TOP_N}，本轮不播报："
-                f"弹性评分={float(item.get('rebound_elasticity_score') or 0):.1f}，"
-                f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
-                f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%"
+                f"⏭️  {symbol} {signal_label}候选未入Top{RSI_REBOUND_TOP_N}，本轮不播报："
+                f"{_format_rsi_candidate_elasticity(item)}"
             )
 
     # 打印分隔线
@@ -874,7 +1010,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
             try:
                 future = stock.get('_ai_future')
                 symbol = stock['symbol']
-                res = future.result()
+                res = future.result(timeout=AI_FUTURE_TIMEOUT_SEC)
                 if isinstance(res, dict) and res.get('symbol') == symbol:
                     stock['_ai_result'] = res
                     print(f"✅ {symbol} 后台AI分析完成 (status={res.get('status')})")
@@ -886,7 +1022,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 stock['_ai_result'] = None
 
     # 关闭线程池
-    executor.shutdown(wait=True)
+    executor.shutdown(wait=False, cancel_futures=True)
 
     try:
         run_rebound_alert_scan(

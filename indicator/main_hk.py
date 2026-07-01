@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
-from get_stock_price import get_stock_data, batch_download_stocks
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
@@ -26,7 +26,7 @@ from alert_system import add_to_watchlist, print_watchlist_summary
 from qq_notifier import QQNotifier, load_qq_token
 from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from async_ai import process_ai_task
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
@@ -43,6 +43,9 @@ import pytz
 from datetime import datetime
 import sys
 import traceback
+
+FAST_SCAN_WORKERS = max(1, int(os.getenv("CARMEN_HK_FAST_SCAN_WORKERS", os.getenv("CARMEN_FAST_SCAN_WORKERS", "4")) or 4))
+AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") or 180)
 
 def get_stock_list_from_csv(stock_path: str):
     """
@@ -155,6 +158,36 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
         if added:
             capture_output(f"🚫 已将 {added} 只疑似退市/无历史数据股票加入永久排除列表")
     flush_output()
+
+    fast_scan_results = {}
+    fast_scan_symbols = [s for s in stock_symbols if s and '.' in s]
+
+    def load_fast_scan(symbol: str):
+        data = get_stock_data_offline(
+            symbol,
+            rsi_period=rsi_period,
+            macd_fast=macd_fast,
+            macd_slow=macd_slow,
+            macd_signal=macd_signal,
+            avg_volume_days=avg_volume_days,
+            use_cache=True,
+            cache_minutes=20,
+            fast_scan=True,
+        )
+        return symbol, data
+
+    if fast_scan_symbols:
+        workers = min(FAST_SCAN_WORKERS, len(fast_scan_symbols))
+        with ThreadPoolExecutor(max_workers=workers) as scan_executor:
+            futures = {scan_executor.submit(load_fast_scan, symbol): symbol for symbol in fast_scan_symbols}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    result_symbol, data = future.result()
+                    fast_scan_results[result_symbol] = data
+                except Exception as e:
+                    fast_scan_results[symbol] = None
+                    print(f"⚠️  {symbol} fast_scan离线初筛失败: {e}")
     
     # 扫描股票
     alert_count = 0
@@ -168,16 +201,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 failed_count += 1
                 continue
             
-            stock_data = get_stock_data(
-                symbol, 
-                rsi_period=rsi_period,
-                macd_fast=macd_fast,
-                macd_slow=macd_slow,
-                macd_signal=macd_signal,
-                avg_volume_days=avg_volume_days,
-                use_cache=True,
-                cache_minutes=20
-            )
+            stock_data = fast_scan_results.get(symbol)
             
             if stock_data:
                 # 检查成交量过滤条件
@@ -193,12 +217,34 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
+                pre_candidate = score[0] >= 2.0 or score[1] >= 2.0
+                if pre_candidate:
+                    full_stock_data = get_stock_data_offline(
+                        symbol,
+                        rsi_period=rsi_period,
+                        macd_fast=macd_fast,
+                        macd_slow=macd_slow,
+                        macd_signal=macd_signal,
+                        avg_volume_days=avg_volume_days,
+                        use_cache=True,
+                        cache_minutes=20,
+                        fast_scan=False,
+                    )
+                    if full_stock_data:
+                        stock_data = full_stock_data
+                        score_carmen = carmen_indicator(stock_data)
+                        score_vegas = vegas_indicator(stock_data)
+                        score_silver = silver_indicator(stock_data)
+                        score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
+                        pre_candidate = score[0] >= 2.0 or score[1] >= 2.0
+                    else:
+                        pre_candidate = False
                 
                 # 进行回测
                 backtest_result = None
                 backtest_str = ''
                 confidence = 0.0
-                if score[0] >= 2.0 or score[1] >= 2.0:
+                if pre_candidate:
                     try:
                         backtest_result = backtest_carmen_indicator(
                             symbol, score, stock_data, 
@@ -295,6 +341,10 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     if score[0] >= 2.0:
                         alert_count += 1
                     
+                    if not pre_candidate:
+                        flush_output()
+                        continue
+
                     # 收集数据用于HTML生成
                     price = stock_data.get('close', 0)
                     open_price = stock_data.get('open', 0)
@@ -374,7 +424,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
             try:
                 future = stock.get('_ai_future')
                 symbol = stock['symbol']
-                res = future.result()
+                res = future.result(timeout=AI_FUTURE_TIMEOUT_SEC)
                 if isinstance(res, dict) and res.get('symbol') == symbol:
                     stock['_ai_result'] = res
                     print(f"✅ {symbol} 后台AI分析完成 (status={res.get('status')})")
@@ -386,7 +436,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 stock['_ai_result'] = None
 
     # 关闭线程池
-    executor.shutdown(wait=True)
+    executor.shutdown(wait=False, cancel_futures=True)
     
     # 生成HTML报告并推送到GitHub Pages
     if git_publisher and stocks_data_for_html:
