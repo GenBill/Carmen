@@ -7,7 +7,6 @@ from main_a import (
     _a_share_scan_signal_ok,
     _a_share_should_submit_scan_ai,
     _rsi_rebound_volatility_ok,
-    _rsi_rebound_setup_ok,
     _select_top_rsi_rebound_candidates,
     _is_rsi_oversold_candidate,
 )
@@ -31,7 +30,7 @@ def test_rsi_candidate_bypasses_volume_or_tuo_gate():
         confidence=0.0,
         volume_ma_info={"position_build_score": 3.0, "has_recent_golden_cross": False},
         duanxian_tuo_info={"gate_ok": False},
-        rsi_oversold_candidate=True,
+        rsi_signal_active=True,
     )
 
     assert signal_ok is True
@@ -46,7 +45,7 @@ def test_normal_candidate_still_requires_existing_followup_gate():
         confidence=0.0,
         volume_ma_info={"position_build_score": 3.0, "has_recent_golden_cross": False},
         duanxian_tuo_info={"gate_ok": False},
-        rsi_oversold_candidate=False,
+        rsi_signal_active=False,
     )
 
     assert signal_ok is True

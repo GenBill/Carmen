@@ -27,6 +27,10 @@ except ImportError:
     _AKSHARE_AVAILABLE = False
 
 
+_A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL = 0.0
+_A_SHARE_TURNOVER_BREAKER_COOLDOWN_SEC = 120.0
+
+
 # ============== A 股数据获取（与 basic_analysis 共用，以 akshare 为准） ==============
 #
 # 东财 A 股行情：
@@ -109,7 +113,12 @@ def _em_secid_a_share(code: str) -> Optional[str]:
 
 
 def _em_push2_stock_get_data_curl_cffi(
-    code: str, fields: str, *, require_nonempty_data: bool = True
+    code: str,
+    fields: str,
+    *,
+    require_nonempty_data: bool = True,
+    timeout: float = 10,
+    max_retries: int = 3,
 ) -> Optional[Dict[str, Any]]:
     """
     GET `push2.eastmoney.com/api/qt/stock/get`，返回 JSON 的 `data` 对象或 None。
@@ -132,13 +141,14 @@ def _em_push2_stock_get_data_curl_cffi(
         "fields": fields,
         "secid": f"{market_code}.{code}",
     }
-    for i in range(3):
+    retry_count = max(1, int(max_retries))
+    for i in range(retry_count):
         try:
             r = cc_requests.get(
                 url,
                 params=params,
                 impersonate="chrome",
-                timeout=10,
+                timeout=timeout,
                 proxies={"http": "", "https": ""},
             )
             if r.status_code != 200:
@@ -153,7 +163,7 @@ def _em_push2_stock_get_data_curl_cffi(
                 return d if isinstance(d, dict) else None
         except Exception:
             pass
-        if i < 2:
+        if i < retry_count - 1:
             time.sleep(0.4 * (i + 1))
     return None
 
@@ -243,6 +253,39 @@ def fetch_a_share_today_open_from_ak(code: str) -> Optional[float]:
     if not math.isfinite(v) or v <= 0:
         return None
     return round(v, 4)
+
+
+def fetch_a_share_turnover_rate(code: str) -> Optional[float]:
+    """
+    轻量获取 A 股换手率(%)。
+
+    扫描阶段只需要换手率闸门。东财不稳定时使用熔断，避免每个候选股
+    都被 push2/akshare fallback 拖死；未知换手率由调用方按“不拦截”处理。
+    """
+    global _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL
+
+    if not _AKSHARE_AVAILABLE:
+        return None
+    want = _em_code_to_six(str(code or "").split(".")[0])
+    if len(want) != 6:
+        return None
+
+    now = time.time()
+    if now < _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL:
+        return None
+
+    data = _em_push2_stock_get_data_curl_cffi(
+        want,
+        "f168",
+        require_nonempty_data=True,
+        timeout=4,
+        max_retries=1,
+    )
+    if data is not None:
+        return _coerce_eastmoney_turnover_pct(data.get("f168"))
+
+    _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL = now + _A_SHARE_TURNOVER_BREAKER_COOLDOWN_SEC
+    return None
 
 
 def _fetch_a_share_quotes_bid_ask(
