@@ -6,7 +6,6 @@ from main_a import (
     RSI_REBOUND_THRESHOLD,
     _a_share_scan_signal_ok,
     _a_share_should_submit_scan_ai,
-    _backtest_rsi_rebound,
     _rsi_rebound_volatility_ok,
     _rsi_rebound_setup_ok,
     _select_top_rsi_rebound_candidates,
@@ -54,45 +53,6 @@ def test_normal_candidate_still_requires_existing_followup_gate():
     assert submit_ai is False
     assert position_build_score == 3.0
     assert has_recent_golden_cross is False
-
-
-def _hist_from_closes(closes):
-    return pd.DataFrame({"Close": closes})
-
-
-def _rsi_rebound_event(start, future_close):
-    # 先上行让 RSI 明确高于阈值，再急跌触发 RSI<18；触发后补足 5 个交易日用于收益判定。
-    return list(range(start, start + 20)) + [
-        start + 20,
-        start + 10,
-        start,
-        start - 10,
-        start - 12,
-        start - 13,
-        start - 14,
-        start - 15,
-        future_close,
-    ]
-
-
-def test_rsi_rebound_backtest_passes_with_stable_5pct_week_rebounds():
-    closes = _rsi_rebound_event(100, 96) + list(range(97, 180)) + _rsi_rebound_event(180, 180)
-
-    result = _backtest_rsi_rebound({"hist": _hist_from_closes(closes)}, rsi_period=8)
-
-    assert result["threshold"] == RSI_REBOUND_THRESHOLD
-    assert result["total"] >= 2
-    assert result["success"] >= 2
-    assert result["passed"] is True
-
-
-def test_rsi_rebound_backtest_fails_without_5pct_week_rebounds():
-    closes = _rsi_rebound_event(100, 91) + list(range(92, 180)) + _rsi_rebound_event(180, 171)
-
-    result = _backtest_rsi_rebound({"hist": _hist_from_closes(closes)}, rsi_period=8)
-
-    assert result["total"] >= 2
-    assert result["passed"] is False
 
 
 def _hist_from_ohlc(open_price=100.0, up_pct=4.0, down_pct=2.0, n=60):
@@ -171,7 +131,7 @@ def test_rsi_rebound_telegram_title_and_elasticity_line():
         symbol="300515.SZ",
         price=13.05,
         score=0.0,
-        backtest_text="RSI18:2/3",
+        backtest_text="(RSI18)",
         rsi_prev=16.0,
         rsi=17.5,
         rsi_rebound_volatility={

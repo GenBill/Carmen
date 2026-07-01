@@ -148,7 +148,7 @@ def volume_ma_ai_gate_ok(volume_ma_info: Optional[Dict[str, Any]]) -> Tuple[bool
     info = volume_ma_info or {}
     pbs = float(info.get('position_build_score', 0) or 0)
     gcx = bool(info.get('has_recent_golden_cross', False))
-    return (gcx and pbs >= MIN_POSITION_BUILD_SCORE), pbs, gcx
+    return (gcx or pbs >= MIN_POSITION_BUILD_SCORE), pbs, gcx
 
 
 def duanxian_tuo_gate_ok(duanxian_tuo_info: Optional[Dict[str, Any]]) -> Tuple[bool, str]:

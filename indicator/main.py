@@ -10,7 +10,7 @@ from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
-from get_stock_price import calculate_rsi, get_stock_data, get_stock_data_offline, batch_download_stocks
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
 from market_hours import get_market_status, get_cache_expiry_for_premarket
@@ -41,10 +41,6 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 US_RSI_REBOUND_THRESHOLD = 24.0
-US_RSI_REBOUND_LOOKAHEAD_DAYS = 5
-US_RSI_REBOUND_TARGET_RETURN_PCT = 5.0
-US_RSI_REBOUND_MIN_SAMPLES = 2
-US_RSI_REBOUND_MIN_SUCCESS_RATE = 0.5
 US_RSI_REBOUND_LOOKBACK_DAYS = 126
 US_RSI_REBOUND_MIN_AVG_UP_PCT = 3.0
 US_RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
@@ -192,64 +188,6 @@ def _us_rsi_rebound_setup_ok(stock_data: dict) -> tuple[bool, str]:
     if not vol_ok:
         return False, vol_reason
     return True, f'RSI与价格已止跌拐头；{vol_reason}'
-
-
-def _backtest_us_rsi_rebound(stock_data: dict, rsi_period: int) -> dict:
-    result = {
-        'threshold': US_RSI_REBOUND_THRESHOLD,
-        'lookahead_days': US_RSI_REBOUND_LOOKAHEAD_DAYS,
-        'target_return_pct': US_RSI_REBOUND_TARGET_RETURN_PCT,
-        'success': 0,
-        'total': 0,
-        'success_rate': 0.0,
-        'avg_return_pct': None,
-        'passed': False,
-        'reason': '',
-    }
-    hist = (stock_data or {}).get('hist')
-    if hist is None or getattr(hist, 'empty', True) or 'Close' not in hist:
-        result['reason'] = '无历史数据'
-        return result
-    need = max(int(rsi_period or 0) + US_RSI_REBOUND_LOOKAHEAD_DAYS + 2, 30)
-    if len(hist) < need:
-        result['reason'] = f'历史数据不足({len(hist)}/{need})'
-        return result
-
-    close = hist['Close'].astype(float)
-    rsi_series = calculate_rsi(close, period=rsi_period, return_series=True)
-    returns = []
-    start = max(int(rsi_period or 0) + 1, 1)
-    end = len(hist) - US_RSI_REBOUND_LOOKAHEAD_DAYS
-    for i in range(start, end):
-        rsi_now = rsi_series.iloc[i]
-        rsi_prev = rsi_series.iloc[i - 1]
-        if not (math.isfinite(float(rsi_now)) and math.isfinite(float(rsi_prev))):
-            continue
-        if not (float(rsi_now) < US_RSI_REBOUND_THRESHOLD and float(rsi_prev) >= US_RSI_REBOUND_THRESHOLD):
-            continue
-        buy_close = close.iloc[i]
-        future_close = close.iloc[i + US_RSI_REBOUND_LOOKAHEAD_DAYS]
-        if not (math.isfinite(float(buy_close)) and math.isfinite(float(future_close)) and float(buy_close) > 0):
-            continue
-        returns.append((float(future_close) / float(buy_close) - 1.0) * 100.0)
-
-    total = len(returns)
-    success = sum(1 for x in returns if x >= US_RSI_REBOUND_TARGET_RETURN_PCT)
-    success_rate = (success / total) if total else 0.0
-    result.update({
-        'success': success,
-        'total': total,
-        'success_rate': success_rate,
-        'avg_return_pct': (sum(returns) / total) if total else None,
-        'passed': total >= US_RSI_REBOUND_MIN_SAMPLES and success_rate >= US_RSI_REBOUND_MIN_SUCCESS_RATE,
-    })
-    if total < US_RSI_REBOUND_MIN_SAMPLES:
-        result['reason'] = f'样本不足({total}/{US_RSI_REBOUND_MIN_SAMPLES})'
-    elif success_rate < US_RSI_REBOUND_MIN_SUCCESS_RATE:
-        result['reason'] = f'胜率不足({success}/{total})'
-    else:
-        result['reason'] = f'通过({success}/{total})'
-    return result
 
 
 def flush_output():
@@ -424,7 +362,6 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
 
                 # 进行回测
                 backtest_result = None
-                rsi_rebound_backtest = None
                 backtest_str = ''
                 confidence = 0.0
                 ai_launched = False
@@ -439,9 +376,6 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             macd_signal=macd_signal, 
                             avg_volume_days=avg_volume_days
                         )
-                        if rsi_oversold_candidate:
-                            rsi_rebound_backtest = _backtest_us_rsi_rebound(stock_data, rsi_period)
-                            stock_data['rsi_rebound_backtest'] = rsi_rebound_backtest
 
                         if backtest_result or rsi_oversold_candidate:
                             buy_success, buy_total = 0, 0
@@ -455,13 +389,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 confidence = 0.0
 
                             if rsi_oversold_candidate:
-                                rsi_success = int((rsi_rebound_backtest or {}).get('success', 0) or 0)
-                                rsi_total = int((rsi_rebound_backtest or {}).get('total', 0) or 0)
-                                rsi_rate = float((rsi_rebound_backtest or {}).get('success_rate', 0.0) or 0.0)
-                                backtest_str = f"(RSI{US_RSI_REBOUND_THRESHOLD:g}:{rsi_success}/{rsi_total})"
-                                confidence = max(confidence, rsi_rate)
-                                if not (rsi_rebound_backtest or {}).get('passed'):
-                                    continue
+                                backtest_str = f"(RSI{US_RSI_REBOUND_THRESHOLD:g})"
                             
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
@@ -635,7 +563,6 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             'duanxian_tuo_info': duanxian_tuo_info,
                             'stock_character_info': stock_character_info,
                             '_rsi_oversold_candidate': rsi_oversold_candidate,
-                            'rsi_rebound_backtest': rsi_rebound_backtest,
                             'rsi_rebound_volatility': stock_data.get('rsi_rebound_volatility') or stock_data.get('_rsi_rebound_volatility'),
                             'rebound_elasticity_score': stock_data.get('rebound_elasticity_score'),
                         })

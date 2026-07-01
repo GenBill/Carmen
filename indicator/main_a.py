@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
-from get_stock_price import calculate_rsi, get_stock_data, batch_download_stocks
+from get_stock_price import get_stock_data, batch_download_stocks
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
@@ -59,10 +59,6 @@ A_SHARE_MIN_TURNOVER_PCT_EARLY_AM = 2.0
 A_SHARE_MIN_TURNOVER_PCT_AM = 5.0
 A_SHARE_MIN_TURNOVER_PCT_PM = 10.0
 RSI_REBOUND_THRESHOLD = 18.0
-RSI_REBOUND_LOOKAHEAD_DAYS = 5
-RSI_REBOUND_TARGET_RETURN_PCT = 5.0
-RSI_REBOUND_MIN_SAMPLES = 2
-RSI_REBOUND_MIN_SUCCESS_RATE = 0.5
 RSI_REBOUND_LOOKBACK_DAYS = 126
 RSI_REBOUND_MIN_AVG_UP_PCT = 3.0
 RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
@@ -296,66 +292,6 @@ def _a_share_should_submit_scan_ai(
     return submit_ai, signal_ok, position_build_score, has_recent_golden_cross
 
 
-def _backtest_rsi_rebound(stock_data: dict, rsi_period: int) -> dict:
-    """回测单股票历史 RSI<18 后第 5 个交易日收盘是否反弹 5% 以上。"""
-    result = {
-        'threshold': RSI_REBOUND_THRESHOLD,
-        'lookahead_days': RSI_REBOUND_LOOKAHEAD_DAYS,
-        'target_return_pct': RSI_REBOUND_TARGET_RETURN_PCT,
-        'success': 0,
-        'total': 0,
-        'success_rate': 0.0,
-        'avg_return_pct': None,
-        'passed': False,
-        'reason': '',
-    }
-    hist = (stock_data or {}).get('hist')
-    if hist is None or getattr(hist, 'empty', True) or 'Close' not in hist:
-        result['reason'] = '无历史数据'
-        return result
-    need = max(int(rsi_period or 0) + RSI_REBOUND_LOOKAHEAD_DAYS + 2, 30)
-    if len(hist) < need:
-        result['reason'] = f'历史数据不足({len(hist)}/{need})'
-        return result
-
-    close = hist['Close'].astype(float)
-    rsi_series = calculate_rsi(close, period=rsi_period, return_series=True)
-    returns = []
-    start = max(int(rsi_period or 0) + 1, 1)
-    end = len(hist) - RSI_REBOUND_LOOKAHEAD_DAYS
-    for i in range(start, end):
-        rsi_now = rsi_series.iloc[i]
-        rsi_prev = rsi_series.iloc[i - 1]
-        if not (math.isfinite(float(rsi_now)) and math.isfinite(float(rsi_prev))):
-            continue
-        if not (float(rsi_now) < RSI_REBOUND_THRESHOLD and float(rsi_prev) >= RSI_REBOUND_THRESHOLD):
-            continue
-        buy_close = close.iloc[i]
-        future_close = close.iloc[i + RSI_REBOUND_LOOKAHEAD_DAYS]
-        if not (math.isfinite(float(buy_close)) and math.isfinite(float(future_close)) and float(buy_close) > 0):
-            continue
-        ret_pct = (float(future_close) / float(buy_close) - 1.0) * 100.0
-        returns.append(ret_pct)
-
-    total = len(returns)
-    success = sum(1 for x in returns if x >= RSI_REBOUND_TARGET_RETURN_PCT)
-    success_rate = (success / total) if total else 0.0
-    result.update({
-        'success': success,
-        'total': total,
-        'success_rate': success_rate,
-        'avg_return_pct': (sum(returns) / total) if total else None,
-        'passed': total >= RSI_REBOUND_MIN_SAMPLES and success_rate >= RSI_REBOUND_MIN_SUCCESS_RATE,
-    })
-    if total < RSI_REBOUND_MIN_SAMPLES:
-        result['reason'] = f'样本不足({total}/{RSI_REBOUND_MIN_SAMPLES})'
-    elif success_rate < RSI_REBOUND_MIN_SUCCESS_RATE:
-        result['reason'] = f'胜率不足({success}/{total})'
-    else:
-        result['reason'] = f'通过({success}/{total})'
-    return result
-
-
 def get_stock_list_from_csv(stock_path: str):
     """
     从CSV文件获取股票列表
@@ -566,7 +502,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 
                 # 进行回测
                 backtest_result = None
-                rsi_rebound_backtest = None
                 backtest_str = ''
                 confidence = 0.0
                 if score[0] >= 2.0 or score[1] >= 2.0 or rsi_oversold_candidate:
@@ -580,9 +515,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             macd_signal=macd_signal, 
                             avg_volume_days=avg_volume_days
                         )
-                        if rsi_oversold_candidate:
-                            rsi_rebound_backtest = _backtest_rsi_rebound(stock_data, rsi_period)
-                            stock_data['rsi_rebound_backtest'] = rsi_rebound_backtest
 
                         if backtest_result or rsi_oversold_candidate:
                             buy_success, buy_total = 0, 0
@@ -596,18 +528,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 confidence = 0.0
 
                             if rsi_oversold_candidate:
-                                rsi_success = int((rsi_rebound_backtest or {}).get('success', 0) or 0)
-                                rsi_total = int((rsi_rebound_backtest or {}).get('total', 0) or 0)
-                                rsi_rate = float((rsi_rebound_backtest or {}).get('success_rate', 0.0) or 0.0)
-                                backtest_str = f"(RSI{RSI_REBOUND_THRESHOLD:g}:{rsi_success}/{rsi_total})"
-                                confidence = max(confidence, rsi_rate)
-                                if not (rsi_rebound_backtest or {}).get('passed'):
-                                    # print(
-                                    #     f"⏭️  {symbol} RSI<{RSI_REBOUND_THRESHOLD:g} 回测未通过："
-                                    #     f"{(rsi_rebound_backtest or {}).get('reason', '未知')}，"
-                                    #     f"目标=第{RSI_REBOUND_LOOKAHEAD_DAYS}个交易日收盘收益≥{RSI_REBOUND_TARGET_RETURN_PCT:g}%"
-                                    # )
-                                    continue
+                                backtest_str = f"(RSI{RSI_REBOUND_THRESHOLD:g})"
                             
                             # 后台 AI（与是否配置 Telegram/QQ 解耦；闸门见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
@@ -825,7 +746,6 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         'duanxian_tuo_info': duanxian_tuo_info,
                         'stock_character_info': stock_character_info,
                         '_rsi_oversold_candidate': rsi_oversold_candidate,
-                        'rsi_rebound_backtest': rsi_rebound_backtest,
                         'rsi_rebound_volatility': stock_data.get('rsi_rebound_volatility') or stock_data.get('_rsi_rebound_volatility'),
                         'rebound_elasticity_score': stock_data.get('rebound_elasticity_score'),
                     })
