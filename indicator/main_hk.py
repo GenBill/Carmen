@@ -14,9 +14,10 @@ warnings.filterwarnings('ignore', message='.*gzip.*content-length.*')
 from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
-from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks, enrich_stock_data_detail
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
-from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
+from indicators import backtest_carmen_indicator
+from scan_signal_eval import evaluate_scan_signals
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, should_filter_stock
@@ -209,36 +210,33 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     failed_count += 1
                     continue
                 
-                # 计算Carmen指标
-                score_carmen = carmen_indicator(stock_data)
-                score_vegas = vegas_indicator(stock_data)
-                score_silver = silver_indicator(stock_data)
-                score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
+                scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
+                score = scan_state.score
+                pre_candidate = scan_state.pre_candidate
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
-                pre_candidate = score[0] >= 2.0 or score[1] >= 2.0
                 if pre_candidate:
-                    full_stock_data = get_stock_data_offline(
-                        symbol,
-                        rsi_period=rsi_period,
-                        macd_fast=macd_fast,
-                        macd_slow=macd_slow,
-                        macd_signal=macd_signal,
-                        avg_volume_days=avg_volume_days,
-                        use_cache=True,
-                        cache_minutes=20,
-                        fast_scan=False,
-                    )
-                    if full_stock_data:
-                        stock_data = full_stock_data
-                        score_carmen = carmen_indicator(stock_data)
-                        score_vegas = vegas_indicator(stock_data)
-                        score_silver = silver_indicator(stock_data)
-                        score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
-                        pre_candidate = score[0] >= 2.0 or score[1] >= 2.0
-                    else:
-                        pre_candidate = False
+                    enriched = enrich_stock_data_detail(stock_data, avg_volume_days=avg_volume_days)
+                    if not enriched:
+                        full_stock_data = get_stock_data_offline(
+                            symbol,
+                            rsi_period=rsi_period,
+                            macd_fast=macd_fast,
+                            macd_slow=macd_slow,
+                            macd_signal=macd_signal,
+                            avg_volume_days=avg_volume_days,
+                            use_cache=True,
+                            cache_minutes=20,
+                            fast_scan=False,
+                        )
+                        if full_stock_data:
+                            stock_data = full_stock_data
+                            scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
+                            score = scan_state.score
+                            pre_candidate = scan_state.pre_candidate
+                        else:
+                            pre_candidate = False
                 
                 # 进行回测
                 backtest_result = None

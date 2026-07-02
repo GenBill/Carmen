@@ -182,6 +182,44 @@ def silver_indicator(stock_data):
     return 0.0
 
 
+def is_macd_buy_imminent(stock_data) -> bool:
+    """MACD 买入侧即将金叉/刚金叉，或 DIF 连跌反包形态。"""
+    if not stock_data:
+        return False
+    if _macd_dif_buy_fade_extrap_reversal(stock_data.get('macd_dif_tail') or []):
+        return True
+    dif = stock_data.get('dif')
+    dea = stock_data.get('dea')
+    slope = stock_data.get('dif_dea_slope')
+    if dif is None or dea is None or slope is None:
+        return False
+    if slope <= 0:
+        return False
+    return (
+        (dif < dea and dif + 2 * slope > dea)
+        or (dif >= dea and dif - 2 * slope < dea)
+    )
+
+
+def is_macd_sell_imminent(stock_data) -> bool:
+    """MACD 卖出侧即将死叉/刚死叉，或 DIF 连涨反包形态。"""
+    if not stock_data:
+        return False
+    if _macd_dif_sell_fade_extrap_reversal(stock_data.get('macd_dif_tail') or []):
+        return True
+    dif = stock_data.get('dif')
+    dea = stock_data.get('dea')
+    slope = stock_data.get('dif_dea_slope')
+    if dif is None or dea is None or slope is None:
+        return False
+    if slope >= 0:
+        return False
+    return (
+        (dif > dea and dif + 2 * slope < dea)
+        or (dif <= dea and dif - 2 * slope > dea)
+    )
+
+
 def carmen_indicator(stock_data):
     """
     Carmen 综合指标评分系统
@@ -229,24 +267,8 @@ def carmen_indicator(stock_data):
     # MACD 金叉买入，死叉卖出 (捕捉金叉/死叉前后2日信号)
     macd_state_strict = [False, False]
     if (stock_data['dif'] != None and stock_data['dif_dea_slope'] != None and stock_data['dea'] != None):
-        # 买入：斜率为正 且 (处于金叉左侧即将交叉 OR 处于金叉右侧刚刚交叉)
-        macd_state_strict[0] = (
-            stock_data['dif_dea_slope'] > 0
-            and (
-                (stock_data['dif'] < stock_data['dea'] and stock_data['dif'] + 2*stock_data['dif_dea_slope'] > stock_data['dea'])
-                or
-                (stock_data['dif'] >= stock_data['dea'] and stock_data['dif'] - 2*stock_data['dif_dea_slope'] < stock_data['dea'])
-            )
-        )
-        # 卖出：斜率为负 且 (处于死叉左侧即将交叉 OR 处于死叉右侧刚刚交叉)
-        macd_state_strict[1] = (
-            stock_data['dif_dea_slope'] < 0
-            and (
-                (stock_data['dif'] > stock_data['dea'] and stock_data['dif'] + 2*stock_data['dif_dea_slope'] < stock_data['dea'])
-                or
-                (stock_data['dif'] <= stock_data['dea'] and stock_data['dif'] - 2*stock_data['dif_dea_slope'] > stock_data['dea'])
-            )
-        )
+        macd_state_strict[0] = is_macd_buy_imminent(stock_data)
+        macd_state_strict[1] = is_macd_sell_imminent(stock_data)
     
     macd_state_easy = [False, False]
     if (stock_data['dif'] != None and stock_data['dif_dea_slope'] != None and stock_data['dea'] != None):

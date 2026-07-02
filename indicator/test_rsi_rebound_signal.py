@@ -1,6 +1,7 @@
 import pandas as pd
 
 from rsi_rebound_signal import (
+    evaluate_macd_turn_positive,
     evaluate_rsi_rebound_setup,
     is_rsi_oversold_prev,
     is_rsi_oversold_today,
@@ -53,3 +54,33 @@ def test_rebound_setup_requires_prev_oversold_and_turning():
     ok, reason, _ = evaluate_rsi_rebound_setup(stock, 18.0, _vol_ok)
     assert ok is False
     assert "前一日RSI未超卖" in reason
+
+
+def test_macd_imminent_golden_cross_passes():
+    ok, reason = evaluate_macd_turn_positive({
+        "dif": -0.10,
+        "dea": 0.05,
+        "dif_dea_slope": 0.10,
+    })
+    assert ok is True
+    assert "即将金叉" in reason
+
+
+def test_macd_negative_slope_blocks():
+    ok, reason = evaluate_macd_turn_positive({
+        "dif": -0.20,
+        "dea": 0.05,
+        "dif_dea_slope": -0.05,
+    })
+    assert ok is False
+    assert "斜率非正" in reason
+
+
+def test_macd_far_below_dea_blocks():
+    ok, reason = evaluate_macd_turn_positive({
+        "dif": -0.50,
+        "dea": 0.10,
+        "dif_dea_slope": 0.01,
+    })
+    assert ok is False
+    assert "未即将转正" in reason

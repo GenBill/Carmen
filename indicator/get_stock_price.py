@@ -884,40 +884,17 @@ def _calculate_fast_scan_indicators_from_hist(hist, symbol, rsi_period, macd_fas
     }
 
 
-def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow, 
-                                    macd_signal, avg_volume_days, volume_lut):
+def _calculate_detail_fields_from_hist(hist, symbol, estimated_volume):
     """
-    从历史数据计算所有指标（公共计算逻辑）
-    
-    Args:
-        hist: 历史数据DataFrame
-        symbol: 股票代码
-        其他参数: 技术指标参数
-        
-    Returns:
-        dict: 包含所有计算结果的字典
+    仅计算 downstream 闸门所需的量能结构与短线托信息。
+    fast_scan 已有 core 指标时可增量 merge，避免重复算 RSI/MACD/EMA。
     """
-    if hist.empty or len(hist) < avg_volume_days + 1:
-        return None
-    
-    # 获取最后一个交易日数据（当日或最近交易日）
-    last_trading_day = hist.iloc[-1]
-    
-    # 检查关键数据有效性
-    if pd.isna(last_trading_day['Close']):
+    if hist is None or getattr(hist, 'empty', True):
         return None
 
-    trading_date_timestamp = hist.index[-1]
-    trading_date = trading_date_timestamp.strftime('%Y-%m-%d')
-    
-    # 计算过去 N 日平均成交量（明确排除当日，即最后一个交易日）
-    if len(hist) >= avg_volume_days + 1:
-        avg_volume = hist.iloc[-(avg_volume_days+1):-1]['Volume'].mean()
-    else:
-        avg_volume = hist.iloc[:-1]['Volume'].mean()
-    
-    if pd.isna(avg_volume):
-        avg_volume = 0
+    last_trading_day = hist.iloc[-1]
+    if pd.isna(last_trading_day['Close']):
+        return None
 
     # 成交量均线（使用 SMA，较 EMA 更稳，适合观察主力建仓/放量结构）
     # 买入闸门判断的是“当前交易日是否已经放量形成量能金叉”，所以 current 必须包含当日成交量。
@@ -962,22 +939,11 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     volume_sma30_series = hist_volume_ma_current['Volume'].rolling(window=30, min_periods=30).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
     volume_sma60_series = hist_volume_ma_current['Volume'].rolling(window=60, min_periods=60).mean() if not hist_volume_ma_current.empty else pd.Series(dtype=float)
 
-    # 当日成交量
-    current_volume = last_trading_day['Volume']
-    if pd.isna(current_volume):
-        current_volume = 0
-    
-    # 判断是港股/A股还是美股
-    is_hk_stock = symbol.endswith('.HK')
-    is_a_stock = symbol.endswith('.SS') or symbol.endswith('.SZ')
-    
-    # 估算全天成交量（只在确认是当日盘中数据时才估算）
-    if is_hk_stock:
-        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_HK)
-    elif is_a_stock:
-        estimated_volume = estimate_full_day_volume_hka(current_volume, trading_date_timestamp, volume_lut=INTRADAY_VOLUME_A)
-    else:
-        estimated_volume = estimate_full_day_volume(current_volume, trading_date_timestamp, volume_lut=volume_lut)
+    if estimated_volume is None:
+        current_volume = last_trading_day['Volume']
+        if pd.isna(current_volume):
+            current_volume = 0
+        estimated_volume = float(current_volume)
 
     volume_ma_structure = []
     if volume_ma5 and volume_ma10 and volume_ma5 > volume_ma10:
@@ -1079,120 +1045,65 @@ def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_sl
     }
 
     duanxian_tuo_info = _calculate_duanxian_tuo_info(hist, last_trading_day['Close'])
-    
-    # 计算 RSI（获取完整序列以便提取前一日数据）
-    rsi_series = calculate_rsi(hist['Close'], period=rsi_period, return_series=True)
-    rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else None
-    rsi_prev = None
-    if len(rsi_series) >= 2 and not pd.isna(rsi_series.iloc[-2]):
-        rsi_prev = rsi_series.iloc[-2]
-    
-    # 计算 MACD
-    macd_data = calculate_macd(hist['Close'], fast=macd_fast, slow=macd_slow, signal=macd_signal)
 
-    macd_dif_tail = []
-    try:
-        exp1_hist = hist['Close'].ewm(span=macd_fast, adjust=False).mean()
-        exp2_hist = hist['Close'].ewm(span=macd_slow, adjust=False).mean()
-        dif_series_hist = exp1_hist - exp2_hist
-        _need_tail = _MACD_FADE_TAIL_BARS
-        if len(dif_series_hist) >= _need_tail:
-            _chunk = dif_series_hist.iloc[-_need_tail:]
-            if _chunk.notna().all():
-                macd_dif_tail = [float(v) for v in _chunk.tolist()]
-    except Exception:
-        macd_dif_tail = []
-    
-    # 计算 EMA 指标（获取完整序列以便提取前一日数据）
-    ema_5_series = calculate_ema(hist['Close'], period=5, return_series=True)
-    ema_12_series = calculate_ema(hist['Close'], period=12, return_series=True)
-    ema_60_series = calculate_ema(hist['Close'], period=60, return_series=True)
-    ema_144_series = calculate_ema(hist['Close'], period=144, return_series=True)
-    
-    ema_5 = ema_5_series.iloc[-1] if not pd.isna(ema_5_series.iloc[-1]) else None
-    ema_12 = ema_12_series.iloc[-1] if not pd.isna(ema_12_series.iloc[-1]) else None
-    ema_60 = ema_60_series.iloc[-1] if not pd.isna(ema_60_series.iloc[-1]) else None
-    ema_144 = ema_144_series.iloc[-1] if not pd.isna(ema_144_series.iloc[-1]) else None
-    
-    # 获取前一日 EMA 数据
-    ema_5_prev = None
-    ema_12_prev = None
-    ema_60_prev = None
-    ema_144_prev = None
-    if len(ema_5_series) >= 2 and not pd.isna(ema_5_series.iloc[-2]):
-        ema_5_prev = ema_5_series.iloc[-2]
-    if len(ema_12_series) >= 2 and not pd.isna(ema_12_series.iloc[-2]):
-        ema_12_prev = ema_12_series.iloc[-2]
-    if len(ema_60_series) >= 2 and not pd.isna(ema_60_series.iloc[-2]):
-        ema_60_prev = ema_60_series.iloc[-2]
-    if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]):
-        ema_144_prev = ema_144_series.iloc[-2]
-    
-    # 提取最近 90 天的 EMA 数据 (用于 silver_indicator)
-    ema_5_hist = ema_5_series.iloc[-90:].tolist() if not ema_5_series.empty else []
-    ema_60_hist = ema_60_series.iloc[-90:].tolist() if not ema_60_series.empty else []
-    
-    # 计算周线MACD（用于过滤日线假信号）
-    weekly_dif = None
-    weekly_dea = None
-    weekly_dif_dea_slope = None
-    
-    try:
-        # 将日线数据聚合为周线数据
-        weekly_data = hist.resample('W').agg({
-            'Open': 'first',
-            'High': 'max',
-            'Low': 'min',
-            'Close': 'last',
-            'Volume': 'sum'
-        }).dropna()
-        
-        # 至少需要34周数据才能计算稳定的周线MACD (26+9)*1.3
-        if len(weekly_data) >= 34:
-            # 计算周线MACD（使用标准参数：12, 26, 9）
-            weekly_macd = calculate_macd(weekly_data['Close'], fast=12, slow=26, signal=9)
-            weekly_dif = weekly_macd['dif']
-            weekly_dea = weekly_macd['dea']
-            weekly_dif_dea_slope = weekly_macd['dif_dea_slope']
-    except Exception:
-        pass  # 周线MACD计算失败不影响主流程
-    
     return {
-        'symbol': symbol,
-        'date': trading_date,
-        'hist': hist,
-        'open': round(last_trading_day['Open'], 2),
-        'close': round(last_trading_day['Close'], 2),
-        'volume': int(current_volume),
-        'estimated_volume': estimated_volume,
-        'avg_volume': int(avg_volume),
         'volume_ma5': round(volume_ma5, 2) if volume_ma5 else None,
         'volume_ma10': round(volume_ma10, 2) if volume_ma10 else None,
         'volume_ma30': round(volume_ma30, 2) if volume_ma30 else None,
         'volume_ma60': round(volume_ma60, 2) if volume_ma60 else None,
         'volume_ma_info': volume_ma_info,
         'duanxian_tuo_info': duanxian_tuo_info,
-        'rsi': round(rsi, 2) if rsi else None,
-        'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
-        'dif': macd_data['dif'],
-        'dea': macd_data['dea'],
-        'macd_histogram': macd_data['histogram'],
-        'dif_dea_slope': macd_data['dif_dea_slope'],
-        'macd_dif_tail': macd_dif_tail,
-        'ema_5': round(ema_5, 2) if ema_5 else None,
-        'ema_12': round(ema_12, 2) if ema_12 else None,
-        'ema_60': round(ema_60, 2) if ema_60 else None,
-        'ema_144': round(ema_144, 2) if ema_144 else None,
-        'ema_5_prev': round(ema_5_prev, 2) if ema_5_prev else None,
-        'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
-        'ema_60_prev': round(ema_60_prev, 2) if ema_60_prev else None,
-        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None,
-        'ema_5_hist': ema_5_hist,
-        'ema_60_hist': ema_60_hist,
-        'weekly_dif': weekly_dif,
-        'weekly_dea': weekly_dea,
-        'weekly_dif_dea_slope': weekly_dif_dea_slope,
     }
+
+
+def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow,
+                                    macd_signal, avg_volume_days, volume_lut):
+    """
+    从历史数据计算所有指标（公共计算逻辑）
+    """
+    fast_data = _calculate_fast_scan_indicators_from_hist(
+        hist, symbol, rsi_period, macd_fast, macd_slow,
+        macd_signal, avg_volume_days, volume_lut,
+    )
+    if fast_data is None:
+        return None
+
+    detail = _calculate_detail_fields_from_hist(
+        hist, symbol, fast_data.get('estimated_volume'),
+    )
+    if detail is None:
+        return None
+
+    fast_data.update(detail)
+    fast_data.pop('_fast_scan', None)
+    return fast_data
+
+
+def enrich_stock_data_detail(stock_data, avg_volume_days=8, volume_lut=None):
+    """
+    在 fast_scan 结果上增量补充量能/短线托字段，跳过重算 RSI/MACD/EMA。
+    非 fast_scan 或无 hist 时返回 None（调用方应 fallback 到完整 offline 拉取）。
+    """
+    if not stock_data or not stock_data.get('_fast_scan'):
+        return None
+
+    hist = stock_data.get('hist')
+    symbol = stock_data.get('symbol')
+    if hist is None or getattr(hist, 'empty', True) or not symbol:
+        return None
+
+    if len(hist) < avg_volume_days + 1:
+        return None
+
+    detail = _calculate_detail_fields_from_hist(
+        hist, symbol, stock_data.get('estimated_volume'),
+    )
+    if detail is None:
+        return None
+
+    stock_data.update(detail)
+    stock_data.pop('_fast_scan', None)
+    return stock_data
 
 
 def get_stock_data_offline(symbol: str, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, 

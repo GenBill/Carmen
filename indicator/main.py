@@ -10,8 +10,8 @@ from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
-from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks
-from indicators import carmen_indicator, silver_indicator, vegas_indicator, backtest_carmen_indicator
+from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks, enrich_stock_data_detail
+from indicators import backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
 from market_hours import get_market_status, get_cache_expiry_for_premarket
 from alert_system import add_to_watchlist, print_watchlist_summary
@@ -24,9 +24,9 @@ from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from async_ai import process_ai_task
 from stock_character_filter import evaluate_stock_character
+from scan_signal_eval import evaluate_scan_signals
 from rsi_rebound_signal import (
-    evaluate_rsi_rebound_setup,
-    is_rsi_oversold_today,
+    evaluate_macd_turn_positive,
 )
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
@@ -57,6 +57,7 @@ AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") o
 
 
 def _is_us_rsi_oversold_candidate(stock_data: dict) -> bool:
+    from rsi_rebound_signal import is_rsi_oversold_today
     return is_rsi_oversold_today(stock_data, US_RSI_REBOUND_THRESHOLD)
 
 
@@ -366,64 +367,49 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     failed_count += 1
                     continue
 
-                # 计算Carmen指标
-                score_carmen = carmen_indicator(stock_data)
-                score_vegas = vegas_indicator(stock_data)
-                score_silver = silver_indicator(stock_data)
-                score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
-                rsi_oversold_today = _is_us_rsi_oversold_candidate(stock_data)
-                rsi_rebound_setup, rsi_rebound_setup_reason, rsi_vol_info = evaluate_rsi_rebound_setup(
+                scan_state = evaluate_scan_signals(
                     stock_data,
-                    US_RSI_REBOUND_THRESHOLD,
-                    _us_rsi_rebound_volatility_ok,
+                    rsi_threshold=US_RSI_REBOUND_THRESHOLD,
+                    volatility_ok_fn=_us_rsi_rebound_volatility_ok,
+                    silver_on_sell=False,
                 )
-                if rsi_vol_info:
-                    stock_data['_rsi_rebound_volatility'] = rsi_vol_info
-                elif rsi_rebound_setup_reason and not rsi_oversold_today:
-                    stock_data['_rsi_rebound_block_reason'] = rsi_rebound_setup_reason
-                rsi_signal_active = rsi_oversold_today or rsi_rebound_setup
-                stock_data['_rsi_oversold_today'] = rsi_oversold_today
-                stock_data['_rsi_rebound_setup'] = rsi_rebound_setup
-                stock_data['_rsi_oversold_candidate'] = rsi_signal_active
+                score = scan_state.score
+                rsi_oversold_today = scan_state.rsi_oversold_today
+                rsi_rebound_setup = scan_state.rsi_rebound_setup
+                rsi_signal_active = scan_state.rsi_signal_active
+                pre_candidate = scan_state.pre_candidate
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
-                pre_candidate = score[0] >= 2.0 or score[1] >= 2.0 or rsi_signal_active
                 if pre_candidate:
-                    full_stock_data = get_stock_data_offline(
-                        symbol,
-                        rsi_period=rsi_period,
-                        macd_fast=macd_fast,
-                        macd_slow=macd_slow,
-                        macd_signal=macd_signal,
-                        avg_volume_days=avg_volume_days,
-                        use_cache=True,
-                        cache_minutes=actual_cache_minutes,
-                        fast_scan=False,
-                    )
-                    if full_stock_data:
-                        stock_data = full_stock_data
-                        score_carmen = carmen_indicator(stock_data)
-                        score_vegas = vegas_indicator(stock_data)
-                        score_silver = silver_indicator(stock_data)
-                        score = [score_carmen[0] * score_vegas[0] * score_silver, score_carmen[1] * score_vegas[1]]
-                        rsi_oversold_today = _is_us_rsi_oversold_candidate(stock_data)
-                        rsi_rebound_setup, rsi_rebound_setup_reason, rsi_vol_info = evaluate_rsi_rebound_setup(
-                            stock_data,
-                            US_RSI_REBOUND_THRESHOLD,
-                            _us_rsi_rebound_volatility_ok,
+                    enriched = enrich_stock_data_detail(stock_data, avg_volume_days=avg_volume_days)
+                    if not enriched:
+                        full_stock_data = get_stock_data_offline(
+                            symbol,
+                            rsi_period=rsi_period,
+                            macd_fast=macd_fast,
+                            macd_slow=macd_slow,
+                            macd_signal=macd_signal,
+                            avg_volume_days=avg_volume_days,
+                            use_cache=True,
+                            cache_minutes=actual_cache_minutes,
+                            fast_scan=False,
                         )
-                        if rsi_vol_info:
-                            stock_data['_rsi_rebound_volatility'] = rsi_vol_info
-                        elif rsi_rebound_setup_reason and not rsi_oversold_today:
-                            stock_data['_rsi_rebound_block_reason'] = rsi_rebound_setup_reason
-                        rsi_signal_active = rsi_oversold_today or rsi_rebound_setup
-                        stock_data['_rsi_oversold_today'] = rsi_oversold_today
-                        stock_data['_rsi_rebound_setup'] = rsi_rebound_setup
-                        stock_data['_rsi_oversold_candidate'] = rsi_signal_active
-                        pre_candidate = score[0] >= 2.0 or score[1] >= 2.0 or rsi_signal_active
-                    else:
-                        pre_candidate = False
+                        if full_stock_data:
+                            stock_data = full_stock_data
+                            scan_state = evaluate_scan_signals(
+                                stock_data,
+                                rsi_threshold=US_RSI_REBOUND_THRESHOLD,
+                                volatility_ok_fn=_us_rsi_rebound_volatility_ok,
+                                silver_on_sell=False,
+                            )
+                            score = scan_state.score
+                            rsi_oversold_today = scan_state.rsi_oversold_today
+                            rsi_rebound_setup = scan_state.rsi_rebound_setup
+                            rsi_signal_active = scan_state.rsi_signal_active
+                            pre_candidate = scan_state.pre_candidate
+                        else:
+                            pre_candidate = False
 
                 # 进行回测
                 backtest_result = None
@@ -524,56 +510,63 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     'stock_character_info': stock_data.get('stock_character_info'),
                                 }
                                 rsi_enqueued = False
+                                macd_ok, macd_reason = evaluate_macd_turn_positive(stock_data)
                                 if rsi_oversold_today:
-                                    rsi_vol = _us_rsi_candidate_volatility_info(stock_data)
-                                    rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
-                                    oversold_payload = {
-                                        **base_payload,
-                                        'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_oversold'),
-                                        'signal_title': "📉RSI超卖信号",
-                                        'rsi_rebound_volatility': rsi_vol,
-                                    }
-                                    stock_data['rebound_elasticity_score'] = rebound_score
-                                    stock_data['rsi_rebound_volatility'] = rsi_vol
-                                    us_rsi_oversold_candidates.append({
-                                        'symbol': symbol,
-                                        'stock_data': stock_data,
-                                        'ai_payload': oversold_payload,
-                                        'rsi': rsi,
-                                        'signal_label': 'US RSI超卖',
-                                        'rebound_elasticity_score': rebound_score,
-                                        'rsi_rebound_volatility': rsi_vol,
-                                    })
-                                    print(
-                                        f"🧺 {symbol} US RSI超卖候选入队："
-                                        f"RSI={float(rsi or 0):.1f}，{_format_us_rsi_candidate_elasticity(us_rsi_oversold_candidates[-1])}"
-                                    )
-                                    rsi_enqueued = True
+                                    if macd_ok:
+                                        rsi_vol = _us_rsi_candidate_volatility_info(stock_data)
+                                        rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
+                                        oversold_payload = {
+                                            **base_payload,
+                                            'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_oversold'),
+                                            'signal_title': "📉RSI超卖信号",
+                                            'rsi_rebound_volatility': rsi_vol,
+                                        }
+                                        stock_data['rebound_elasticity_score'] = rebound_score
+                                        stock_data['rsi_rebound_volatility'] = rsi_vol
+                                        us_rsi_oversold_candidates.append({
+                                            'symbol': symbol,
+                                            'stock_data': stock_data,
+                                            'ai_payload': oversold_payload,
+                                            'rsi': rsi,
+                                            'signal_label': 'US RSI超卖',
+                                            'rebound_elasticity_score': rebound_score,
+                                            'rsi_rebound_volatility': rsi_vol,
+                                        })
+                                        print(
+                                            f"🧺 {symbol} US RSI超卖候选入队："
+                                            f"RSI={float(rsi or 0):.1f}，{_format_us_rsi_candidate_elasticity(us_rsi_oversold_candidates[-1])}，{macd_reason}"
+                                        )
+                                        rsi_enqueued = True
+                                    else:
+                                        print(f"⏭️  {symbol} US RSI超卖未入候选池：{macd_reason}")
                                 if rsi_rebound_setup:
-                                    rsi_vol = stock_data.get('_rsi_rebound_volatility') or {}
-                                    rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
-                                    rebound_payload = {
-                                        **base_payload,
-                                        'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_rebound'),
-                                        'signal_title': "📈反弹抄底信号",
-                                        'rsi_rebound_volatility': rsi_vol,
-                                    }
-                                    stock_data['rebound_elasticity_score'] = rebound_score
-                                    stock_data['rsi_rebound_volatility'] = rsi_vol
-                                    us_rsi_rebound_candidates.append({
-                                        'symbol': symbol,
-                                        'stock_data': stock_data,
-                                        'ai_payload': rebound_payload,
-                                        'signal_label': 'US RSI反弹',
-                                        'rebound_elasticity_score': rebound_score,
-                                        'rsi_rebound_volatility': rsi_vol,
-                                    })
-                                    print(
-                                        f"🧺 {symbol} US RSI反弹候选入队：弹性评分={rebound_score:.1f}，"
-                                        f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
-                                        f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%"
-                                    )
-                                    rsi_enqueued = True
+                                    if macd_ok:
+                                        rsi_vol = stock_data.get('_rsi_rebound_volatility') or {}
+                                        rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
+                                        rebound_payload = {
+                                            **base_payload,
+                                            'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_rebound'),
+                                            'signal_title': "📈反弹抄底信号",
+                                            'rsi_rebound_volatility': rsi_vol,
+                                        }
+                                        stock_data['rebound_elasticity_score'] = rebound_score
+                                        stock_data['rsi_rebound_volatility'] = rsi_vol
+                                        us_rsi_rebound_candidates.append({
+                                            'symbol': symbol,
+                                            'stock_data': stock_data,
+                                            'ai_payload': rebound_payload,
+                                            'signal_label': 'US RSI反弹',
+                                            'rebound_elasticity_score': rebound_score,
+                                            'rsi_rebound_volatility': rsi_vol,
+                                        })
+                                        print(
+                                            f"🧺 {symbol} US RSI反弹候选入队：弹性评分={rebound_score:.1f}，"
+                                            f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
+                                            f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，{macd_reason}"
+                                        )
+                                        rsi_enqueued = True
+                                    else:
+                                        print(f"⏭️  {symbol} US RSI反弹未入候选池：{macd_reason}")
                                 if not rsi_enqueued:
                                     ai_payload = {
                                         **base_payload,

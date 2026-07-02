@@ -17,6 +17,18 @@ def finite_rsi(raw) -> Optional[float]:
     return rsi
 
 
+def _finite_float(raw) -> Optional[float]:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
 def is_rsi_oversold_today(stock_data: dict, threshold: float) -> bool:
     """当日 RSI 严格小于阈值。"""
     rsi = finite_rsi((stock_data or {}).get('rsi'))
@@ -47,6 +59,34 @@ def rsi_turning_ok(stock_data: dict) -> Tuple[bool, str]:
             return False, f'价格仍创新低/继续下跌({prev:.2f}->{latest:.2f})'
 
     return True, 'RSI与价格已止跌拐头'
+
+
+def evaluate_macd_turn_positive(stock_data: dict) -> Tuple[bool, str]:
+    """
+    MACD 即将转正：与 carmen 评分中 macd_state_strict[0] 一致。
+    """
+    from indicators import _macd_dif_buy_fade_extrap_reversal, is_macd_buy_imminent
+
+    if is_macd_buy_imminent(stock_data):
+        if _macd_dif_buy_fade_extrap_reversal((stock_data or {}).get('macd_dif_tail') or []):
+            return True, 'MACD DIF连跌反包，即将转正'
+        dif = _finite_float((stock_data or {}).get('dif'))
+        dea = _finite_float((stock_data or {}).get('dea'))
+        slope = _finite_float((stock_data or {}).get('dif_dea_slope'))
+        if dif is not None and dea is not None and slope is not None:
+            if dif < dea:
+                return True, f'MACD即将金叉(DIF={dif:.2f} < DEA={dea:.2f}, 斜率={slope:.2f})'
+            return True, f'MACD刚金叉(DIF={dif:.2f} ≥ DEA={dea:.2f}, 斜率={slope:.2f})'
+        return True, 'MACD即将转正'
+
+    dif = _finite_float((stock_data or {}).get('dif'))
+    dea = _finite_float((stock_data or {}).get('dea'))
+    slope = _finite_float((stock_data or {}).get('dif_dea_slope'))
+    if dif is None or dea is None or slope is None:
+        return False, 'MACD数据无效，无法确认即将转正'
+    if slope <= 0:
+        return False, f'MACD斜率非正(DIF-DEA斜率={slope:.2f})，未即将转正'
+    return False, f'MACD未即将转正(DIF={dif:.2f}, DEA={dea:.2f}, 斜率={slope:.2f})'
 
 
 def evaluate_rsi_rebound_setup(
