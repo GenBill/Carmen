@@ -173,15 +173,23 @@ def process_ai_task(
                     print(f"⚠️ {symbol} Serenity 模拟分析链路失败: {e}")
                     append_signal_audit({'event':'serenity_failed','symbol':symbol,'signal_id':signal_id,'error':str(e)})
 
-                try:
-                    maybe_record_high_build_alert(
-                        symbol=symbol,
-                        alert_date=alert_date,
-                        position_build_score=float(position_build_score or 0),
-                        stock_cn_name=stock_cn_name,
-                    )
-                except Exception as e:
-                    print(f"⚠️ {symbol} 高建仓队列入队失败: {e}")
+                if is_rsi_rebound_signal:
+                    append_signal_audit({
+                        'event': 'high_build_queue_skipped',
+                        'symbol': symbol,
+                        'signal_id': signal_id,
+                        'reason': 'rsi_signal',
+                    })
+                else:
+                    try:
+                        maybe_record_high_build_alert(
+                            symbol=symbol,
+                            alert_date=alert_date,
+                            position_build_score=float(position_build_score or 0),
+                            stock_cn_name=stock_cn_name,
+                        )
+                    except Exception as e:
+                        print(f"⚠️ {symbol} 高建仓队列入队失败: {e}")
 
         return result
 
