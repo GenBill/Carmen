@@ -142,9 +142,26 @@ def process_ai_task(
             )
             if sent_ok:
                 try:
-                    from serenity_analysis import claim_serenity_daily_slot, generate_serenity_analysis
+                    from serenity_analysis import (
+                        claim_serenity_daily_slot,
+                        generate_serenity_analysis,
+                        read_serenity_cache_entry,
+                    )
 
-                    if not claim_serenity_daily_slot(symbol):
+                    serenity_cache = read_serenity_cache_entry(symbol)
+                    if serenity_cache:
+                        append_signal_audit({
+                            'event': 'serenity_cache_hit',
+                            'symbol': symbol,
+                            'signal_id': signal_id,
+                            'age_seconds': serenity_cache.get('age_seconds'),
+                        })
+                        bot_notifier.send_serenity_analysis(
+                            symbol=symbol,
+                            msg=serenity_cache.get('message') or '',
+                            signal_id=f"{signal_id}:serenity" if signal_id else None,
+                        )
+                    elif not claim_serenity_daily_slot(symbol):
                         append_signal_audit({'event':'serenity_daily_deduped','symbol':symbol,'signal_id':signal_id})
                     else:
                         serenity_text = generate_serenity_analysis(

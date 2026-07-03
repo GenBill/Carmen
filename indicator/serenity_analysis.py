@@ -20,7 +20,10 @@ from typing import Any, Dict, Optional
 
 HK_TZ = timezone(timedelta(hours=8))
 STATE_FILE = Path(__file__).resolve().parent / "runtime" / "serenity_daily_state.json"
+CACHE_FILE = Path(__file__).resolve().parent / "runtime" / "serenity_analysis_cache.json"
+DEFAULT_CACHE_TTL_DAYS = 3
 _STATE_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
 
 
 def serenity_analysis_enabled() -> bool:
@@ -75,6 +78,125 @@ def _save_state(state: Dict[str, Any]) -> None:
         os.replace(tmp, STATE_FILE)
     except Exception as e:
         print(f"⚠️ 保存 Serenity 每日状态失败: {e}")
+
+
+
+def _cache_ttl_days() -> int:
+    try:
+        ttl = int(os.environ.get("CARMEN_SERENITY_CACHE_TTL_DAYS", str(DEFAULT_CACHE_TTL_DAYS)))
+    except Exception:
+        ttl = DEFAULT_CACHE_TTL_DAYS
+    return max(1, ttl)
+
+
+def _parse_hk_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip())
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=HK_TZ)
+    return dt.astimezone(HK_TZ)
+
+
+def _load_cache_pool() -> Dict[str, Any]:
+    if not CACHE_FILE.exists():
+        return {}
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"⚠️ 读取 Serenity 缓存池失败: {e}")
+        return {}
+
+
+def _save_cache_pool(pool: Dict[str, Any]) -> None:
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(CACHE_FILE) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(pool, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, CACHE_FILE)
+    except Exception as e:
+        print(f"⚠️ 保存 Serenity 缓存池失败: {e}")
+
+
+def _prune_cache_pool(pool: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+    now = now or datetime.now(HK_TZ)
+    max_age = timedelta(days=max(_cache_ttl_days(), 7))
+    entries = pool.get("entries") if isinstance(pool.get("entries"), dict) else {}
+    kept = {}
+    for sym, entry in entries.items():
+        if not isinstance(sym, str) or not isinstance(entry, dict):
+            continue
+        created_at = _parse_hk_datetime(entry.get("created_at"))
+        msg = entry.get("message")
+        if created_at and isinstance(msg, str) and msg.strip() and now - created_at <= max_age:
+            kept[sym] = entry
+    pool["entries"] = kept
+    pool["updated_at"] = now.isoformat(timespec="seconds")
+    pool["ttl_days"] = _cache_ttl_days()
+    return pool
+
+
+def read_serenity_cache_entry(symbol: str, max_age_days: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Return a recent Serenity analysis for the same symbol.
+
+    Fundamentals and chokepoint positioning are intentionally reused for a few
+    days to avoid repeated simulated-persona analysis on the same stock.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+    ttl_days = max_age_days or _cache_ttl_days()
+    now = datetime.now(HK_TZ)
+    with _CACHE_LOCK:
+        pool = _prune_cache_pool(_load_cache_pool(), now=now)
+        _save_cache_pool(pool)
+        entry = (pool.get("entries") or {}).get(sym)
+        if not isinstance(entry, dict):
+            return None
+        created_at = _parse_hk_datetime(entry.get("created_at"))
+        msg = entry.get("message")
+        if not created_at or not isinstance(msg, str) or not msg.strip():
+            return None
+        if now - created_at > timedelta(days=ttl_days):
+            return None
+        out = dict(entry)
+        out["symbol"] = sym
+        out["age_seconds"] = int((now - created_at).total_seconds())
+        return out
+
+
+def save_serenity_cache_entry(
+    symbol: str,
+    message: str,
+    *,
+    model: Optional[str] = None,
+    market: Optional[str] = None,
+    stock_cn_name: Optional[str] = None,
+) -> None:
+    sym = (symbol or "").strip().upper()
+    msg = (message or "").strip()
+    if not sym or not msg:
+        return
+    now = datetime.now(HK_TZ)
+    with _CACHE_LOCK:
+        pool = _prune_cache_pool(_load_cache_pool(), now=now)
+        entries = pool.setdefault("entries", {})
+        entries[sym] = {
+            "symbol": sym,
+            "message": msg,
+            "created_at": now.isoformat(timespec="seconds"),
+            "model": model or os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4",
+            "market": market or "",
+            "stock_cn_name": stock_cn_name or "",
+        }
+        _save_cache_pool(pool)
 
 
 def claim_serenity_daily_slot(symbol: str, day: Optional[str] = None) -> bool:
@@ -319,7 +441,7 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
         "/home/serv/.nvm/versions/node/v22.22.0/bin/openclaw",
     )
     agent_id = os.environ.get("CARMEN_SERENITY_OPENCLAW_AGENT", "main")
-    model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip()
+    model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4"
     session_prefix = os.environ.get("CARMEN_SERENITY_OPENCLAW_SESSION_PREFIX", "tmp-carmen-serenity").strip() or "tmp-carmen-serenity"
     prompt_hash = hashlib.sha1(prompt.encode("utf-8", errors="ignore")).hexdigest()[:10]
     session_id = f"{session_prefix}-{int(time.time())}-{prompt_hash}"
@@ -336,8 +458,7 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
         "--timeout",
         str(timeout_seconds),
     ]
-    if model:
-        cmd.extend(["--model", model])
+    cmd.extend(["--model", model])
     cp = subprocess.run(
         cmd,
         cwd="/home/serv/.openclaw/workspace",
@@ -400,7 +521,15 @@ def generate_serenity_analysis(
         if not body:
             return ""
         title_line = build_serenity_title_line(symbol, stock_cn_name)
-        return f"{title_line}\n{html.escape(body)}"
+        message = f"{title_line}\n{html.escape(body)}"
+        save_serenity_cache_entry(
+            symbol,
+            message,
+            model=os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4",
+            market=market,
+            stock_cn_name=stock_cn_name,
+        )
+        return message
     except Exception as e:
         print(f"⚠️ {symbol} OpenClaw Serenity skill 调用失败: {e}")
         return ""

@@ -9,7 +9,11 @@ class FakeNotifier:
         self.sent = []
 
     def send_buy_signal(self, **kwargs):
-        self.sent.append(kwargs)
+        self.sent.append({"kind": "buy", **kwargs})
+        return True
+
+    def send_serenity_analysis(self, **kwargs):
+        self.sent.append({"kind": "serenity", **kwargs})
         return True
 
 
@@ -28,6 +32,7 @@ def _patch_completed_ai(monkeypatch):
     )
     monkeypatch.setattr(analysis, "empty_refined_info", lambda: {})
     monkeypatch.setattr(telegram_notifier, "append_signal_audit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serenity_analysis, "read_serenity_cache_entry", lambda symbol: None)
     monkeypatch.setattr(serenity_analysis, "claim_serenity_daily_slot", lambda symbol: False)
 
 
