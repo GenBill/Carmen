@@ -192,7 +192,7 @@ def save_serenity_cache_entry(
             "symbol": sym,
             "message": msg,
             "created_at": now.isoformat(timespec="seconds"),
-            "model": model or os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4",
+            "model": model or os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip() or "agent-default",
             "market": market or "",
             "stock_cn_name": stock_cn_name or "",
         }
@@ -441,7 +441,7 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
         "/home/serv/.nvm/versions/node/v22.22.0/bin/openclaw",
     )
     agent_id = os.environ.get("CARMEN_SERENITY_OPENCLAW_AGENT", "main")
-    model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4"
+    model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip()
     session_prefix = os.environ.get("CARMEN_SERENITY_OPENCLAW_SESSION_PREFIX", "tmp-carmen-serenity").strip() or "tmp-carmen-serenity"
     prompt_hash = hashlib.sha1(prompt.encode("utf-8", errors="ignore")).hexdigest()[:10]
     session_id = f"{session_prefix}-{int(time.time())}-{prompt_hash}"
@@ -458,7 +458,8 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
         "--timeout",
         str(timeout_seconds),
     ]
-    cmd.extend(["--model", model])
+    if model:
+        cmd.extend(["--model", model])
     cp = subprocess.run(
         cmd,
         cwd="/home/serv/.openclaw/workspace",
@@ -525,7 +526,7 @@ def generate_serenity_analysis(
         save_serenity_cache_entry(
             symbol,
             message,
-            model=os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "gpt5.4").strip() or "gpt5.4",
+            model=os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip() or "agent-default",
             market=market,
             stock_cn_name=stock_cn_name,
         )

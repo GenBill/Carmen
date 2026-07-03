@@ -25,6 +25,7 @@ from scheduler import MarketScheduler
 from async_ai import process_ai_task
 from stock_character_filter import evaluate_stock_character
 from scan_signal_eval import evaluate_scan_signals
+from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
 from rsi_rebound_signal import (
     evaluate_macd_turn_positive,
 )
@@ -120,6 +121,10 @@ def _format_us_rsi_candidate_elasticity(item: dict) -> str:
         f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，"
         f"上下比={float(rsi_vol.get('up_down_ratio') or 0):.2f}"
     )
+
+
+def _should_submit_us_regular_ai_after_rsi_queue(rsi_signal_active: bool, rsi_enqueued: bool) -> bool:
+    return (not rsi_signal_active) and (not rsi_enqueued)
 
 
 def _us_rsi_rebound_volatility_ok(stock_data: dict) -> tuple[bool, str, dict]:
@@ -378,6 +383,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 rsi_rebound_setup = scan_state.rsi_rebound_setup
                 rsi_signal_active = scan_state.rsi_signal_active
                 pre_candidate = scan_state.pre_candidate
+                if pre_candidate:
+                    record_pre_candidate("US", symbol, stock_data, scan_state)
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
@@ -567,7 +574,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                         rsi_enqueued = True
                                     else:
                                         print(f"⏭️  {symbol} US RSI反弹未入候选池：{macd_reason}")
-                                if not rsi_enqueued:
+                                if _should_submit_us_regular_ai_after_rsi_queue(rsi_signal_active, rsi_enqueued):
                                     ai_payload = {
                                         **base_payload,
                                         'signal_id': _build_us_signal_id(symbol, stock_data, score[0]),
@@ -807,6 +814,12 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
         except Exception as e:
             print(f"⚠️  生成HTML或推送时出错: {e}")
             traceback.print_exc()
+
+    try:
+        maybe_run_daily_sector_rotation_report("US", bot_notifier)
+    except Exception as e:
+        print(f"⚠️  美股板块轮动报告触发失败: {e}")
+        traceback.print_exc()
 
     executor.shutdown(wait=False, cancel_futures=True)
 

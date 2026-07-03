@@ -18,6 +18,7 @@ from get_stock_price import get_stock_data, get_stock_data_offline, batch_downlo
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import backtest_carmen_indicator
 from scan_signal_eval import evaluate_scan_signals
+from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, should_filter_stock
@@ -124,6 +125,13 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     # 获取港股列表
     stock_symbols, stock_names = get_stock_list_from_csv(stock_path)
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
+    hk_names_map = {}
+    if stock_names and len(stock_names) == len(stock_symbols):
+        hk_names_map = {
+            str(sym).strip(): str(name).strip()
+            for sym, name in zip(stock_symbols, stock_names)
+            if sym and name
+        }
     
     # 获取自选股列表（用于显示判断）
     watchlist_stocks = set(get_stock_list('my_stock_symbols_HKA.txt'))
@@ -213,6 +221,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
                 score = scan_state.score
                 pre_candidate = scan_state.pre_candidate
+                if pre_candidate:
+                    record_pre_candidate("HK", symbol, stock_data, scan_state, hk_names_map)
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
                 bowl_score = None
@@ -435,6 +445,12 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
 
     # 关闭线程池
     executor.shutdown(wait=False, cancel_futures=True)
+
+    try:
+        maybe_run_daily_sector_rotation_report("HK", bot_notifier)
+    except Exception as e:
+        print(f"⚠️  港股板块轮动报告触发失败: {e}")
+        traceback.print_exc()
     
     # 生成HTML报告并推送到GitHub Pages
     if git_publisher and stocks_data_for_html:

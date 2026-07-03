@@ -46,6 +46,7 @@ from rsi_rebound_signal import (
 from a_share_rebound_alert import (
     run_rebound_alert_scan,
 )
+from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
 from agent.deepseek import fetch_a_share_turnover_rate
 
 import time
@@ -203,6 +204,10 @@ def _format_rsi_candidate_elasticity(item: dict) -> str:
         f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，"
         f"上下比={float(rsi_vol.get('up_down_ratio') or 0):.2f}"
     )
+
+
+def _should_submit_regular_ai_after_rsi_queue(rsi_signal_active: bool, rsi_enqueued: bool) -> bool:
+    return (not rsi_signal_active) and (not rsi_enqueued)
 
 
 def _rsi_rebound_volatility_ok(stock_data: dict) -> tuple[bool, str, dict]:
@@ -576,6 +581,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 rsi_signal_active = scan_state.rsi_signal_active
                 carmen_candidate = scan_state.carmen_candidate
                 pre_candidate = scan_state.pre_candidate
+                if pre_candidate:
+                    record_pre_candidate("A", symbol, stock_data, scan_state, a_share_names_map)
                 symbol_perf_mark = _perf_record(symbol_perf_records, 'score_rsi', symbol_perf_mark)
                 # 碗口指标已临时停用，跳过计算以节省算力
                 # bowl_score = bowl_rebound_indicator(stock_data)
@@ -808,7 +815,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                         rsi_enqueued = True
                                     else:
                                         print(f"⏭️  {symbol} RSI反弹未入候选池：{macd_reason}")
-                                if not rsi_enqueued:
+                                if _should_submit_regular_ai_after_rsi_queue(rsi_signal_active, rsi_enqueued):
                                     ai_payload = {
                                         **base_payload,
                                         'signal_id': _build_signal_id(symbol, stock_data, score[0]),
@@ -1029,6 +1036,12 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
         )
     except Exception as e:
         print(f"⚠️  A股回撤均线金叉预警扫描失败: {e}")
+        traceback.print_exc()
+
+    try:
+        maybe_run_daily_sector_rotation_report("A", bot_notifier)
+    except Exception as e:
+        print(f"⚠️  A股板块轮动报告触发失败: {e}")
         traceback.print_exc()
     
     # 生成HTML报告并推送到GitHub Pages

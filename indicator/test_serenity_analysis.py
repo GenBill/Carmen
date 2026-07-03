@@ -23,7 +23,7 @@ def test_serenity_cache_reuses_recent_entry(tmp_path, monkeypatch):
     serenity_analysis.save_serenity_cache_entry(
         "abc",
         "cached-message",
-        model="gpt5.4",
+        model="cached-model",
         market="US",
         stock_cn_name="",
     )
@@ -32,7 +32,7 @@ def test_serenity_cache_reuses_recent_entry(tmp_path, monkeypatch):
 
     assert hit is not None
     assert hit["message"] == "cached-message"
-    assert hit["model"] == "gpt5.4"
+    assert hit["model"] == "cached-model"
 
 
 def test_serenity_cache_ignores_stale_entry(tmp_path, monkeypatch):
@@ -52,7 +52,41 @@ def test_serenity_cache_ignores_stale_entry(tmp_path, monkeypatch):
     assert serenity_analysis.read_serenity_cache_entry("ABC", max_age_days=3) is None
 
 
-def test_openclaw_defaults_to_gpt54(monkeypatch):
+def test_generate_serenity_analysis_saves_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(serenity_analysis, "CACHE_FILE", tmp_path / "serenity_cache.json")
+    monkeypatch.setattr(
+        serenity_analysis,
+        "_call_openclaw_serenity_skill",
+        lambda prompt, timeout_seconds: (
+            "BEGIN_TELEGRAM_MESSAGE\n"
+            "产业链/chokepoint cached body\n"
+            "END_TELEGRAM_MESSAGE"
+        ),
+    )
+
+    msg = serenity_analysis.generate_serenity_analysis(
+        symbol="ABC",
+        market="US",
+        price=10.0,
+        score=1.0,
+        backtest_str=None,
+        rsi=None,
+        volume_ratio=None,
+        turnover_rate=None,
+        volume_ma_info=None,
+        refined_info=None,
+        refine_analysis="",
+        summary_analysis="",
+        full_analysis="",
+    )
+
+    hit = serenity_analysis.read_serenity_cache_entry("ABC", max_age_days=3)
+    assert "产业链/chokepoint cached body" in msg
+    assert hit is not None
+    assert hit["message"] == msg
+
+
+def test_openclaw_skips_model_by_default(monkeypatch):
     captured = {}
 
     class Result:
@@ -68,9 +102,8 @@ def test_openclaw_defaults_to_gpt54(monkeypatch):
     monkeypatch.setattr(serenity_analysis.subprocess, "run", fake_run)
 
     assert serenity_analysis._call_openclaw_serenity_skill("prompt", 1) == "ok"
-    assert "--model" in captured["cmd"]
-    model_idx = captured["cmd"].index("--model") + 1
-    assert captured["cmd"][model_idx] == "gpt5.4"
+    assert captured["cmd"][captured["cmd"].index("--agent") + 1] == "main"
+    assert "--model" not in captured["cmd"]
 
 
 def test_async_ai_sends_cached_serenity_without_claim_or_generation(monkeypatch):

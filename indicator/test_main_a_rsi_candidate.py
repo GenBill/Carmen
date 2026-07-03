@@ -8,6 +8,7 @@ from main_a import (
     _a_share_should_submit_scan_ai,
     _rsi_rebound_volatility_ok,
     _select_top_rsi_rebound_candidates,
+    _should_submit_regular_ai_after_rsi_queue,
     _is_rsi_oversold_candidate,
 )
 from telegram_notifier import format_signal_snapshot
@@ -122,6 +123,12 @@ def test_select_top_rsi_rebound_candidates_limits_to_top3():
     selected = _select_top_rsi_rebound_candidates(candidates, limit=3)
 
     assert [x["symbol"] for x in selected] == ["D", "B", "C"]
+
+
+def test_rsi_signal_that_is_not_enqueued_does_not_fallback_to_regular_ai():
+    assert _should_submit_regular_ai_after_rsi_queue(True, False) is False
+    assert _should_submit_regular_ai_after_rsi_queue(True, True) is False
+    assert _should_submit_regular_ai_after_rsi_queue(False, False) is True
 
 
 def test_rsi_rebound_telegram_title_and_elasticity_line():

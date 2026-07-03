@@ -6,6 +6,7 @@ from main import (
     US_RSI_REBOUND_THRESHOLD,
     _is_us_rsi_oversold_candidate,
     _select_top_us_rsi_rebound_candidates,
+    _should_submit_us_regular_ai_after_rsi_queue,
     _us_rsi_rebound_volatility_ok,
 )
 
@@ -64,3 +65,9 @@ def test_select_top_us_rsi_rebound_candidates_limits_to_top3():
     selected = _select_top_us_rsi_rebound_candidates(candidates, limit=3)
 
     assert [x["symbol"] for x in selected] == ["D", "B", "C"]
+
+
+def test_us_rsi_signal_that_is_not_enqueued_does_not_fallback_to_regular_ai():
+    assert _should_submit_us_regular_ai_after_rsi_queue(True, False) is False
+    assert _should_submit_us_regular_ai_after_rsi_queue(True, True) is False
+    assert _should_submit_us_regular_ai_after_rsi_queue(False, False) is True
