@@ -206,7 +206,7 @@ def record_pre_candidate(
         return
 
     now = _beijing_now()
-    day_key = session_date_for_market(market, now).isoformat()
+    day_key = now.date().isoformat()
     now_iso = now.replace(microsecond=0).isoformat()
     names_map = names_map or {}
     display_name = (
