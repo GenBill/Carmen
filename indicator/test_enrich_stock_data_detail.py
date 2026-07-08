@@ -13,6 +13,7 @@ from scan_ai_common import (
     MIN_POSITION_BUILD_SCORE,
     apply_duanxian_tuo_gate_metadata,
     build_scan_backtest_str,
+    classify_side_tuo_kind,
     duanxian_left_tuo_gate_ok,
     evaluate_duanxian_tuo_gates,
     format_duanxian_tuo_display,
@@ -147,29 +148,50 @@ def test_duanxian_tuo_imminent_detects_pre_confirmation():
 def test_left_tuo_passes_on_price_or_volume_imminent_flag():
     vol_only, summary = duanxian_left_tuo_gate_ok(None, {
         'volume_tuo_imminent_ok': True,
-        'price_tuo_imminent_ok': False,
+        'volume_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'actual_cross_count': 1,
+            'weighted_cross_score': 2.0,
+        },
     })
     assert vol_only is True
     assert summary == '量托预确认'
 
     price_only, summary = duanxian_left_tuo_gate_ok(None, {
-        'volume_tuo_imminent_ok': False,
         'price_tuo_imminent_ok': True,
+        'price_tuo': {
+            'crosses': ['5上穿10', '5上穿20'],
+            'imminent_crosses': ['10即将上穿20'],
+            'actual_cross_count': 2,
+            'weighted_cross_score': 2.5,
+        },
     })
     assert price_only is True
     assert summary == '价托预确认'
 
     both, summary = duanxian_left_tuo_gate_ok(None, {
-        'volume_tuo_imminent_ok': True,
         'price_tuo_imminent_ok': True,
+        'volume_tuo_imminent_ok': True,
+        'price_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'actual_cross_count': 1,
+            'weighted_cross_score': 2.0,
+        },
+        'volume_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'actual_cross_count': 1,
+            'weighted_cross_score': 2.0,
+        },
     })
     assert both is True
     assert summary == '价托预确认 / 量托预确认'
 
     none, summary = duanxian_left_tuo_gate_ok(None, {
-        'volume_tuo_imminent_ok': False,
-        'price_tuo_imminent_ok': False,
-        'summary': '无',
+        'price_tuo': {'crosses': [], 'imminent_crosses': ['5即将上穿20']},
+        'volume_tuo': {'crosses': [], 'imminent_crosses': []},
     })
     assert none is False
     assert summary == '无'
@@ -211,6 +233,7 @@ def test_format_duanxian_tuo_display_shows_confirmed_and_imminent():
     assert lines[0] == '短线是银托形态 · 实托'
     assert lines[1] == '  价托: 5x10/10x20'
     assert lines[2] == '  量托: 5x10/10·20'
+    assert len(lines) == 3
     assert '分' not in text
 
 
@@ -222,23 +245,45 @@ def test_format_duanxian_tuo_display_virtual_side_mixed_cross_types():
         'volume_tuo_imminent_ok': True,
         'price_tuo': {
             'crosses': ['5上穿10'],
-            'imminent_crosses': ['5即将上穿10', '5上穿20'],
+            'imminent_crosses': ['5即将上穿20'],
             'weighted_cross_score': 2.0,
         },
         'volume_tuo': {
-            'crosses': ['5上穿10', '5上穿20', '10上穿20'],
-            'imminent_crosses': ['10即将上穿20'],
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
             'weighted_cross_score': 3.0,
         },
     }
     text = format_duanxian_tuo_display(info)
     lines = text.splitlines()
     assert lines[0] == '短线是银托形态 · 虚托'
-    assert '5x10' in lines[1]
-    assert '5·10' in lines[1] or '5x20' in lines[1]
-    assert '5x10/5x20/10x20' in lines[2] or '10·20' in lines[2]
-    assert '价实' not in text
-    assert '量实' not in text
+    assert lines[1] == '  价托: 5x10/5·20'
+    assert lines[2] == '  量托: 5x10/5·20/10·20'
+
+
+def test_format_duanxian_tuo_display_virtual_occurred_x_imminent_dot():
+    """虚托侧：crosses→x，imminent_crosses→·。"""
+    info = {
+        'price_tuo_ok': False,
+        'price_tuo_imminent_ok': True,
+        'volume_tuo_ok': False,
+        'volume_tuo_imminent_ok': True,
+        'price_tuo': {
+            'crosses': ['5上穿10', '5上穿20'],
+            'imminent_crosses': [],
+            'weighted_cross_score': 3.0,
+        },
+        'volume_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'weighted_cross_score': 3.0,
+        },
+    }
+    text = format_duanxian_tuo_display(info)
+    lines = text.splitlines()
+    assert lines[0] == '短线是银托形态 · 虚托'
+    assert lines[1] == '  价托: 5x10/5x20'
+    assert lines[2] == '  量托: 5x10/5·20/10·20'
 
 
 def test_apply_duanxian_tuo_gate_metadata_marks_imminent_pass_tag():
@@ -248,7 +293,12 @@ def test_apply_duanxian_tuo_gate_metadata_marks_imminent_pass_tag():
             'volume_tuo_ok': False,
             'price_tuo_imminent_ok': True,
             'volume_tuo_imminent_ok': False,
-            'price_tuo': {'crosses': [], 'imminent_crosses': ['MA5即将上穿MA10']},
+            'price_tuo': {
+                'crosses': ['5上穿10', '5上穿20'],
+                'imminent_crosses': ['10即将上穿20'],
+                'actual_cross_count': 2,
+                'weighted_cross_score': 3.0,
+            },
             'volume_tuo': {'crosses': [], 'imminent_crosses': []},
         },
         'volume_ma_info': {'position_build_score': 3.0},
@@ -256,6 +306,19 @@ def test_apply_duanxian_tuo_gate_metadata_marks_imminent_pass_tag():
     gates = apply_duanxian_tuo_gate_metadata(stock, mark_imminent_pass=True)
     assert gates.pass_via_imminent_only is True
     assert stock.get('_duanxian_tuo_pass_tag') == '虚托'
+
+    only_imminent_no_actual = {
+        'duanxian_tuo_info': {
+            'price_tuo_imminent_ok': False,
+            'price_tuo': {'crosses': [], 'imminent_crosses': ['MA5即将上穿MA10']},
+            'volume_tuo': {'crosses': [], 'imminent_crosses': []},
+        },
+        'volume_ma_info': {'position_build_score': 3.0},
+    }
+    gates2 = apply_duanxian_tuo_gate_metadata(only_imminent_no_actual, mark_imminent_pass=True)
+    assert gates2.pass_via_imminent_only is False
+    assert only_imminent_no_actual.get('_duanxian_tuo_pass_tag') is None
+    assert only_imminent_no_actual.get('_duanxian_tuo_display_text') == '无'
 
     apply_duanxian_tuo_gate_metadata(stock, mark_imminent_pass=False)
     assert stock.get('_duanxian_tuo_pass_tag') is None
@@ -265,7 +328,12 @@ def test_evaluate_duanxian_tuo_gates_merged_secondary_gate():
     low_build = {'position_build_score': 3.0}
     imminent_only = {
         'price_tuo_imminent_ok': True,
-        'volume_tuo_imminent_ok': False,
+        'price_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'actual_cross_count': 1,
+            'weighted_cross_score': 2.0,
+        },
     }
     gates = evaluate_duanxian_tuo_gates(low_build, imminent_only)
     assert gates.volume_gate_ok is False
@@ -275,7 +343,37 @@ def test_evaluate_duanxian_tuo_gates_merged_secondary_gate():
     assert gates.pass_via_imminent_only is True
 
 
-def test_build_scan_backtest_str_tuo_with_backtest_and_no_rsi():
+def test_format_duanxian_tuo_display_all_actual_crosses_tags_shito():
+    info = {
+        'price_tuo_ok': False,
+        'price_tuo_imminent_ok': True,
+        'volume_tuo_ok': True,
+        'volume_tuo_imminent_ok': False,
+        'price_tuo': {
+            'crosses': ['5上穿10', '5上穿20'],
+            'imminent_crosses': [],
+            'actual_cross_count': 2,
+            'weighted_cross_score': 2.0,
+        },
+        'volume_tuo': {
+            'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+            'imminent_crosses': [],
+            'actual_cross_count': 3,
+            'weighted_cross_score': 3.0,
+        },
+    }
+    text = format_duanxian_tuo_display(info)
+    lines = text.splitlines()
+    assert lines[0] == '短线是银托形态 · 实托'
+    assert lines[1] == '  价托: 5x10/5x20'
+    assert lines[2] == '  量托: 5x10/5x20/10x20'
+    assert len(lines) == 3
+    assert '5·' not in text and '10·' not in text and '20·' not in text
+
+
+def test_build_scan_backtest_str_empty_backtest_shows_zero_over_zero():
+    backtest_str, _ = build_scan_backtest_str(None, tuo_signal_active=True)
+    assert backtest_str == '(0/0)'
     backtest_str, confidence = build_scan_backtest_str(
         {'buy_prob': (3, 8)},
         tuo_signal_active=True,
@@ -309,8 +407,76 @@ def test_scan_buy_signal_ok_tuo_skips_confidence_gate():
     assert scan_buy_signal_ok(2.5, 0.0, tuo_signal_active=False) is False
 
 
-def test_tuo_type_label():
-    assert tuo_type_label({'price_tuo_ok': True}) == '实托'
-    assert tuo_type_label({'volume_tuo_ok': True, 'price_tuo_imminent_ok': True}) == '实托'
-    assert tuo_type_label({'price_tuo_imminent_ok': True}) == '虚托'
-    assert tuo_type_label({'price_tuo_imminent_ok': False, 'volume_tuo_imminent_ok': False}) is None
+def test_shito_xituo_definition_requires_structure_and_cross_threshold():
+    """实托=结构+实交叉>=3；虚托=结构+1<=实交叉<3 且评分>=2；缺结构或无交叉则无托。"""
+    structure = {
+        'bear_recent': True,
+        'converged_recent': True,
+        'current_order': '5>10>20',
+    }
+    assert classify_side_tuo_kind({
+        **structure,
+        'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+        'actual_cross_count': 3,
+    }) == '实'
+    assert classify_side_tuo_kind({
+        **structure,
+        'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+        'actual_cross_count': 3,
+    }, tuo_ok=True) == '实'
+    assert classify_side_tuo_kind({
+        'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+        'actual_cross_count': 3,
+    }) is None
+    assert classify_side_tuo_kind({
+        **structure,
+        'crosses': ['5上穿10', '5上穿20'],
+        'imminent_crosses': ['10即将上穿20'],
+        'actual_cross_count': 2,
+        'weighted_cross_score': 2.0,
+    }) == '虚'
+    assert classify_side_tuo_kind({
+        **structure,
+        'crosses': [],
+        'imminent_crosses': ['5即将上穿10', '5即将上穿20', '10即将上穿20'],
+        'weighted_cross_score': 3.0,
+    }) is None
+    assert classify_side_tuo_kind({
+        **structure,
+        'crosses': ['5上穿10'],
+        'weighted_cross_score': 1.5,
+    }) is None
+
+
+def test_tuo_type_label_respects_tuo_ok_flags_not_crosses_alone():
+    assert tuo_type_label({
+        'price_tuo_ok': True,
+        'price_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿20', '10即将上穿20'],
+            'actual_cross_count': 1,
+            'weighted_cross_score': 3.0,
+        },
+        'volume_tuo': {'crosses': [], 'imminent_crosses': []},
+    }) == '实托'
+    assert tuo_type_label({
+        'price_tuo_ok': False,
+        'volume_tuo_ok': False,
+        'price_tuo': {'crosses': ['5上穿10', '5上穿20'], 'imminent_crosses': []},
+        'volume_tuo': {
+            'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+            'actual_cross_count': 3,
+        },
+    }) is None
+    assert tuo_type_label({
+        'volume_tuo_ok': True,
+        'price_tuo': {'crosses': ['5上穿10', '5上穿20'], 'imminent_crosses': []},
+        'volume_tuo': {
+            'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+            'actual_cross_count': 3,
+        },
+    }) == '实托'
+    assert tuo_type_label({
+        'price_tuo': {'crosses': [], 'imminent_crosses': ['5即将上穿20']},
+        'volume_tuo': {'crosses': [], 'imminent_crosses': []},
+    }) is None

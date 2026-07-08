@@ -631,7 +631,7 @@ class TelegramNotifier:
             recent_crosses=recent_crosses,
             volume_spike_text=volume_spike_text,
             position_build_score=position_build_score,
-            duanxian_tuo_text=duanxian_tuo_text,
+            duanxian_tuo_text=None if is_rsi_rebound_signal else duanxian_tuo_text,
             telegram_html=True,
             stock_cn_name=stock_cn_name,
             opening_uncertain_warning=opening_uncertain,

@@ -8,10 +8,15 @@ from __future__ import annotations
 import math
 from datetime import date
 from dataclasses import dataclass
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Literal, NamedTuple, Optional, Tuple
 
 MIN_POSITION_BUILD_SCORE = 8.0
 IMMINENT_CROSS_WEIGHT = 0.5
+TUO_ACTUAL_CROSS_THRESHOLD = 3
+TUO_WEIGHTED_SCORE_THRESHOLD = 2.0
+# 与 get_stock_price._calculate_duanxian_tuo_info 价托 spread 阈值一致（0.04 * 1.5 → 6%）
+PRICE_TUO_IMMINENT_SPREAD_PCT_THRESHOLD = 6.0
+SideTuoKind = Literal['实', '虚']
 OPEN_DROP_FILTER_PCT = 4.0
 OPEN_PRICE_VERIFY_TOLERANCE_PCT = 1.0
 
@@ -89,26 +94,6 @@ def buy_signal_ok(score_buy: float, confidence: float) -> bool:
     return score_buy >= 3.0 or (confidence >= 0.5 and score_buy >= 2.0)
 
 
-def tuo_type_label(
-    duanxian_tuo_info: Optional[Dict[str, Any]],
-    *,
-    left_tuo_candidate: bool = False,
-) -> Optional[str]:
-    """
-    整体托型：实托 = 价托或量托已确认；虚托 = 仅预确认、无任何一侧实托确认。
-    """
-    info = duanxian_tuo_info or {}
-    if info.get('price_tuo_ok') or info.get('volume_tuo_ok'):
-        return '实托'
-    if (
-        info.get('price_tuo_imminent_ok')
-        or info.get('volume_tuo_imminent_ok')
-        or left_tuo_candidate
-    ):
-        return '虚托'
-    return None
-
-
 def build_scan_backtest_str(
     backtest_result: Optional[Dict[str, Any]],
     *,
@@ -136,6 +121,8 @@ def build_scan_backtest_str(
 
     if has_buy_prob:
         return f"({buy_success}/{buy_total})", confidence
+    if not rsi_signal_active:
+        return '(0/0)', confidence
     return '', confidence
 
 
@@ -233,72 +220,180 @@ def volume_ma_ai_gate_ok(volume_ma_info: Optional[Dict[str, Any]]) -> Tuple[bool
     return (pbs >= MIN_POSITION_BUILD_SCORE), pbs, gcx
 
 
-def _fmt_tuo_cross_pair(name: str, *, imminent: Optional[bool] = None) -> str:
-    """实交叉 5x10，虚/即将交叉 5·10。"""
-    text = str(name).strip()
-    is_imminent = bool(imminent) if imminent is not None else ('即将' in text)
-    text = text.replace('即将', '')
+def _side_actual_count(tuo_side: Dict[str, Any]) -> int:
+    if 'actual_cross_count' in tuo_side:
+        return int(tuo_side.get('actual_cross_count') or 0)
+    return len(tuo_side.get('crosses') or [])
+
+
+def _side_weighted_score(tuo_side: Dict[str, Any]) -> float:
+    if 'weighted_cross_score' in tuo_side:
+        return float(tuo_side.get('weighted_cross_score') or 0)
+    actual = _side_actual_count(tuo_side)
+    imminent = len(tuo_side.get('imminent_crosses') or [])
+    return actual + imminent * IMMINENT_CROSS_WEIGHT
+
+
+def _side_imminent_structure_ok(tuo_side: Dict[str, Any], *, is_volume: bool) -> bool:
+    """与 _calculate_duanxian_tuo_info 中 *_tuo_imminent_ok 的结构前置一致。"""
+    if not tuo_side.get('bear_recent'):
+        return False
+    if tuo_side.get('converged_recent'):
+        return True
+    if is_volume:
+        return False
+    spread_pct = tuo_side.get('spread_pct')
+    return spread_pct is not None and float(spread_pct) <= PRICE_TUO_IMMINENT_SPREAD_PCT_THRESHOLD
+
+
+def classify_side_tuo_kind(
+    tuo_side: Optional[Dict[str, Any]],
+    *,
+    tuo_ok: bool = False,
+    tuo_imminent_ok: bool = False,
+    is_volume: bool = False,
+) -> Optional[SideTuoKind]:
+    """
+    实托 / 虚托判定；优先读 _calculate_duanxian_tuo_info 写入的 *_tuo_ok 标志。
+    无标志时回退：空头排列 + 收敛 + 多头排列（实托）及对应预判结构（虚托），再叠交叉阈值。
+    """
+    if tuo_ok:
+        return '实'
+    if tuo_imminent_ok:
+        return '虚'
+
+    side = tuo_side or {}
+    actual = _side_actual_count(side)
+    weighted = _side_weighted_score(side)
+    if (
+        side.get('bear_recent')
+        and side.get('converged_recent')
+        and side.get('current_order')
+        and actual >= TUO_ACTUAL_CROSS_THRESHOLD
+    ):
+        return '实'
+    if (
+        1 <= actual < TUO_ACTUAL_CROSS_THRESHOLD
+        and weighted >= TUO_WEIGHTED_SCORE_THRESHOLD
+        and _side_imminent_structure_ok(side, is_volume=is_volume)
+    ):
+        return '虚'
+    return None
+
+
+def side_has_tuo(tuo_side: Optional[Dict[str, Any]]) -> bool:
+    return classify_side_tuo_kind(tuo_side) is not None
+
+
+def overall_tuo_header_tag(
+    price_kind: Optional[SideTuoKind],
+    volume_kind: Optional[SideTuoKind],
+) -> str:
+    """任一侧实托 → 实托；两侧皆虚托 → 虚托；否则无。"""
+    kinds = [kind for kind in (price_kind, volume_kind) if kind is not None]
+    if not kinds:
+        return '无'
+    if '实' in kinds:
+        return '实托'
+    return '虚托'
+
+
+def evaluate_tuo_kind_labels(
+    duanxian_tuo_info: Optional[Dict[str, Any]],
+) -> tuple[Optional[SideTuoKind], Optional[SideTuoKind], str]:
+    info = duanxian_tuo_info or {}
+    price_kind = classify_side_tuo_kind(
+        info.get('price_tuo'),
+        tuo_ok=bool(info.get('price_tuo_ok')),
+        tuo_imminent_ok=bool(info.get('price_tuo_imminent_ok')),
+        is_volume=False,
+    )
+    volume_kind = classify_side_tuo_kind(
+        info.get('volume_tuo'),
+        tuo_ok=bool(info.get('volume_tuo_ok')),
+        tuo_imminent_ok=bool(info.get('volume_tuo_imminent_ok')),
+        is_volume=True,
+    )
+    return price_kind, volume_kind, overall_tuo_header_tag(price_kind, volume_kind)
+
+
+def tuo_type_label(
+    duanxian_tuo_info: Optional[Dict[str, Any]],
+    *,
+    left_tuo_candidate: bool = False,
+) -> Optional[str]:
+    """整体虚托/实托；与 classify_side_tuo_kind / *_tuo_ok 同一套逻辑。"""
+    del left_tuo_candidate
+    _, _, header = evaluate_tuo_kind_labels(duanxian_tuo_info)
+    return None if header == '无' else header
+
+
+def _cross_pair_key(name: str) -> tuple[int, int]:
+    text = str(name).replace('即将', '').replace('MA', '')
+    if '上穿' not in text:
+        return (999, 999)
+    short, long = text.split('上穿', 1)
+    return int(short.strip()), int(long.strip())
+
+
+def _fmt_tuo_cross_pair(name: str, *, imminent: bool) -> str:
+    """实交叉 5x10，预判/虚交叉 5·10。"""
+    text = str(name).strip().replace('即将', '').replace('MA', '')
     if '上穿' not in text:
         return text
     short, long = text.split('上穿', 1)
-    sep = '·' if is_imminent else 'x'
+    sep = '·' if imminent else 'x'
     return f'{short.strip()}{sep}{long.strip()}'
 
 
-def _side_tuo_line(
-    tuo_side: Dict[str, Any],
-    *,
-    confirmed_ok: bool,
-    imminent_ok: bool,
-    label: str,
-) -> Optional[str]:
-    if not confirmed_ok and not imminent_ok:
-        return None
-
+def _side_cross_tokens(tuo_side: Dict[str, Any]) -> list[str]:
+    """按 MA 对数字排序；同对仅保留实交叉。"""
     crosses = tuo_side.get('crosses') or []
     imminent = tuo_side.get('imminent_crosses') or []
-    seen: set[str] = set()
-    parts: list[str] = []
+    by_key: dict[tuple[int, int], str] = {}
     for cross in crosses:
-        token = _fmt_tuo_cross_pair(cross, imminent=False)
-        if token not in seen:
-            parts.append(token)
-            seen.add(token)
+        by_key[_cross_pair_key(cross)] = _fmt_tuo_cross_pair(cross, imminent=False)
     for cross in imminent:
-        token = _fmt_tuo_cross_pair(cross, imminent=True)
-        if token not in seen:
-            parts.append(token)
-            seen.add(token)
-    if not parts:
+        key = _cross_pair_key(cross)
+        if key not in by_key:
+            by_key[key] = _fmt_tuo_cross_pair(cross, imminent=True)
+    return [by_key[key] for key in sorted(by_key.keys())]
+
+
+def _side_tuo_line(tuo_side: Dict[str, Any], *, label: str) -> Optional[str]:
+    tokens = _side_cross_tokens(tuo_side)
+    if not tokens:
         return None
-    return f'{label}: {"/".join(parts)}'
+    return f'{label}: {"/".join(tokens)}'
 
 
-def format_duanxian_tuo_display(duanxian_tuo_info: Optional[Dict[str, Any]]) -> str:
-    """两行价/量明细；整体实托/虚托 tag 在首行标题。"""
+def _duanxian_tuo_side_lines(
+    duanxian_tuo_info: Optional[Dict[str, Any]],
+) -> tuple[Optional[str], Optional[str], Optional[SideTuoKind], Optional[SideTuoKind], str]:
+    info = duanxian_tuo_info or {}
+    price_kind, volume_kind, header = evaluate_tuo_kind_labels(info)
+    price_line = _side_tuo_line(info.get('price_tuo') or {}, label='价托') if price_kind else None
+    volume_line = _side_tuo_line(info.get('volume_tuo') or {}, label='量托') if volume_kind else None
+    return price_line, volume_line, price_kind, volume_kind, header
+
+
+def format_duanxian_tuo_display(
+    duanxian_tuo_info: Optional[Dict[str, Any]],
+    *,
+    include_header: bool = True,
+) -> str:
+    """价/量两行；首行 tag 由 *_tuo_ok / 结构+交叉判定，与闸门一致。"""
     info = duanxian_tuo_info or {}
     if not info:
         return '无'
 
-    price_line = _side_tuo_line(
-        info.get('price_tuo') or {},
-        confirmed_ok=bool(info.get('price_tuo_ok')),
-        imminent_ok=bool(info.get('price_tuo_imminent_ok')),
-        label='价托',
-    )
-    volume_line = _side_tuo_line(
-        info.get('volume_tuo') or {},
-        confirmed_ok=bool(info.get('volume_tuo_ok')),
-        imminent_ok=bool(info.get('volume_tuo_imminent_ok')),
-        label='量托',
-    )
-    if not price_line and not volume_line:
-        return str(info.get('summary') or '无')
+    price_line, volume_line, _, _, header = _duanxian_tuo_side_lines(info)
+    if header == '无':
+        return '无'
 
     lines: list[str] = []
-    overall = tuo_type_label(info)
-    if overall:
-        lines.append(f'短线是银托形态 · {overall}')
+    if include_header:
+        lines.append(f'短线是银托形态 · {header}')
     if price_line:
         lines.append(f'  {price_line}')
     if volume_line:
@@ -327,17 +422,22 @@ def evaluate_duanxian_tuo_gates(
     """
     info = duanxian_tuo_info or {}
     volume_gate_ok, _, _ = volume_ma_ai_gate_ok(volume_ma_info)
-    confirmed_ok = bool(info.get('gate_ok') or info.get('price_tuo_ok') or info.get('volume_tuo_ok'))
-    price_imminent = bool(info.get('price_tuo_imminent_ok'))
-    volume_imminent = bool(info.get('volume_tuo_imminent_ok'))
-    imminent_ok = price_imminent or volume_imminent
-    secondary_gate_ok = bool(volume_gate_ok or confirmed_ok or imminent_ok)
+    price_kind, volume_kind, _ = evaluate_tuo_kind_labels(info)
+    confirmed_ok = price_kind == '实' or volume_kind == '实'
+    imminent_ok = price_kind == '虚' or volume_kind == '虚'
+    tuo_gate_ok = confirmed_ok or imminent_ok
+    secondary_gate_ok = bool(volume_gate_ok or tuo_gate_ok)
     pass_via_imminent_only = bool(imminent_ok and not confirmed_ok and not volume_gate_ok)
-    confirmed_summary = str(info.get('summary') or '无') if confirmed_ok else '无'
+    confirmed_parts = []
+    if price_kind == '实':
+        confirmed_parts.append('价托确认')
+    if volume_kind == '实':
+        confirmed_parts.append('量托确认')
+    confirmed_summary = ' / '.join(confirmed_parts) if confirmed_parts else '无'
     imminent_parts = []
-    if price_imminent:
+    if price_kind == '虚':
         imminent_parts.append('价托预确认')
-    if volume_imminent:
+    if volume_kind == '虚':
         imminent_parts.append('量托预确认')
     imminent_summary = ' / '.join(imminent_parts) if imminent_parts else '无'
     return DuanxianTuoGateResult(
@@ -364,12 +464,15 @@ def apply_duanxian_tuo_gate_metadata(
         (stock_data or {}).get('duanxian_tuo_info'),
     )
     if stock_data is not None:
+        _, _, header_tag = evaluate_tuo_kind_labels((stock_data or {}).get('duanxian_tuo_info'))
         stock_data['_duanxian_tuo_display_text'] = gates.display_text
         stock_data['_duanxian_tuo_pass_via_imminent'] = bool(
             mark_imminent_pass and gates.pass_via_imminent_only
         )
         stock_data['_duanxian_tuo_pass_tag'] = (
-            '虚托' if mark_imminent_pass and gates.pass_via_imminent_only else None
+            header_tag
+            if mark_imminent_pass and header_tag in ('实托', '虚托')
+            else None
         )
         stock_data['_duanxian_left_tuo_candidate'] = gates.imminent_ok
     return gates

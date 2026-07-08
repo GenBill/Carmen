@@ -66,7 +66,14 @@ def test_evaluate_scan_signals_without_rsi_skips_rsi_track():
 def test_evaluate_tuo_signals_requires_carmen_candidate():
     stock = {
         "symbol": "AAPL",
-        "duanxian_tuo_info": {"gate_ok": True, "summary": "价托确认"},
+        "duanxian_tuo_info": {
+            "price_tuo_ok": True,
+            "price_tuo": {
+                "crosses": ["5上穿10", "5上穿20", "10上穿20"],
+                "actual_cross_count": 3,
+            },
+            "volume_tuo": {"crosses": [], "imminent_crosses": []},
+        },
         "volume_ma_info": {"position_build_score": 0.0},
     }
 

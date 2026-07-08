@@ -10,7 +10,11 @@ from pathlib import Path
 import time
 
 from lut import INTRADAY_VOLUME_LUT, INTRADAY_VOLUME_HK, INTRADAY_VOLUME_A
-from scan_ai_common import IMMINENT_CROSS_WEIGHT
+from scan_ai_common import (
+    IMMINENT_CROSS_WEIGHT,
+    TUO_ACTUAL_CROSS_THRESHOLD,
+    TUO_WEIGHTED_SCORE_THRESHOLD,
+)
 
 # 与 indicators.MACD_FADE_TAIL_BARS 一致（连续 4 根日 K 的 DIF：第4天→今天）
 _MACD_FADE_TAIL_BARS = 4
@@ -60,6 +64,20 @@ def _recent_cross_names(series_map, pairs, window_days):
             if len(idxs) > 0:
                 event_days.append(idxs[-1])
     return names, event_days
+
+
+def _cross_pair_key_from_name(name: str) -> tuple[int, int]:
+    text = str(name).replace('即将', '').replace('MA', '')
+    if '上穿' not in text:
+        return (999, 999)
+    short, long = text.split('上穿', 1)
+    return int(short.strip()), int(long.strip())
+
+
+def _exclude_imminent_overlapping_actual(crosses, imminent):
+    """同一 MA 对只能属于实交叉或虚交叉之一；已发生则不再保留即将。"""
+    actual_keys = {_cross_pair_key_from_name(c) for c in (crosses or [])}
+    return [c for c in (imminent or []) if _cross_pair_key_from_name(c) not in actual_keys]
 
 
 def _imminent_cross_names(series_map, pairs):
@@ -130,6 +148,7 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         {'5': ma5, '10': ma10, '20': ma20},
         [('5', '10'), ('5', '20'), ('10', '20')],
     )
+    price_imminent_crosses = _exclude_imminent_overlapping_actual(price_crosses, price_imminent_crosses)
     price_order = bool(
         pd.notna(ma5.iloc[-1]) and pd.notna(ma10.iloc[-1]) and pd.notna(ma20.iloc[-1])
         and ma5.iloc[-1] > ma10.iloc[-1] > ma20.iloc[-1]
@@ -150,8 +169,8 @@ def _calculate_duanxian_tuo_info(hist, current_close):
     price_tuo_imminent_ok = (
         not price_tuo_ok
         and price_bear_recent
-        and price_actual_count >= 1
-        and price_weighted_cross_score >= 2.0
+        and 1 <= price_actual_count < TUO_ACTUAL_CROSS_THRESHOLD
+        and price_weighted_cross_score >= TUO_WEIGHTED_SCORE_THRESHOLD
         and (
             price_converged_recent
             or (
@@ -178,6 +197,7 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         {'5': vma5, '10': vma10, '20': vma20},
         [('5', '10'), ('5', '20'), ('10', '20')],
     )
+    volume_imminent_crosses = _exclude_imminent_overlapping_actual(volume_crosses, volume_imminent_crosses)
     volume_order = bool(
         pd.notna(vma5.iloc[-1]) and pd.notna(vma10.iloc[-1]) and pd.notna(vma20.iloc[-1])
         and vma5.iloc[-1] > vma10.iloc[-1] > vma20.iloc[-1]
@@ -195,8 +215,8 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         not volume_tuo_ok
         and volume_bear_recent
         and volume_converged_recent
-        and volume_actual_count >= 1
-        and volume_weighted_cross_score >= 2.0
+        and 1 <= volume_actual_count < TUO_ACTUAL_CROSS_THRESHOLD
+        and volume_weighted_cross_score >= TUO_WEIGHTED_SCORE_THRESHOLD
     )
 
     summary_parts = []

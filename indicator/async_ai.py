@@ -4,7 +4,6 @@ from datetime import datetime
 from a_share_rebound_alert import maybe_record_high_build_alert
 from scan_ai_common import (
     MIN_POSITION_BUILD_SCORE,
-    apply_duanxian_tuo_gate_metadata,
     evaluate_duanxian_tuo_gates,
     is_buy_blocked_by_open_gap,
 )
@@ -128,8 +127,8 @@ def process_ai_task(
                 refined_text=(result.get('refine_analysis') or '').strip() or None,
                 bowl_score=bowl_score,
                 volume_ma_info=volume_ma_info,
-                duanxian_tuo_info=duanxian_tuo_info,
-                duanxian_tuo_text=display_tuo_text,
+                duanxian_tuo_info=None if is_rsi_rebound_signal else duanxian_tuo_info,
+                duanxian_tuo_text=None if is_rsi_rebound_signal else display_tuo_text,
                 turnover_rate=turnover_rate,
                 turnover_warning=turnover_warning,
                 rsi_prev=rsi_prev,
