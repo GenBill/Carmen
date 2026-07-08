@@ -196,21 +196,49 @@ def test_format_duanxian_tuo_display_shows_confirmed_and_imminent():
         'volume_tuo_ok': False,
         'volume_tuo_imminent_ok': True,
         'price_tuo': {
-            'crosses': ['MA5上穿MA10', 'MA10上穿MA20'],
+            'crosses': ['5上穿10', '10上穿20'],
             'imminent_crosses': [],
             'weighted_cross_score': 3.0,
         },
         'volume_tuo': {
-            'crosses': ['MA5上穿MA10'],
-            'imminent_crosses': ['MA10即将上穿MA20'],
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['10即将上穿20'],
             'weighted_cross_score': 1.5,
         },
     }
     text = format_duanxian_tuo_display(info)
-    assert '价托' in text
-    assert '实✓' in text
-    assert '量托' in text
-    assert '预(' in text
+    lines = text.splitlines()
+    assert lines[0] == '短线是银托形态 · 实托'
+    assert lines[1] == '  价托: 5x10/10x20'
+    assert lines[2] == '  量托: 5x10/10·20'
+    assert '分' not in text
+
+
+def test_format_duanxian_tuo_display_virtual_side_mixed_cross_types():
+    info = {
+        'price_tuo_ok': False,
+        'price_tuo_imminent_ok': True,
+        'volume_tuo_ok': False,
+        'volume_tuo_imminent_ok': True,
+        'price_tuo': {
+            'crosses': ['5上穿10'],
+            'imminent_crosses': ['5即将上穿10', '5上穿20'],
+            'weighted_cross_score': 2.0,
+        },
+        'volume_tuo': {
+            'crosses': ['5上穿10', '5上穿20', '10上穿20'],
+            'imminent_crosses': ['10即将上穿20'],
+            'weighted_cross_score': 3.0,
+        },
+    }
+    text = format_duanxian_tuo_display(info)
+    lines = text.splitlines()
+    assert lines[0] == '短线是银托形态 · 虚托'
+    assert '5x10' in lines[1]
+    assert '5·10' in lines[1] or '5x20' in lines[1]
+    assert '5x10/5x20/10x20' in lines[2] or '10·20' in lines[2]
+    assert '价实' not in text
+    assert '量实' not in text
 
 
 def test_apply_duanxian_tuo_gate_metadata_marks_imminent_pass_tag():
@@ -253,7 +281,7 @@ def test_build_scan_backtest_str_tuo_with_backtest_and_no_rsi():
         tuo_signal_active=True,
         duanxian_tuo_info={'price_tuo_imminent_ok': True, 'price_tuo_ok': False},
     )
-    assert backtest_str == '(3/8 虚托)'
+    assert backtest_str == '(3/8)'
     assert confidence == (3 - 1) / 8
 
     backtest_str2, _ = build_scan_backtest_str(
@@ -261,7 +289,7 @@ def test_build_scan_backtest_str_tuo_with_backtest_and_no_rsi():
         tuo_signal_active=True,
         duanxian_tuo_info={'price_tuo_ok': True},
     )
-    assert backtest_str2 == '(5/10 实托)'
+    assert backtest_str2 == '(5/10)'
 
 
 def test_build_scan_backtest_str_rsi_never_uses_tuo_label():
@@ -283,4 +311,6 @@ def test_scan_buy_signal_ok_tuo_skips_confidence_gate():
 
 def test_tuo_type_label():
     assert tuo_type_label({'price_tuo_ok': True}) == '实托'
+    assert tuo_type_label({'volume_tuo_ok': True, 'price_tuo_imminent_ok': True}) == '实托'
     assert tuo_type_label({'price_tuo_imminent_ok': True}) == '虚托'
+    assert tuo_type_label({'price_tuo_imminent_ok': False, 'volume_tuo_imminent_ok': False}) is None

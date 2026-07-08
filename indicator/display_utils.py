@@ -347,8 +347,7 @@ def print_stock_info(stock_data, score, is_watchlist_stock=False, backtest_resul
     should_print = is_watchlist_stock or buy_signal or sell_signal
     
     if should_print:
-        stock_character_tag = format_stock_character_tag(stock_data.get('stock_character_info'))
-        line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}{stock_character_tag}"
+        line = f"{symbol:6s} | {price_info} | 量比:{volume_ratio} | RSI: {rsi_trend} | {macd_info} | {signal}"
         capture_output(line)
     return True
 

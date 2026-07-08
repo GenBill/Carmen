@@ -202,7 +202,7 @@ def format_signal_snapshot(
     if position_build_score is not None:
         footer_lines.append(f"建仓强度: {position_build_score:.1f}")
     if duanxian_tuo_text:
-        footer_lines.append(f"短线是银托形态: {duanxian_tuo_text}")
+        footer_lines.extend(duanxian_tuo_text.splitlines())
 
     if refined_lines:
         parts.append("")

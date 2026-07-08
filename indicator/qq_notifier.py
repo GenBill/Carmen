@@ -231,21 +231,11 @@ class QQNotifier:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
 
         if duanxian_tuo_text:
-            msg_parts.append(f"短线是银托形态: {duanxian_tuo_text}")
+            msg_parts.extend(duanxian_tuo_text.splitlines())
         elif duanxian_tuo_info:
             from scan_ai_common import format_duanxian_tuo_display
-            msg_parts.append(f"短线是银托形态: {format_duanxian_tuo_display(duanxian_tuo_info)}")
+            msg_parts.extend(format_duanxian_tuo_display(duanxian_tuo_info).splitlines())
 
-        if isinstance(stock_character_info, dict):
-            sc_status = stock_character_info.get('status') or '未知'
-            sc_score = stock_character_info.get('score')
-            sc_score_text = f"{float(sc_score):.1f}" if isinstance(sc_score, (int, float)) else 'N/A'
-            sc_reasons = stock_character_info.get('reasons') or stock_character_info.get('risk_reasons') or []
-            sc_prefix = '辅助否决项' if stock_character_info.get('reasons') else '观察项'
-            sc_line = f"股性: {sc_status}({sc_score_text})"
-            if sc_reasons:
-                sc_line += f" | {sc_prefix}: {'；'.join(str(x) for x in sc_reasons[:2])}"
-            msg_parts.append(sc_line)
         
         msg = "\n".join(msg_parts)
         

@@ -94,11 +94,17 @@ def tuo_type_label(
     *,
     left_tuo_candidate: bool = False,
 ) -> Optional[str]:
-    """虚托 = 仅预确认；实托 = 价托/量托已确认。"""
+    """
+    整体托型：实托 = 价托或量托已确认；虚托 = 仅预确认、无任何一侧实托确认。
+    """
     info = duanxian_tuo_info or {}
     if info.get('price_tuo_ok') or info.get('volume_tuo_ok'):
         return '实托'
-    if left_tuo_candidate or info.get('price_tuo_imminent_ok') or info.get('volume_tuo_imminent_ok'):
+    if (
+        info.get('price_tuo_imminent_ok')
+        or info.get('volume_tuo_imminent_ok')
+        or left_tuo_candidate
+    ):
         return '虚托'
     return None
 
@@ -127,18 +133,6 @@ def build_scan_backtest_str(
         buy_success, buy_total = backtest_result['buy_prob']
         if buy_total > 2:
             confidence = (buy_success - 1) / buy_total
-
-    tuo_label: Optional[str] = None
-    if tuo_signal_active and not rsi_signal_active:
-        tuo_label = tuo_type_label(
-            duanxian_tuo_info,
-            left_tuo_candidate=left_tuo_candidate,
-        )
-
-    if tuo_label:
-        if has_buy_prob:
-            return f"({buy_success}/{buy_total} {tuo_label})", confidence
-        return f"({tuo_label})", confidence
 
     if has_buy_prob:
         return f"({buy_success}/{buy_total})", confidence
@@ -239,67 +233,77 @@ def volume_ma_ai_gate_ok(volume_ma_info: Optional[Dict[str, Any]]) -> Tuple[bool
     return (pbs >= MIN_POSITION_BUILD_SCORE), pbs, gcx
 
 
-def _fmt_tuo_cross_labels(names) -> str:
-    return '/'.join(
-        str(x).replace('上穿', 'x').replace('即将', '~')
-        for x in (names or [])
-    )
+def _fmt_tuo_cross_pair(name: str, *, imminent: Optional[bool] = None) -> str:
+    """实交叉 5x10，虚/即将交叉 5·10。"""
+    text = str(name).strip()
+    is_imminent = bool(imminent) if imminent is not None else ('即将' in text)
+    text = text.replace('即将', '')
+    if '上穿' not in text:
+        return text
+    short, long = text.split('上穿', 1)
+    sep = '·' if is_imminent else 'x'
+    return f'{short.strip()}{sep}{long.strip()}'
 
 
-def _side_tuo_display(
+def _side_tuo_line(
     tuo_side: Dict[str, Any],
     *,
     confirmed_ok: bool,
     imminent_ok: bool,
     label: str,
 ) -> Optional[str]:
+    if not confirmed_ok and not imminent_ok:
+        return None
+
     crosses = tuo_side.get('crosses') or []
     imminent = tuo_side.get('imminent_crosses') or []
-    weighted = tuo_side.get('weighted_cross_score')
+    seen: set[str] = set()
     parts: list[str] = []
-    if confirmed_ok:
-        if crosses:
-            parts.append(f'实✓({_fmt_tuo_cross_labels(crosses)})')
-        else:
-            parts.append('实✓')
-    elif crosses:
-        parts.append(f'实({_fmt_tuo_cross_labels(crosses)})')
-    if imminent_ok:
-        imm_labels = list(imminent)
-        if not confirmed_ok and crosses:
-            imm_labels = list(crosses) + list(imminent)
-        if imm_labels:
-            parts.append(f'预({_fmt_tuo_cross_labels(imm_labels)})')
-    elif imminent:
-        parts.append(f'预({_fmt_tuo_cross_labels(imminent)})')
-    if weighted is not None and parts:
-        parts.append(f'分{weighted:g}')
+    for cross in crosses:
+        token = _fmt_tuo_cross_pair(cross, imminent=False)
+        if token not in seen:
+            parts.append(token)
+            seen.add(token)
+    for cross in imminent:
+        token = _fmt_tuo_cross_pair(cross, imminent=True)
+        if token not in seen:
+            parts.append(token)
+            seen.add(token)
     if not parts:
         return None
-    return f'{label}[{" ".join(parts)}]'
+    return f'{label}: {"/".join(parts)}'
 
 
 def format_duanxian_tuo_display(duanxian_tuo_info: Optional[Dict[str, Any]]) -> str:
-    """价/量实托与预判托合并展示（单次计算结果，供消息/footer 共用）。"""
+    """两行价/量明细；整体实托/虚托 tag 在首行标题。"""
     info = duanxian_tuo_info or {}
     if not info:
         return '无'
-    price_seg = _side_tuo_display(
+
+    price_line = _side_tuo_line(
         info.get('price_tuo') or {},
         confirmed_ok=bool(info.get('price_tuo_ok')),
         imminent_ok=bool(info.get('price_tuo_imminent_ok')),
         label='价托',
     )
-    volume_seg = _side_tuo_display(
+    volume_line = _side_tuo_line(
         info.get('volume_tuo') or {},
         confirmed_ok=bool(info.get('volume_tuo_ok')),
         imminent_ok=bool(info.get('volume_tuo_imminent_ok')),
         label='量托',
     )
-    segments = [seg for seg in (price_seg, volume_seg) if seg]
-    if segments:
-        return '；'.join(segments)
-    return str(info.get('summary') or '无')
+    if not price_line and not volume_line:
+        return str(info.get('summary') or '无')
+
+    lines: list[str] = []
+    overall = tuo_type_label(info)
+    if overall:
+        lines.append(f'短线是银托形态 · {overall}')
+    if price_line:
+        lines.append(f'  {price_line}')
+    if volume_line:
+        lines.append(f'  {volume_line}')
+    return '\n'.join(lines)
 
 
 @dataclass(frozen=True)
