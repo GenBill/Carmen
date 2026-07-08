@@ -165,6 +165,44 @@ def _slice_hist_after_first_alert(hist: pd.DataFrame, first_alert_date: date) ->
     return hist.loc[mask]
 
 
+def _hist_row_for_date(hist: pd.DataFrame, target_date: date) -> Optional[pd.Series]:
+    """返回指定自然日的日线行；取不到返回 None。"""
+    if hist is None or hist.empty:
+        return None
+    if "date" in hist.columns:
+        dates = pd.to_datetime(hist["date"]).dt.date
+    else:
+        idx = pd.to_datetime(hist.index)
+        if idx.tz is not None:
+            idx = idx.tz_localize(None)
+        dates = idx.date
+    matched = hist.loc[dates == target_date]
+    if matched.empty:
+        return None
+    return matched.iloc[-1]
+
+
+def _first_alert_support_low(entry: Dict[str, Any], hist: pd.DataFrame, first_d: date, low_col: str) -> Optional[float]:
+    """建仓日支撑低点。优先用队列快照；老队列从历史日线回填。"""
+    raw = entry.get("first_alert_low") or entry.get("support_low")
+    if raw is not None:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
+    row = _hist_row_for_date(hist, first_d)
+    if row is None or low_col not in row:
+        return None
+    try:
+        value = float(row[low_col])
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def check_rebound_conditions(
     entry: Dict[str, Any],
     hist: pd.DataFrame,
@@ -177,7 +215,8 @@ def check_rebound_conditions(
     触发要件：
     1) 距首次信号日 >= MIN_DAYS_AFTER_FIRST_ALERT 且 <= HISTORY_RETENTION_DAYS；
     2) 阶段高低区间：取信号日之后的窗口，H = window.High.max()、L = window.Low.min()，
-       触发区间为 [(3L-H)/2, (H+L)/2)，落到区间内视为「主力建仓后回落但未撤退」；
+       触发区间为 [max(建仓日低点, (3L-H)/2), (H+L)/2)，落到区间内视为「主力建仓后回落但未撤退」；
+       若现价跌破建仓日低点，视为破位，不再按洗盘低吸处理；
     3) 量能 MA5/MA10 在整段 hist 上滚动计算，仅判断最后两根：
        「今日刚死叉」或「即将死叉」。
     """
@@ -199,6 +238,11 @@ def check_rebound_conditions(
     if vol_col not in hist.columns or high_col not in hist.columns or low_col not in hist.columns:
         return False, None, None, None
 
+    support_low = _first_alert_support_low(entry, hist, first_d, low_col)
+    price = float(current_price)
+    if support_low is not None and price < support_low:
+        return False, None, None, None
+
     window = _slice_hist_after_first_alert(hist, first_d)
     if window is None or len(window) < 2:
         return False, None, None, None
@@ -211,7 +255,8 @@ def check_rebound_conditions(
 
     upper_bound = (peak_high + peak_low) / 2.0
     lower_bound = peak_low - hl_range / 2.0
-    price = float(current_price)
+    if support_low is not None:
+        lower_bound = max(lower_bound, support_low)
     if not (lower_bound <= price < upper_bound):
         return False, None, peak_high, peak_low
 

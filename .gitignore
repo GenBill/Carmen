@@ -30,3 +30,4 @@ overfit_data/*.csv
 overfit_data/*.json
 overfit_data/*.jsonl
 overfit_data/market_cache/yfinance/*.json
+Joplin/*.md

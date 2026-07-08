@@ -28,6 +28,7 @@ QUEUE_RETRY_INTERVAL_SECONDS = 180
 LAST_QUEUE_RETRY_TS = 0.0
 AUDIT_FILE = os.path.join(INDICATOR_DIR, 'runtime', 'telegram_signal_audit.jsonl')
 WATCHLIST_FILE = os.path.join(INDICATOR_DIR, 'daily_watchlist.json')
+AVERAGE_DOWN_SCRIPT = os.path.join(SCRIPT_DIR, 'average_down_calc.py')
 
 if INDICATOR_DIR not in sys.path:
     sys.path.insert(0, INDICATOR_DIR)
@@ -129,7 +130,8 @@ def register_bot_commands(bot_token: str):
         {'command': 'score', 'description': '实时评分+股性：/score 002930'},
         {'command': 'stock_character', 'description': '股性评分：/stock_character 002930'},
         {'command': 'duanxian', 'description': '短线是银分析：/duanxian 002930'},
-        {'command': 'audit', 'description': '审计链：/audit 002930'}
+        {'command': 'audit', 'description': '审计链：/audit 002930'},
+        {'command': 'call', 'description': '加仓表：/call 116.8 60000'}
     ]
     response = requests.post(api_url, data={'commands': json.dumps(commands, ensure_ascii=False)}, **TELEGRAM_REQUEST_KWARGS_FAST)
     response.raise_for_status()
@@ -140,6 +142,17 @@ def extract_symbol_from_message(text: str, command: str = 'ai_analysis') -> Opti
     if not match:
         return None
     return normalize_symbol(match.group(1))
+
+
+def extract_call_args(text: str) -> Optional[Tuple[float, float]]:
+    match = re.match(
+        r'^/call(?:@\w+)?\s+([0-9]+(?:\.[0-9]+)?)\s+([0-9]+(?:\.[0-9]+)?)\s*$',
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return float(match.group(1)), float(match.group(2))
 
 
 def extract_duanxian_symbol_from_message(text: str) -> Optional[str]:
@@ -366,6 +379,35 @@ def query_audit_chain(symbol: str) -> str:
     return '\n'.join(parts)
 
 
+def query_average_down_call(price: float, funds: float) -> str:
+    if price <= 0 or funds <= 0:
+        return '用法: /call 116.8 60000\n现价和资金都必须大于 0'
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                AVERAGE_DOWN_SCRIPT,
+                '--price',
+                str(price),
+                '--funds',
+                str(funds),
+                '--tg',
+            ],
+            cwd=CARMEN_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+    except Exception as e:
+        return f'/call 执行失败: {e}'
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or '').strip()
+        return f'/call 执行失败: {err or result.returncode}'
+    return result.stdout.strip()
+
+
 def build_help_text() -> str:
     return (
         "🤖 Carmen Telegram 指令\n"
@@ -376,7 +418,8 @@ def build_help_text() -> str:
         "/stock_character 002930 只看股性评分\n"
         "/duanxian 002930 OpenClaw 短线是银 AI 分析\n"
         "短线是银分析 002930 自然语言触发\n"
-        "/audit 002930 查看最近审计链"
+        "/audit 002930 查看最近审计链\n"
+        "/call 116.8 60000 计算加仓下单价和股数"
     )
 
 
@@ -569,6 +612,20 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
         text = message.get('text', '')
         if re.match(r'^/help(?:@\w+)?\s*$', text.strip(), flags=re.IGNORECASE):
             send_message(bot_token, chat_id, build_help_text(), reply_to_message_id=message.get('message_id'))
+            return
+
+        call_args = extract_call_args(text)
+        if call_args:
+            body = query_average_down_call(*call_args)
+            send_message(bot_token, chat_id, body, reply_to_message_id=message.get('message_id'))
+            return
+        if re.match(r'^/call(?:@\w+)?(?:\s+.*)?$', text.strip(), flags=re.IGNORECASE):
+            send_message(
+                bot_token,
+                chat_id,
+                '用法: /call 116.8 60000',
+                reply_to_message_id=message.get('message_id'),
+            )
             return
 
         symbol = extract_symbol_from_message(text, 'ai_analysis')
