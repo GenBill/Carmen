@@ -17,7 +17,7 @@ setup_proxy_if_needed(7897)
 from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks, enrich_stock_data_detail
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import backtest_carmen_indicator
-from scan_signal_eval import evaluate_scan_signals
+from scan_signal_eval import evaluate_scan_signals, evaluate_tuo_signals
 from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
@@ -33,9 +33,12 @@ from async_ai import process_ai_task
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
-    duanxian_tuo_gate_ok,
+    apply_duanxian_tuo_gate_metadata,
+    build_scan_backtest_str,
+    evaluate_duanxian_tuo_gates,
     is_buy_blocked_by_open_gap,
     resolve_opening_price_context_for_filter,
+    scan_post_backtest_pipeline_active,
     should_submit_scan_ai,
     skip_gate_log_suffix,
 )
@@ -220,6 +223,8 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                 
                 scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
                 score = scan_state.score
+                carmen_candidate = scan_state.carmen_candidate
+                tuo_signal_active = False
                 pre_candidate = scan_state.pre_candidate
                 if pre_candidate:
                     record_pre_candidate("HK", symbol, stock_data, scan_state, hk_names_map)
@@ -244,9 +249,14 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             stock_data = full_stock_data
                             scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
                             score = scan_state.score
+                            carmen_candidate = scan_state.carmen_candidate
                             pre_candidate = scan_state.pre_candidate
                         else:
                             pre_candidate = False
+
+                if pre_candidate:
+                    tuo_state = evaluate_tuo_signals(stock_data, carmen_candidate=carmen_candidate)
+                    tuo_signal_active = tuo_state.tuo_signal_active
                 
                 # 进行回测
                 backtest_result = None
@@ -263,25 +273,39 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             macd_signal=macd_signal, 
                             avg_volume_days=avg_volume_days
                         )
-                        if backtest_result:
-                            buy_success, buy_total = 0, 0
-                            if 'buy_prob' in backtest_result:
-                                buy_success, buy_total = backtest_result['buy_prob']
-                            
-                            backtest_str = f"({buy_success}/{buy_total})"
-                            if buy_total > 0 and buy_total > 2:
-                                confidence = (buy_success-1) / buy_total
-                            else:
-                                confidence = 0.0
-                            
+                        if scan_post_backtest_pipeline_active(
+                            backtest_result,
+                            tuo_signal_active=tuo_signal_active,
+                            carmen_candidate=carmen_candidate,
+                        ):
+                            backtest_str, confidence = build_scan_backtest_str(
+                                backtest_result,
+                                tuo_signal_active=tuo_signal_active,
+                                duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
+                                left_tuo_candidate=bool(stock_data.get('_duanxian_left_tuo_candidate')),
+                            )
+
                             # 后台 AI（与 A 股同款量能+金叉闸门，见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
                             submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
-                                should_submit_scan_ai(score[0], confidence, volume_ma_info, duanxian_tuo_info)
+                                should_submit_scan_ai(
+                                    score[0],
+                                    confidence,
+                                    volume_ma_info,
+                                    duanxian_tuo_info,
+                                    tuo_signal_active=tuo_signal_active,
+                                )
                             )
                             submit_ai = submit_ai_vol
                             gate_blocked = signal_ok and not submit_ai_vol
+
+                            if submit_ai:
+                                apply_duanxian_tuo_gate_metadata(
+                                    stock_data,
+                                    volume_ma_info,
+                                    mark_imminent_pass=True,
+                                )
 
                             opening_ctx = None
                             if submit_ai:
@@ -317,6 +341,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                     bowl_score=bowl_score,
                                     volume_ma_info=stock_data.get('volume_ma_info'),
                                     duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
+                                    duanxian_tuo_text=stock_data.get('_duanxian_tuo_display_text'),
                                     rsi_prev=stock_data.get('rsi_prev'),
                                     dif=stock_data.get('dif'),
                                     dea=stock_data.get('dea'),
@@ -346,7 +371,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     failed_count += 1
                 else:
                     # 统计信号 (无论盘中盘后都统计，以便CLI显示)
-                    if score[0] >= 2.0:
+                    if score[0] >= 2.0 or tuo_signal_active:
                         alert_count += 1
                     
                     if not pre_candidate:
@@ -363,12 +388,10 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else 0
                     volume_ma_info = stock_data.get('volume_ma_info') or {}
                     duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
-                    position_build_score = volume_ma_info.get('position_build_score', 0)
-                    has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                    volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-                    tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
-                    if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
-                        continue
+                    if not tuo_signal_active:
+                        tuo_gates = evaluate_duanxian_tuo_gates(volume_ma_info, duanxian_tuo_info)
+                        if volume_ma_info and not tuo_gates.secondary_gate_ok:
+                            continue
                     op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                     if op_ctx.open_drop_filter_enabled and is_buy_blocked_by_open_gap(price, op_ctx.open_for_filter):
                         continue

@@ -67,17 +67,6 @@ def test_generate_serenity_analysis_saves_cache(tmp_path, monkeypatch):
     msg = serenity_analysis.generate_serenity_analysis(
         symbol="ABC",
         market="US",
-        price=10.0,
-        score=1.0,
-        backtest_str=None,
-        rsi=None,
-        volume_ratio=None,
-        turnover_rate=None,
-        volume_ma_info=None,
-        refined_info=None,
-        refine_analysis="",
-        summary_analysis="",
-        full_analysis="",
     )
 
     hit = serenity_analysis.read_serenity_cache_entry("ABC", max_age_days=3)

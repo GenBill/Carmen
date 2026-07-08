@@ -14,9 +14,9 @@ from main_a import (
 from telegram_notifier import format_signal_snapshot
 
 
-def test_rsi_below_18_is_oversold_candidate():
-    assert _is_rsi_oversold_candidate({"rsi": 17.9}) is True
-    assert _a_share_scan_signal_ok(0.0, 0.0, True) is True
+def test_a_share_rsi_below_18_is_not_oversold_candidate_when_disabled():
+    assert _is_rsi_oversold_candidate({"rsi": 17.9}) is False
+    assert _a_share_scan_signal_ok(0.0, 0.0, True) is False
 
 
 def test_rsi_18_none_or_nan_is_not_oversold_candidate():
@@ -25,7 +25,7 @@ def test_rsi_18_none_or_nan_is_not_oversold_candidate():
     assert _is_rsi_oversold_candidate({"rsi": math.nan}) is False
 
 
-def test_rsi_candidate_bypasses_volume_or_tuo_gate():
+def test_a_share_rsi_candidate_does_not_bypass_volume_or_tuo_gate_when_disabled():
     submit_ai, signal_ok, position_build_score, has_recent_golden_cross = _a_share_should_submit_scan_ai(
         score_buy=0.0,
         confidence=0.0,
@@ -34,8 +34,8 @@ def test_rsi_candidate_bypasses_volume_or_tuo_gate():
         rsi_signal_active=True,
     )
 
-    assert signal_ok is True
-    assert submit_ai is True
+    assert signal_ok is False
+    assert submit_ai is False
     assert position_build_score == 3.0
     assert has_recent_golden_cross is False
 

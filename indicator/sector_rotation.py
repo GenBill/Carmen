@@ -186,6 +186,8 @@ def _build_signal_types(scan_state: ScanSignalState) -> List[str]:
         types.append("rsi_oversold")
     if scan_state.rsi_rebound_setup:
         types.append("rsi_rebound")
+    if scan_state.tuo_signal_active:
+        types.append("duanxian_tuo")
     return types
 
 

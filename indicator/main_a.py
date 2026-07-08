@@ -15,7 +15,7 @@ from auto_proxy import setup_proxy_if_needed
 setup_proxy_if_needed(7897)
 
 from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks, enrich_stock_data_detail
-from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
+from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols, apply_manual_excludes
 from indicators import backtest_carmen_indicator
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
@@ -32,17 +32,22 @@ from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
     buy_signal_ok,
-    duanxian_tuo_gate_ok,
+    apply_duanxian_tuo_gate_metadata,
+    build_scan_backtest_str,
+    evaluate_duanxian_tuo_gates,
     is_buy_blocked_by_open_gap,
     resolve_opening_price_context_for_filter,
+    scan_buy_signal_ok,
+    scan_post_backtest_pipeline_active,
     should_submit_scan_ai,
     skip_gate_log_suffix,
 )
 from stock_character_filter import evaluate_stock_character
-from scan_signal_eval import evaluate_scan_signals
+from scan_signal_eval import evaluate_scan_signals, evaluate_tuo_signals
 from rsi_rebound_signal import (
     evaluate_macd_turn_positive,
 )
+from a_share_st_filter import is_st_or_delisting_name
 from a_share_rebound_alert import (
     run_rebound_alert_scan,
 )
@@ -70,6 +75,7 @@ RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
 RSI_REBOUND_MIN_AVG_RANGE_PCT = 5.0
 RSI_REBOUND_MIN_UP_DOWN_RATIO = 0.75
 RSI_REBOUND_TOP_N = 3
+A_SHARE_RSI_BOTTOM_ALERTS_ENABLED = False
 
 PERF_LOG_MODE = str(os.getenv("CARMEN_PERF_LOG", "")).strip().lower()
 PERF_LOG_ENABLED = PERF_LOG_MODE in ("1", "true", "yes", "all", "debug")
@@ -135,6 +141,8 @@ def _a_share_turnover_effective(raw) -> Optional[float]:
 
 def _is_rsi_oversold_candidate(stock_data: dict) -> bool:
     """A股当日超卖：当前 RSI 严格小于 18。"""
+    if not A_SHARE_RSI_BOTTOM_ALERTS_ENABLED:
+        return False
     from rsi_rebound_signal import is_rsi_oversold_today
     return is_rsi_oversold_today(stock_data, RSI_REBOUND_THRESHOLD)
 
@@ -284,8 +292,17 @@ def _rsi_rebound_volatility_ok(stock_data: dict) -> tuple[bool, str, dict]:
     )
     return True, info['reason'], info
 
-def _a_share_scan_signal_ok(score_buy: float, confidence: float, rsi_signal_active: bool) -> bool:
-    return buy_signal_ok(score_buy, confidence) or bool(rsi_signal_active)
+def _a_share_scan_signal_ok(
+    score_buy: float,
+    confidence: float,
+    rsi_signal_active: bool,
+    tuo_signal_active: bool = False,
+) -> bool:
+    return scan_buy_signal_ok(
+        score_buy,
+        confidence,
+        tuo_signal_active=tuo_signal_active,
+    )
 
 
 def _a_share_should_submit_scan_ai(
@@ -294,27 +311,19 @@ def _a_share_should_submit_scan_ai(
     volume_ma_info: Optional[dict],
     duanxian_tuo_info: Optional[dict],
     rsi_signal_active: bool,
+    tuo_signal_active: bool = False,
 ):
     """
-    RSI 超卖/反弹候选，不要求量能金叉/建仓评分或短线托形态。
-    基础成交量过滤和 A股换手率过滤仍在主流程中执行。
+    A 股 RSI 超卖/反弹抄底链路已关闭；仅保留常规 Carmen 买入链路。
     Returns:
         (submit_background_ai, signal_ok, position_build_score, has_recent_golden_cross)
     """
-    if rsi_signal_active:
-        info = volume_ma_info or {}
-        return (
-            True,
-            True,
-            float(info.get('position_build_score', 0) or 0),
-            bool(info.get('has_recent_golden_cross', False)),
-        )
-
     submit_ai, signal_ok, position_build_score, has_recent_golden_cross = should_submit_scan_ai(
         score_buy,
         confidence,
         volume_ma_info,
         duanxian_tuo_info,
+        tuo_signal_active=tuo_signal_active,
     )
     return submit_ai, signal_ok, position_build_score, has_recent_golden_cross
 
@@ -336,19 +345,11 @@ def get_stock_list_from_csv(stock_path: str):
         # 从Symbol列提取股票代码
         if 'Symbol' in df.columns:
             if 'Name' in df.columns:
-                name_series = (
-                    df['Name']
-                    .fillna('')
-                    .astype(str)
-                    .str.replace(' ', '', regex=False)
-                    .str.replace('\u3000', '', regex=False)
-                    .str.upper()
-                )
-                st_mask = name_series.str.startswith(('ST', '*ST', 'S*ST'))
+                st_mask = df['Name'].apply(is_st_or_delisting_name)
                 removed = int(st_mask.sum())
                 if removed > 0:
                     df = df[~st_mask].copy()
-                    print(f"🚫 已过滤 ST 股票 {removed} 只")
+                    print(f"🚫 已过滤 ST/退市风险股票 {removed} 只")
             symbol_to_name = {}
             if 'Name' in df.columns:
                 for _, row in df.iterrows():
@@ -433,6 +434,14 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
     # 获取A股列表
     stock_symbols, a_share_names_map = get_stock_list_from_csv(stock_path)
     stock_symbols = [s.strip() for s in stock_symbols if s.strip()]
+    stock_symbols = apply_manual_excludes(stock_symbols)
+    if a_share_names_map:
+        stock_symbol_set = set(stock_symbols)
+        a_share_names_map = {
+            symbol: name
+            for symbol, name in a_share_names_map.items()
+            if symbol in stock_symbol_set
+        }
     
     # 获取自选股列表（用于显示判断）
     # 注意：这里我们仍然可以加载HKA的自选股，或者新建一个A股自选列表。暂时复用HKA。
@@ -571,8 +580,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 
                 scan_state = evaluate_scan_signals(
                     stock_data,
-                    rsi_threshold=RSI_REBOUND_THRESHOLD,
-                    volatility_ok_fn=_rsi_rebound_volatility_ok,
+                    rsi_threshold=RSI_REBOUND_THRESHOLD if A_SHARE_RSI_BOTTOM_ALERTS_ENABLED else None,
+                    volatility_ok_fn=_rsi_rebound_volatility_ok if A_SHARE_RSI_BOTTOM_ALERTS_ENABLED else None,
                     silver_on_sell=False,
                 )
                 score = scan_state.score
@@ -580,6 +589,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                 rsi_rebound_setup = scan_state.rsi_rebound_setup
                 rsi_signal_active = scan_state.rsi_signal_active
                 carmen_candidate = scan_state.carmen_candidate
+                tuo_signal_active = False
                 pre_candidate = scan_state.pre_candidate
                 if pre_candidate:
                     record_pre_candidate("A", symbol, stock_data, scan_state, a_share_names_map)
@@ -632,8 +642,8 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                             stock_data = full_stock_data
                             scan_state = evaluate_scan_signals(
                                 stock_data,
-                                rsi_threshold=RSI_REBOUND_THRESHOLD,
-                                volatility_ok_fn=_rsi_rebound_volatility_ok,
+                                rsi_threshold=RSI_REBOUND_THRESHOLD if A_SHARE_RSI_BOTTOM_ALERTS_ENABLED else None,
+                                volatility_ok_fn=_rsi_rebound_volatility_ok if A_SHARE_RSI_BOTTOM_ALERTS_ENABLED else None,
                                 silver_on_sell=False,
                             )
                             score = scan_state.score
@@ -645,6 +655,10 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         else:
                             pre_candidate = False
                     _perf_record(symbol_perf_records, 'detail_enrich', full_data_started)
+
+                if pre_candidate and not turnover_blocked:
+                    tuo_state = evaluate_tuo_signals(stock_data, carmen_candidate=carmen_candidate)
+                    tuo_signal_active = tuo_state.tuo_signal_active
 
                 # 进行回测
                 backtest_result = None
@@ -663,24 +677,30 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 avg_volume_days=avg_volume_days
                             )
 
-                        if backtest_result or rsi_signal_active:
-                            buy_success, buy_total = 0, 0
-                            if backtest_result and 'buy_prob' in backtest_result:
-                                buy_success, buy_total = backtest_result['buy_prob']
-                            
-                            backtest_str = f"({buy_success}/{buy_total})"
-                            if buy_total > 0 and buy_total > 2:
-                                confidence = (buy_success-1) / buy_total
-                            else:
-                                confidence = 0.0
-
-                            if rsi_signal_active:
-                                backtest_str = f"(RSI{RSI_REBOUND_THRESHOLD:g})"
+                        if scan_post_backtest_pipeline_active(
+                            backtest_result,
+                            rsi_signal_active=rsi_signal_active,
+                            tuo_signal_active=tuo_signal_active,
+                            carmen_candidate=carmen_candidate,
+                        ):
+                            backtest_str, confidence = build_scan_backtest_str(
+                                backtest_result,
+                                rsi_signal_active=rsi_signal_active,
+                                rsi_threshold=RSI_REBOUND_THRESHOLD,
+                                tuo_signal_active=tuo_signal_active,
+                                duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
+                                left_tuo_candidate=bool(stock_data.get('_duanxian_left_tuo_candidate')),
+                            )
                             
                             # 后台 AI（与是否配置 Telegram/QQ 解耦；闸门见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
-                            signal_ok = _a_share_scan_signal_ok(score[0], confidence, rsi_signal_active)
+                            signal_ok = _a_share_scan_signal_ok(
+                                score[0],
+                                confidence,
+                                rsi_signal_active,
+                                tuo_signal_active=tuo_signal_active,
+                            )
 
                             # 股性过滤在 RSI 弹性 Top3 之前执行；不过滤后的 RSI 才进入候选排序。
                             if signal_ok:
@@ -705,9 +725,16 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                         volume_ma_info,
                                         duanxian_tuo_info,
                                         rsi_signal_active,
+                                        tuo_signal_active=tuo_signal_active,
                                     )
                                 )
                                 gate_blocked = signal_ok and not submit_ai
+                            if submit_ai:
+                                apply_duanxian_tuo_gate_metadata(
+                                    stock_data,
+                                    volume_ma_info,
+                                    mark_imminent_pass=True,
+                                )
                             opening_ctx = None
                             if submit_ai:
                                 opening_started = time.perf_counter()
@@ -818,7 +845,13 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                                 if _should_submit_regular_ai_after_rsi_queue(rsi_signal_active, rsi_enqueued):
                                     ai_payload = {
                                         **base_payload,
-                                        'signal_id': _build_signal_id(symbol, stock_data, score[0]),
+                                        'signal_id': _build_signal_id(
+                                            symbol,
+                                            stock_data,
+                                            score[0],
+                                            'left_tuo' if stock_data.get('_duanxian_tuo_pass_tag') == '虚托' else '',
+                                        ),
+                                        'duanxian_tuo_text': stock_data.get('_duanxian_tuo_display_text'),
                                     }
                                     print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
                                     if not bot_notifier:
@@ -850,7 +883,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'print_failed')
                 else:
                     # 统计信号 (仅统计实际展示/保留的信号)
-                    if score[0] >= 2.0 or rsi_signal_active:
+                    if score[0] >= 2.0 or rsi_signal_active or tuo_signal_active:
                         alert_count += 1
 
                     if not pre_candidate or turnover_blocked:
@@ -877,12 +910,9 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                     if not stock_character_info.get('passed', True):
                         _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'stock_character_blocked_html')
                         continue
-                    if not rsi_signal_active:
-                        position_build_score = volume_ma_info.get('position_build_score', 0)
-                        has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                        volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-                        tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
-                        if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
+                    if not rsi_signal_active and not tuo_signal_active:
+                        tuo_gates = evaluate_duanxian_tuo_gates(volume_ma_info, duanxian_tuo_info)
+                        if volume_ma_info and not tuo_gates.secondary_gate_ok:
                             _perf_summary(symbol, symbol_perf_records, symbol_perf_started, 'volume_gate_blocked_html')
                             continue
                     html_opening_started = time.perf_counter()
@@ -924,6 +954,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         '_rsi_oversold_candidate': rsi_signal_active,
                         '_rsi_oversold_today': rsi_oversold_today,
                         '_rsi_rebound_setup': rsi_rebound_setup,
+                        '_duanxian_tuo_candidate': tuo_signal_active,
                         'rsi_rebound_volatility': stock_data.get('rsi_rebound_volatility') or stock_data.get('_rsi_rebound_volatility'),
                         'rebound_elasticity_score': stock_data.get('rebound_elasticity_score'),
                     })

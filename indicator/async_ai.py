@@ -4,8 +4,8 @@ from datetime import datetime
 from a_share_rebound_alert import maybe_record_high_build_alert
 from scan_ai_common import (
     MIN_POSITION_BUILD_SCORE,
-    OPEN_DROP_FILTER_PCT,
-    duanxian_tuo_gate_ok,
+    apply_duanxian_tuo_gate_metadata,
+    evaluate_duanxian_tuo_gates,
     is_buy_blocked_by_open_gap,
 )
 
@@ -37,6 +37,7 @@ def process_ai_task(
     stock_character_info=None,
     signal_title=None,
     rsi_rebound_volatility=None,
+    duanxian_tuo_text=None,
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
@@ -51,13 +52,13 @@ def process_ai_task(
 
         position_build_score = (volume_ma_info or {}).get('position_build_score', 0)
         has_recent_golden_cross = (volume_ma_info or {}).get('has_recent_golden_cross', False)
-        volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-        tuo_gate_ok, tuo_summary = duanxian_tuo_gate_ok(duanxian_tuo_info)
-        if volume_ma_info and not is_rsi_rebound_signal and not (volume_gate_ok or tuo_gate_ok):
+        tuo_gates = evaluate_duanxian_tuo_gates(volume_ma_info, duanxian_tuo_info)
+        display_tuo_text = duanxian_tuo_text or tuo_gates.display_text
+        if volume_ma_info and not is_rsi_rebound_signal and not tuo_gates.secondary_gate_ok:
             print(
-                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」或近7日无量能金叉，且短线是银托形态={tuo_summary}，跳过后台AI分析与通知"
+                f"⏭️  {symbol} position_build_score={position_build_score}，不满足「建仓评分>={MIN_POSITION_BUILD_SCORE:g}」、完整托或左侧托预确认（{display_tuo_text}），跳过后台AI分析与通知"
             )
-            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross,'duanxian_tuo':tuo_summary})
+            append_signal_audit({'event':'ai_gate_blocked','symbol':symbol,'signal_id':signal_id,'position_build_score':position_build_score,'has_recent_golden_cross':has_recent_golden_cross,'duanxian_tuo':display_tuo_text})
             return {
                 'symbol': symbol,
                 'market': market,
@@ -128,6 +129,7 @@ def process_ai_task(
                 bowl_score=bowl_score,
                 volume_ma_info=volume_ma_info,
                 duanxian_tuo_info=duanxian_tuo_info,
+                duanxian_tuo_text=display_tuo_text,
                 turnover_rate=turnover_rate,
                 turnover_warning=turnover_warning,
                 rsi_prev=rsi_prev,
@@ -167,17 +169,6 @@ def process_ai_task(
                         serenity_text = generate_serenity_analysis(
                             symbol=symbol,
                             market=market,
-                            price=price,
-                            score=score,
-                            backtest_str=backtest_str,
-                            rsi=rsi,
-                            volume_ratio=volume_ratio,
-                            turnover_rate=turnover_rate,
-                            volume_ma_info=volume_ma_info,
-                            refined_info=refined_info,
-                            refine_analysis=(result.get('refine_analysis') or '').strip(),
-                            summary_analysis=(result.get('summary_analysis') or '').strip(),
-                            full_analysis=(result.get('full_analysis') or '').strip(),
                             stock_cn_name=stock_cn_name,
                         )
                         if serenity_text:

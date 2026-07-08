@@ -144,13 +144,15 @@ class QQNotifier:
                        refined_text: Optional[str] = None, bowl_score: Optional[float] = None,
                        volume_ma_info: Optional[dict] = None, turnover_rate: Optional[float] = None,
                        duanxian_tuo_info: Optional[dict] = None,
+                       duanxian_tuo_text: Optional[str] = None,
                        turnover_warning: Optional[str] = None, queue_on_fail: bool = True,
                        signal_id: Optional[str] = None, rsi_prev: Optional[float] = None,
                        dif: Optional[float] = None, dea: Optional[float] = None,
                        dif_dea_slope: Optional[float] = None,
                        stock_cn_name: Optional[str] = None,
                        opening_uncertain: bool = False,
-                       stock_character_info: Optional[dict] = None) -> bool:
+                       stock_character_info: Optional[dict] = None,
+                       signal_title: Optional[str] = None) -> bool:
         """
         发送买入信号通知（带缓存，避免重复推送）
         
@@ -183,8 +185,9 @@ class QQNotifier:
         
         # 构建消息内容
         safe_symbol = symbol.replace(".SS", "[SS]").replace(".SZ", "[SZ]").replace(".HK", "[HK]")
+        title = signal_title or "📈 买入信号提醒"
         msg_parts = [
-            f"📈 买入信号提醒",
+            title,
             f"股票: {safe_symbol}",
             f"当前价格: {price:.2f}",
             f"评分: {score:.2f}",
@@ -227,9 +230,11 @@ class QQNotifier:
         if volume_ratio is not None:
             msg_parts.append(f"量比: {volume_ratio:.1f}%")
 
-        if duanxian_tuo_info:
-            tuo_summary = duanxian_tuo_info.get('summary') or '无'
-            msg_parts.append(f"短线是银托形态: {tuo_summary}")
+        if duanxian_tuo_text:
+            msg_parts.append(f"短线是银托形态: {duanxian_tuo_text}")
+        elif duanxian_tuo_info:
+            from scan_ai_common import format_duanxian_tuo_display
+            msg_parts.append(f"短线是银托形态: {format_duanxian_tuo_display(duanxian_tuo_info)}")
 
         if isinstance(stock_character_info, dict):
             sc_status = stock_character_info.get('status') or '未知'

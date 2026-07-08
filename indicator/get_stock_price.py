@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 
 from lut import INTRADAY_VOLUME_LUT, INTRADAY_VOLUME_HK, INTRADAY_VOLUME_A
+from scan_ai_common import IMMINENT_CROSS_WEIGHT
 
 # 与 indicators.MACD_FADE_TAIL_BARS 一致（连续 4 根日 K 的 DIF：第4天→今天）
 _MACD_FADE_TAIL_BARS = 4
@@ -61,6 +62,27 @@ def _recent_cross_names(series_map, pairs, window_days):
     return names, event_days
 
 
+def _imminent_cross_names(series_map, pairs):
+    names = []
+    for short_label, long_label in pairs:
+        short_series = series_map.get(short_label)
+        long_series = series_map.get(long_label)
+        if short_series is None or long_series is None:
+            continue
+        pair = pd.DataFrame({'short': short_series, 'long': long_series}).dropna()
+        if len(pair) < 2:
+            continue
+        prev = pair.iloc[-2]
+        curr = pair.iloc[-1]
+        prev_gap = float(prev['short'] - prev['long'])
+        curr_gap = float(curr['short'] - curr['long'])
+        gap_delta = curr_gap - prev_gap
+        # Still below, gap is closing, and one more same-speed bar would cross.
+        if curr_gap <= 0 and gap_delta > 0 and curr_gap + gap_delta > 0:
+            names.append(f'{short_label}即将上穿{long_label}')
+    return names
+
+
 def _calculate_duanxian_tuo_info(hist, current_close):
     """
     短线是银 5/10/20 价托、量托程序化判定。
@@ -69,7 +91,9 @@ def _calculate_duanxian_tuo_info(hist, current_close):
     default = {
         'gate_ok': False,
         'price_tuo_ok': False,
+        'price_tuo_imminent_ok': False,
         'volume_tuo_ok': False,
+        'volume_tuo_imminent_ok': False,
         'summary': '无',
         'price_tuo': {},
         'volume_tuo': {},
@@ -102,6 +126,10 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         [('5', '10'), ('5', '20'), ('10', '20')],
         cross_window_days,
     )
+    price_imminent_crosses = _imminent_cross_names(
+        {'5': ma5, '10': ma10, '20': ma20},
+        [('5', '10'), ('5', '20'), ('10', '20')],
+    )
     price_order = bool(
         pd.notna(ma5.iloc[-1]) and pd.notna(ma10.iloc[-1]) and pd.notna(ma20.iloc[-1])
         and ma5.iloc[-1] > ma10.iloc[-1] > ma20.iloc[-1]
@@ -110,12 +138,28 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         current_close and pd.notna(price_lines.iloc[-1]).all()
         and float(current_close) > float(price_lines.iloc[-1].max())
     )
+    price_actual_count = len(price_crosses)
+    price_imminent_count = len(price_imminent_crosses)
+    price_weighted_cross_score = price_actual_count + price_imminent_count * IMMINENT_CROSS_WEIGHT
     price_tuo_ok = (
         price_bear_recent
         and price_converged_recent
-        and len(price_crosses) >= 3
+        and price_actual_count >= 3
         and price_order
-        and price_above_tuo
+    )
+    price_tuo_imminent_ok = (
+        not price_tuo_ok
+        and price_bear_recent
+        and price_actual_count >= 1
+        and price_weighted_cross_score >= 2.0
+        and (
+            price_converged_recent
+            or (
+                pd.notna(price_spread.iloc[-1])
+                and current_close
+                and float(price_spread.iloc[-1]) / float(current_close) <= price_spread_threshold * 1.5
+            )
+        )
     )
 
     volume_bear = (vma5 < vma10) & (vma10 < vma20)
@@ -130,28 +174,49 @@ def _calculate_duanxian_tuo_info(hist, current_close):
         [('5', '10'), ('5', '20'), ('10', '20')],
         cross_window_days,
     )
+    volume_imminent_crosses = _imminent_cross_names(
+        {'5': vma5, '10': vma10, '20': vma20},
+        [('5', '10'), ('5', '20'), ('10', '20')],
+    )
     volume_order = bool(
         pd.notna(vma5.iloc[-1]) and pd.notna(vma10.iloc[-1]) and pd.notna(vma20.iloc[-1])
         and vma5.iloc[-1] > vma10.iloc[-1] > vma20.iloc[-1]
     )
+    volume_actual_count = len(volume_crosses)
+    volume_imminent_count = len(volume_imminent_crosses)
+    volume_weighted_cross_score = volume_actual_count + volume_imminent_count * IMMINENT_CROSS_WEIGHT
     volume_tuo_ok = (
         volume_bear_recent
         and volume_converged_recent
-        and len(volume_crosses) >= 3
+        and volume_actual_count >= 3
         and volume_order
+    )
+    volume_tuo_imminent_ok = (
+        not volume_tuo_ok
+        and volume_bear_recent
+        and volume_converged_recent
+        and volume_actual_count >= 1
+        and volume_weighted_cross_score >= 2.0
     )
 
     summary_parts = []
     if price_tuo_ok:
         summary_parts.append('价托确认')
+    elif price_tuo_imminent_ok:
+        summary_parts.append('价托预确认')
     if volume_tuo_ok:
         summary_parts.append('量托确认')
+    elif volume_tuo_imminent_ok:
+        summary_parts.append('量托预确认')
     summary = ' / '.join(summary_parts) if summary_parts else '无'
+    gate_ok = bool(price_tuo_ok or volume_tuo_ok)
 
     return {
-        'gate_ok': bool(price_tuo_ok or volume_tuo_ok),
+        'gate_ok': gate_ok,
         'price_tuo_ok': bool(price_tuo_ok),
+        'price_tuo_imminent_ok': bool(price_tuo_imminent_ok),
         'volume_tuo_ok': bool(volume_tuo_ok),
+        'volume_tuo_imminent_ok': bool(volume_tuo_imminent_ok),
         'summary': summary,
         'lookback_days': lookback_days,
         'cross_window_days': cross_window_days,
@@ -159,7 +224,11 @@ def _calculate_duanxian_tuo_info(hist, current_close):
             'bear_recent': price_bear_recent,
             'converged_recent': price_converged_recent,
             'crosses': price_crosses,
-            'cross_count': len(price_crosses),
+            'imminent_crosses': price_imminent_crosses,
+            'actual_cross_count': price_actual_count,
+            'imminent_cross_count': price_imminent_count,
+            'weighted_cross_score': round(price_weighted_cross_score, 2),
+            'cross_count': price_actual_count,
             'cross_start': str(min(price_cross_days).date()) if price_cross_days else None,
             'cross_end': str(max(price_cross_days).date()) if price_cross_days else None,
             'current_order': '5>10>20' if price_order else '',
@@ -171,7 +240,11 @@ def _calculate_duanxian_tuo_info(hist, current_close):
             'bear_recent': volume_bear_recent,
             'converged_recent': volume_converged_recent,
             'crosses': volume_crosses,
-            'cross_count': len(volume_crosses),
+            'imminent_crosses': volume_imminent_crosses,
+            'actual_cross_count': volume_actual_count,
+            'imminent_cross_count': volume_imminent_count,
+            'weighted_cross_score': round(volume_weighted_cross_score, 2),
+            'cross_count': volume_actual_count,
             'cross_start': str(min(volume_cross_days).date()) if volume_cross_days else None,
             'cross_end': str(max(volume_cross_days).date()) if volume_cross_days else None,
             'current_order': '5>10>20' if volume_order else '',
@@ -813,15 +886,8 @@ def _calculate_fast_scan_indicators_from_hist(hist, symbol, rsi_period, macd_fas
     ema_60_series = calculate_ema(close_series, period=60, return_series=True)
     ema_144_series = calculate_ema(close_series, period=144, return_series=True)
 
-    ema_5 = ema_5_series.iloc[-1] if not pd.isna(ema_5_series.iloc[-1]) else None
     ema_12 = ema_12_series.iloc[-1] if not pd.isna(ema_12_series.iloc[-1]) else None
-    ema_60 = ema_60_series.iloc[-1] if not pd.isna(ema_60_series.iloc[-1]) else None
     ema_144 = ema_144_series.iloc[-1] if not pd.isna(ema_144_series.iloc[-1]) else None
-
-    ema_5_prev = ema_5_series.iloc[-2] if len(ema_5_series) >= 2 and not pd.isna(ema_5_series.iloc[-2]) else None
-    ema_12_prev = ema_12_series.iloc[-2] if len(ema_12_series) >= 2 and not pd.isna(ema_12_series.iloc[-2]) else None
-    ema_60_prev = ema_60_series.iloc[-2] if len(ema_60_series) >= 2 and not pd.isna(ema_60_series.iloc[-2]) else None
-    ema_144_prev = ema_144_series.iloc[-2] if len(ema_144_series) >= 2 and not pd.isna(ema_144_series.iloc[-2]) else None
 
     ema_5_hist = ema_5_series.iloc[-90:].tolist() if not ema_5_series.empty else []
     ema_60_hist = ema_60_series.iloc[-90:].tolist() if not ema_60_series.empty else []
@@ -864,17 +930,10 @@ def _calculate_fast_scan_indicators_from_hist(hist, symbol, rsi_period, macd_fas
         'rsi_prev': round(rsi_prev, 2) if rsi_prev else None,
         'dif': macd_data['dif'],
         'dea': macd_data['dea'],
-        'macd_histogram': macd_data['histogram'],
         'dif_dea_slope': macd_data['dif_dea_slope'],
         'macd_dif_tail': macd_dif_tail,
-        'ema_5': round(ema_5, 2) if ema_5 else None,
         'ema_12': round(ema_12, 2) if ema_12 else None,
-        'ema_60': round(ema_60, 2) if ema_60 else None,
         'ema_144': round(ema_144, 2) if ema_144 else None,
-        'ema_5_prev': round(ema_5_prev, 2) if ema_5_prev else None,
-        'ema_12_prev': round(ema_12_prev, 2) if ema_12_prev else None,
-        'ema_60_prev': round(ema_60_prev, 2) if ema_60_prev else None,
-        'ema_144_prev': round(ema_144_prev, 2) if ema_144_prev else None,
         'ema_5_hist': ema_5_hist,
         'ema_60_hist': ema_60_hist,
         'weekly_dif': weekly_dif,
@@ -884,10 +943,10 @@ def _calculate_fast_scan_indicators_from_hist(hist, symbol, rsi_period, macd_fas
     }
 
 
-def _calculate_detail_fields_from_hist(hist, symbol, estimated_volume):
+def _compute_volume_ma_metrics(hist, estimated_volume):
     """
-    仅计算 downstream 闸门所需的量能结构与短线托信息。
-    fast_scan 已有 core 指标时可增量 merge，避免重复算 RSI/MACD/EMA。
+    计算量能均线结构与 position_build_score。
+    供 detail 完整版与 full path 共用，避免重复实现。
     """
     if hist is None or getattr(hist, 'empty', True):
         return None
@@ -1054,6 +1113,15 @@ def _calculate_detail_fields_from_hist(hist, symbol, estimated_volume):
         'volume_ma_info': volume_ma_info,
         'duanxian_tuo_info': duanxian_tuo_info,
     }
+
+
+def _calculate_detail_fields_from_hist(hist, symbol, estimated_volume):
+    """
+    完整量能结构与短线托信息；fast_scan 已有 core 指标时可增量 merge。
+    symbol 保留以兼容现有调用签名。
+    """
+    del symbol
+    return _compute_volume_ma_metrics(hist, estimated_volume)
 
 
 def _calculate_indicators_from_hist(hist, symbol, rsi_period, macd_fast, macd_slow,

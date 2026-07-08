@@ -35,17 +35,6 @@ def serenity_analysis_enabled() -> bool:
     }
 
 
-def _fmt_optional(label: str, value: Any, suffix: str = "") -> Optional[str]:
-    if value is None or value == "":
-        return None
-    try:
-        if isinstance(value, float):
-            return f"{label}: {value:.2f}{suffix}"
-    except Exception:
-        pass
-    return f"{label}: {value}{suffix}"
-
-
 def _compact_text(text: Optional[str], limit: int = 2600) -> str:
     s = str(text or "").strip()
     if len(s) <= limit:
@@ -251,68 +240,42 @@ def build_serenity_prompt(
     *,
     symbol: str,
     market: str,
-    price: float,
-    score: float,
-    backtest_str: Optional[str],
-    rsi: Optional[float],
-    volume_ratio: Optional[float],
-    turnover_rate: Optional[float],
-    volume_ma_info: Optional[Dict[str, Any]],
-    refined_info: Optional[Dict[str, Any]],
-    refine_analysis: Optional[str],
-    summary_analysis: Optional[str],
-    full_analysis: Optional[str],
     stock_cn_name: Optional[str],
 ) -> str:
-    ri = refined_info or {}
-    vmi = volume_ma_info or {}
-    lines = [
+    target_context = [
         f"标的: {symbol}" + (f" / {stock_cn_name}" if stock_cn_name else ""),
         f"市场: {market}",
-        f"当前价: {price}",
-        f"Carmen信号评分: {score}",
     ]
-    for item in [
-        _fmt_optional("回测胜率", backtest_str),
-        _fmt_optional("RSI", rsi),
-        _fmt_optional("量比", volume_ratio),
-        _fmt_optional("换手率", turnover_rate, "%"),
-        _fmt_optional("建仓强度", vmi.get("position_build_score")),
-        _fmt_optional("近7日量能金叉", vmi.get("recent_golden_crosses")),
-        _fmt_optional("买入区间", _join_range(ri.get("min_buy_price"), ri.get("max_buy_price"))),
-        _fmt_optional("目标价", ri.get("target_price")),
-        _fmt_optional("止损", ri.get("stop_loss")),
-        _fmt_optional("AI胜率", ri.get("win_rate")),
-    ]:
-        if item:
-            lines.append(item)
-
-    carmen_ai_context = {
-        "refine_analysis": _compact_text(refine_analysis, 1800),
-        "summary_analysis": _compact_text(summary_analysis, 1800),
-        "full_analysis": _compact_text(full_analysis, 3600),
-    }
     request = {
-        "task": "调用 serenity-skill。先完成长版 Serenity 深度分析，再把长版压缩成紧跟 Carmen 买入预警发送的 Telegram 短消息。",
+        "task": "调用 serenity-skill。仅对标的做基本面联网搜索验证，生成长版 Serenity 深度分析，再压缩成紧跟 Carmen 买入预警发送的 Telegram 短消息。",
         "workflow_requirements": {
             "step_1": "先生成长版深度分析，必须按 Serenity workflow 走：产业链层级、稀缺层/行业chokepoint、公司所在位置、联网证据、证据强弱、反方/失效条件、下一步验证。",
             "step_2": "再只基于长版分析，整理成 Telegram 短消息。",
             "must_use_live_search": True,
             "must_state_if_industry_chokepoint": True,
             "do_not_fabricate_unprovided_fundamentals": True,
+            "fundamentals_only": True,
+            "do_not_use_technical_analysis": True,
+            "do_not_reference_kline_or_price_action": True,
         },
         "long_analysis_requirements": {
             "language": "zh-CN",
             "format": "plain_text",
             "include_sections": [
+                "一句话介绍公司业务",
                 "结论",
                 "产业链位置",
                 "是否行业chokepoint",
                 "联网证据",
                 "证据强弱",
-                "技术触发与基本面关系",
                 "反方/失效条件",
                 "下一步验证",
+            ],
+            "exclude": [
+                "目标价",
+                "止损",
+                "RSI",
+                "MACD",
             ],
         },
         "telegram_message_requirements": {
@@ -322,7 +285,7 @@ def build_serenity_prompt(
             "do_not_include_title": True,
             "disclaimer": "",
             "no_markdown_table": True,
-            "style": "结论优先，保留产业链/chokepoint判断、1-2条关键证据、技术面含义、主要风险；不要写成泛泛而谈。",
+            "style": "结论优先，保留产业链/chokepoint判断、1-2条关键联网证据；只做基本面分析，不要做任何技术面分析。",
         },
         "output_contract": {
             "return_both_blocks": True,
@@ -332,22 +295,13 @@ def build_serenity_prompt(
             "telegram_block_end": "END_TELEGRAM_MESSAGE",
             "telegram_bot_will_send_only": "BEGIN_TELEGRAM_MESSAGE 和 END_TELEGRAM_MESSAGE 中间的内容",
         },
-        "carmen_signal_context": lines,
-        "carmen_ai_context": carmen_ai_context,
+        "target_context": target_context,
     }
-    return "请调用 serenity-skill 处理以下结构化请求；Carmen 只提供数据，不提供人格提示词：\n" + json.dumps(
+    return "请调用 serenity-skill 处理以下结构化请求；Carmen 只提供标的识别信息，不提供技术面数据或人格提示词：\n" + json.dumps(
         request,
         ensure_ascii=False,
         indent=2,
     )
-
-
-def _join_range(lo: Any, hi: Any) -> Optional[str]:
-    if lo is None and hi is None:
-        return None
-    if lo is not None and hi is not None:
-        return f"{lo}-{hi}"
-    return str(lo if lo is not None else hi)
 
 
 def _extract_openclaw_reply(raw: str) -> str:
@@ -482,17 +436,6 @@ def generate_serenity_analysis(
     *,
     symbol: str,
     market: str,
-    price: float,
-    score: float,
-    backtest_str: Optional[str],
-    rsi: Optional[float],
-    volume_ratio: Optional[float],
-    turnover_rate: Optional[float],
-    volume_ma_info: Optional[Dict[str, Any]],
-    refined_info: Optional[Dict[str, Any]],
-    refine_analysis: Optional[str],
-    summary_analysis: Optional[str],
-    full_analysis: Optional[str],
     stock_cn_name: Optional[str] = None,
 ) -> str:
     if not serenity_analysis_enabled():
@@ -500,17 +443,6 @@ def generate_serenity_analysis(
     prompt = build_serenity_prompt(
         symbol=symbol,
         market=market,
-        price=price,
-        score=score,
-        backtest_str=backtest_str,
-        rsi=rsi,
-        volume_ratio=volume_ratio,
-        turnover_rate=turnover_rate,
-        volume_ma_info=volume_ma_info,
-        refined_info=refined_info,
-        refine_analysis=refine_analysis,
-        summary_analysis=summary_analysis,
-        full_analysis=full_analysis,
         stock_cn_name=stock_cn_name,
     )
     try:

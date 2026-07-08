@@ -17,8 +17,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import pytz
 
+from a_share_st_filter import is_st_or_delisting_name
 from rebound_ak_quote import fetch_rebound_quote
 from telegram_notifier import append_signal_audit, carmen_alerts_muted
+
+try:
+    from stocks_list.get_all_stock import load_manual_exclude_symbols
+except Exception:
+    def load_manual_exclude_symbols() -> set:
+        return set()
 
 HIGH_BUILD_SCORE_THRESHOLD = 8.0
 HISTORY_RETENTION_DAYS = 14
@@ -66,8 +73,14 @@ def prune_old_alerts(queue: Optional[List[Dict[str, Any]]] = None) -> List[Dict[
     """移除首次预警超过 HISTORY_RETENTION_DAYS 的记录。"""
     items = list(queue if queue is not None else _load_queue())
     cutoff = _today_beijing() - timedelta(days=HISTORY_RETENTION_DAYS)
+    manual_excludes = load_manual_exclude_symbols()
     kept: List[Dict[str, Any]] = []
     for item in items:
+        symbol = str(item.get("symbol") or "").upper()
+        if symbol in manual_excludes:
+            continue
+        if is_st_or_delisting_name(item.get("stock_cn_name")):
+            continue
         first_d = _parse_date(item.get("first_alert_date"))
         if first_d is None or first_d < cutoff:
             continue
@@ -86,6 +99,10 @@ def maybe_record_high_build_alert(
     """
     upper = (symbol or "").upper()
     if not (upper.endswith(".SS") or upper.endswith(".SZ")):
+        return
+    if upper in load_manual_exclude_symbols():
+        return
+    if is_st_or_delisting_name(stock_cn_name):
         return
     if float(position_build_score or 0) < HIGH_BUILD_SCORE_THRESHOLD:
         return

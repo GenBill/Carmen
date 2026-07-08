@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, List
 
 from earnings_proximity import earnings_proximity_note
-from scan_ai_common import MIN_POSITION_BUILD_SCORE, duanxian_tuo_gate_ok
+from scan_ai_common import MIN_POSITION_BUILD_SCORE, evaluate_duanxian_tuo_gates, format_duanxian_tuo_display
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
 _global_push_cache = {}
@@ -543,6 +543,7 @@ class TelegramNotifier:
         bowl_score: Optional[float] = None,
         volume_ma_info: Optional[Dict] = None,
         duanxian_tuo_info: Optional[Dict] = None,
+        duanxian_tuo_text: Optional[str] = None,
         turnover_rate: Optional[float] = None,
         turnover_warning: Optional[str] = None,
         queue_on_fail: bool = True,
@@ -578,19 +579,8 @@ class TelegramNotifier:
         recent_crosses = []
         volume_spike_text = None
         position_build_score = None
-        tuo_gate_ok, tuo_summary = duanxian_tuo_gate_ok(duanxian_tuo_info)
-        duanxian_tuo_text = None
-        if duanxian_tuo_info:
-            duanxian_tuo_text = tuo_summary
-            detail_parts = []
-            if duanxian_tuo_info.get('price_tuo_ok'):
-                crosses = ((duanxian_tuo_info.get('price_tuo') or {}).get('crosses') or [])
-                detail_parts.append('价托(' + '/'.join(c.replace('上穿', 'x') for c in crosses) + ')')
-            if duanxian_tuo_info.get('volume_tuo_ok'):
-                crosses = ((duanxian_tuo_info.get('volume_tuo') or {}).get('crosses') or [])
-                detail_parts.append('量托(' + '/'.join(c.replace('上穿', 'x') for c in crosses) + ')')
-            if detail_parts:
-                duanxian_tuo_text = '；'.join(detail_parts)
+        tuo_gates = evaluate_duanxian_tuo_gates(volume_ma_info, duanxian_tuo_info)
+        duanxian_tuo_text = duanxian_tuo_text or tuo_gates.display_text
         if volume_ma_info:
             recent_golden_crosses = volume_ma_info.get('recent_golden_crosses') or []
             current_above_ma = volume_ma_info.get('current_above_ma') or []
@@ -600,12 +590,12 @@ class TelegramNotifier:
             has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
             recent_cross_window_days = volume_ma_info.get('recent_cross_window_days', 7)
 
-            volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-            if not is_rsi_rebound_signal and not (volume_gate_ok or tuo_gate_ok):
+            volume_gate_ok = tuo_gates.volume_gate_ok
+            if not is_rsi_rebound_signal and not tuo_gates.secondary_gate_ok:
                 print(
-                    f"⏭️  {symbol} 近{recent_cross_window_days}日内未出现量能金叉或建仓评分不足(<{MIN_POSITION_BUILD_SCORE:g})，且短线是银托形态={tuo_summary}，跳过 Telegram 买入推送"
+                    f"⏭️  {symbol} 建仓评分不足(<{MIN_POSITION_BUILD_SCORE:g})，且未出现完整托或左侧托预确认（{duanxian_tuo_text}），跳过 Telegram 买入推送"
                 )
-                append_signal_audit({'event': 'gate_blocked', 'symbol': symbol, 'signal_id': signal_id, 'position_build_score': position_build_score, 'has_recent_golden_cross': has_recent_golden_cross, 'duanxian_tuo': tuo_summary})
+                append_signal_audit({'event': 'gate_blocked', 'symbol': symbol, 'signal_id': signal_id, 'position_build_score': position_build_score, 'has_recent_golden_cross': has_recent_golden_cross, 'duanxian_tuo': duanxian_tuo_text})
                 return False
 
             recent_crosses = [cross.replace('上穿', 'x') for cross in recent_golden_crosses]

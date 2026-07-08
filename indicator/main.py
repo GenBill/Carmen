@@ -24,7 +24,7 @@ from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from async_ai import process_ai_task
 from stock_character_filter import evaluate_stock_character
-from scan_signal_eval import evaluate_scan_signals
+from scan_signal_eval import evaluate_scan_signals, evaluate_tuo_signals
 from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
 from rsi_rebound_signal import (
     evaluate_macd_turn_positive,
@@ -32,9 +32,12 @@ from rsi_rebound_signal import (
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
-    duanxian_tuo_gate_ok,
+    evaluate_duanxian_tuo_gates,
+    apply_duanxian_tuo_gate_metadata,
+    build_scan_backtest_str,
     is_buy_blocked_by_open_gap,
     resolve_opening_price_context_for_filter,
+    scan_post_backtest_pipeline_active,
     should_submit_scan_ai,
     skip_gate_log_suffix,
 )
@@ -382,6 +385,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                 rsi_oversold_today = scan_state.rsi_oversold_today
                 rsi_rebound_setup = scan_state.rsi_rebound_setup
                 rsi_signal_active = scan_state.rsi_signal_active
+                carmen_candidate = scan_state.carmen_candidate
+                tuo_signal_active = False
                 pre_candidate = scan_state.pre_candidate
                 if pre_candidate:
                     record_pre_candidate("US", symbol, stock_data, scan_state)
@@ -414,9 +419,14 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             rsi_oversold_today = scan_state.rsi_oversold_today
                             rsi_rebound_setup = scan_state.rsi_rebound_setup
                             rsi_signal_active = scan_state.rsi_signal_active
+                            carmen_candidate = scan_state.carmen_candidate
                             pre_candidate = scan_state.pre_candidate
                         else:
                             pre_candidate = False
+
+                if pre_candidate:
+                    tuo_state = evaluate_tuo_signals(stock_data, carmen_candidate=carmen_candidate)
+                    tuo_signal_active = tuo_state.tuo_signal_active
 
                 # 进行回测
                 backtest_result = None
@@ -435,19 +445,20 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             avg_volume_days=avg_volume_days
                         )
 
-                        if backtest_result or rsi_signal_active:
-                            buy_success, buy_total = 0, 0
-                            if backtest_result and 'buy_prob' in backtest_result:
-                                buy_success, buy_total = backtest_result['buy_prob']
-                            
-                            backtest_str = f"({buy_success}/{buy_total})"
-                            if buy_total > 0 and buy_total > 2:
-                                confidence = (buy_success-1) / buy_total
-                            else:
-                                confidence = 0.0
-
-                            if rsi_signal_active:
-                                backtest_str = f"(RSI{US_RSI_REBOUND_THRESHOLD:g})"
+                        if scan_post_backtest_pipeline_active(
+                            backtest_result,
+                            rsi_signal_active=rsi_signal_active,
+                            tuo_signal_active=tuo_signal_active,
+                            carmen_candidate=carmen_candidate,
+                        ):
+                            backtest_str, confidence = build_scan_backtest_str(
+                                backtest_result,
+                                rsi_signal_active=rsi_signal_active,
+                                rsi_threshold=US_RSI_REBOUND_THRESHOLD,
+                                tuo_signal_active=tuo_signal_active,
+                                duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
+                                left_tuo_candidate=bool(stock_data.get('_duanxian_left_tuo_candidate')),
+                            )
                             
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
@@ -459,7 +470,13 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 gate_blocked = False
                             else:
                                 submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
-                                    should_submit_scan_ai(score[0], confidence, volume_ma_info, duanxian_tuo_info)
+                                    should_submit_scan_ai(
+                                        score[0],
+                                        confidence,
+                                        volume_ma_info,
+                                        duanxian_tuo_info,
+                                        tuo_signal_active=tuo_signal_active,
+                                    )
                                 )
                                 submit_ai = submit_ai_vol
                                 gate_blocked = signal_ok and not submit_ai_vol
@@ -474,6 +491,13 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                         stock_data['_rsi_rebound_block_reason'] = f'股性辅助否决：{reasons}'
                                         continue
                                     submit_ai = False
+
+                            if submit_ai:
+                                apply_duanxian_tuo_gate_metadata(
+                                    stock_data,
+                                    volume_ma_info,
+                                    mark_imminent_pass=True,
+                                )
 
                             opening_ctx = None
                             if submit_ai:
@@ -577,7 +601,13 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 if _should_submit_us_regular_ai_after_rsi_queue(rsi_signal_active, rsi_enqueued):
                                     ai_payload = {
                                         **base_payload,
-                                        'signal_id': _build_us_signal_id(symbol, stock_data, score[0]),
+                                        'signal_id': _build_us_signal_id(
+                                            symbol,
+                                            stock_data,
+                                            score[0],
+                                            'left_tuo' if stock_data.get('_duanxian_tuo_pass_tag') == '虚托' else '',
+                                        ),
+                                        'duanxian_tuo_text': stock_data.get('_duanxian_tuo_display_text'),
                                     }
                                     print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
                                     if not bot_notifier:
@@ -603,7 +633,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     failed_count += 1
                 else:
                     # 统计信号 (无论盘中盘后都统计，以便CLI显示)
-                    if score[0] >= 2.0 or rsi_signal_active:
+                    if score[0] >= 2.0 or rsi_signal_active or tuo_signal_active:
                         alert_count += 1
 
                     # 仅在非盘中时收集数据用于HTML生成
@@ -628,12 +658,9 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             stock_data['stock_character_info'] = stock_character_info
                         if not stock_character_info.get('passed', True):
                             continue
-                        if not rsi_signal_active:
-                            position_build_score = volume_ma_info.get('position_build_score', 0)
-                            has_recent_golden_cross = volume_ma_info.get('has_recent_golden_cross', False)
-                            volume_gate_ok = bool(has_recent_golden_cross) and float(position_build_score or 0) >= MIN_POSITION_BUILD_SCORE
-                            tuo_gate_ok, _ = duanxian_tuo_gate_ok(duanxian_tuo_info)
-                            if volume_ma_info and not (volume_gate_ok or tuo_gate_ok):
+                        if not rsi_signal_active and not tuo_signal_active:
+                            tuo_gates = evaluate_duanxian_tuo_gates(volume_ma_info, duanxian_tuo_info)
+                            if volume_ma_info and not tuo_gates.secondary_gate_ok:
                                 continue
                         op_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                         if (

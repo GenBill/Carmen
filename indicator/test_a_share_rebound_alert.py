@@ -2,6 +2,7 @@ from datetime import date
 
 import pandas as pd
 
+import a_share_rebound_alert as rebound_alert
 from a_share_rebound_alert import check_rebound_conditions
 
 
@@ -70,3 +71,40 @@ def test_rebound_alert_allows_pullback_above_first_alert_low_with_imminent_volum
     assert ma_trigger == "量能5/10即将死叉"
     assert round(peak_high, 2) == 5.36
     assert round(peak_low, 2) == 5.21
+
+
+def test_st_name_does_not_enter_high_build_queue(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebound_alert, "QUEUE_FILE", tmp_path / "queue.json")
+    monkeypatch.setattr(rebound_alert, "load_manual_exclude_symbols", lambda: set())
+
+    rebound_alert.maybe_record_high_build_alert(
+        symbol="300087.SZ",
+        alert_date="2026-07-07",
+        position_build_score=9.0,
+        stock_cn_name="ST荃银",
+    )
+
+    assert rebound_alert._load_queue() == []
+
+
+def test_prune_removes_manual_excluded_symbols(monkeypatch):
+    monkeypatch.setattr(rebound_alert, "load_manual_exclude_symbols", lambda: {"300087.SZ"})
+
+    kept = rebound_alert.prune_old_alerts(
+        [
+            {
+                "symbol": "300087.SZ",
+                "stock_cn_name": "荃银高科",
+                "first_alert_date": "2026-07-02",
+                "position_build_score": 8.0,
+            },
+            {
+                "symbol": "300213.SZ",
+                "stock_cn_name": "佳讯飞鸿",
+                "first_alert_date": "2026-07-02",
+                "position_build_score": 8.0,
+            },
+        ]
+    )
+
+    assert [item["symbol"] for item in kept] == ["300213.SZ"]
