@@ -34,10 +34,17 @@ def test_evaluate_scan_signals_marks_oversold_and_caches_volatility():
         "ema_5_hist": [1.0] * 90,
         "ema_60_hist": [1.0] * 90,
     }
-    state = evaluate_scan_signals(stock, rsi_threshold=18.0, volatility_ok_fn=_vol_ok, silver_on_sell=False)
+    state = evaluate_scan_signals(
+        stock,
+        rsi_threshold=18.0,
+        volatility_ok_fn=_vol_ok,
+        silver_on_sell=False,
+        rsi_mode="classic",
+    )
 
     assert state.rsi_oversold_today is True
     assert state.rsi_signal_active is True
+    assert state.rsi_pin_bar_pre is False
     assert state.pre_candidate is True
     assert state.tuo_signal_active is False
     assert stock.get('_rsi_rebound_volatility', {}).get('rebound_elasticity_score') == 10.0

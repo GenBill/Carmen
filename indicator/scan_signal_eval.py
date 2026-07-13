@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
 from indicators import carmen_indicator, silver_indicator, vegas_indicator
-from rsi_rebound_signal import evaluate_rsi_rebound_setup, is_rsi_oversold_today
+from rsi_rebound_signal import (
+    evaluate_rsi_pin_bar_prefilter,
+    evaluate_rsi_rebound_setup,
+    is_rsi_oversold_today,
+)
 from scan_ai_common import apply_duanxian_tuo_gate_metadata, evaluate_duanxian_tuo_gates
 
 
@@ -14,6 +18,8 @@ class ScanSignalState:
     score: list[float]
     rsi_oversold_today: bool
     rsi_rebound_setup: bool
+    rsi_pin_bar_pre: bool
+    rsi_pin_bar_setup: bool
     rsi_signal_active: bool
     tuo_signal_active: bool
     carmen_candidate: bool
@@ -70,10 +76,15 @@ def evaluate_scan_signals(
     volatility_ok_fn: Optional[Callable[[dict], Tuple[bool, str, dict]]] = None,
     carmen_gate: float = 2.0,
     silver_on_sell: bool = True,
+    rsi_mode: str = "classic",
+    rsi_period: int = 8,
 ) -> ScanSignalState:
     """
-    一次完成 CARMEN 综合分与 RSI 超卖/反弹判定，并写入 stock_data 缓存字段。
-    rsi_threshold / volatility_ok_fn 均为 None 时跳过 RSI 轨（如港股）。
+    一次完成 CARMEN 综合分与 RSI 判定，并写入 stock_data 缓存字段。
+    rsi_mode:
+      - classic: 当日超卖 / 前日超卖+拐头（旧双轨）
+      - pin_bar: 近3日 RSI 超跌 + 当日 Pin Bar 前置（下影量门由调用方二次确认）
+    rsi_threshold 为 None 时跳过 RSI 轨。
     托形态在 enrich 后由 evaluate_tuo_signals 二次评估。
     """
     score_carmen = carmen_indicator(stock_data)
@@ -86,35 +97,57 @@ def evaluate_scan_signals(
 
     rsi_oversold_today = False
     rsi_rebound_setup = False
+    rsi_pin_bar_pre = False
+    rsi_pin_bar_setup = False
     rsi_signal_active = False
     rsi_vol_info: dict = {}
     rsi_rebound_block_reason: Optional[str] = None
 
-    if rsi_threshold is not None and volatility_ok_fn is not None:
-        rsi_oversold_today = is_rsi_oversold_today(stock_data, rsi_threshold)
-        rsi_rebound_setup, rsi_rebound_setup_reason, rsi_vol_info = evaluate_rsi_rebound_setup(
-            stock_data,
-            rsi_threshold,
-            volatility_ok_fn,
-        )
-        if rsi_vol_info:
-            stock_data['_rsi_rebound_volatility'] = rsi_vol_info
-        elif rsi_rebound_setup_reason and not rsi_oversold_today:
-            rsi_rebound_block_reason = rsi_rebound_setup_reason
-            stock_data['_rsi_rebound_block_reason'] = rsi_rebound_setup_reason
-        if rsi_oversold_today and not rsi_vol_info:
-            _, _, oversold_vol = volatility_ok_fn(stock_data)
-            if oversold_vol:
-                rsi_vol_info = oversold_vol
-                stock_data['_rsi_rebound_volatility'] = oversold_vol
-        rsi_signal_active = rsi_oversold_today or rsi_rebound_setup
+    mode = str(rsi_mode or "classic").strip().lower()
+    if rsi_threshold is not None:
+        if mode == "pin_bar":
+            rsi_pin_bar_pre, pre_reason = evaluate_rsi_pin_bar_prefilter(
+                stock_data,
+                rsi_threshold,
+                rsi_period=rsi_period,
+            )
+            stock_data['_rsi_pin_bar_pre'] = rsi_pin_bar_pre
+            stock_data['_rsi_pin_bar_pre_reason'] = pre_reason
+            # 阶段1 命中即计入 pre_candidate；真正 rsi_signal_active 待下影量门
+            if rsi_pin_bar_pre and volatility_ok_fn is not None:
+                _, _, rsi_vol_info = volatility_ok_fn(stock_data)
+                if rsi_vol_info:
+                    stock_data['_rsi_rebound_volatility'] = rsi_vol_info
+            elif not rsi_pin_bar_pre:
+                rsi_rebound_block_reason = pre_reason
+                stock_data['_rsi_rebound_block_reason'] = pre_reason
+        elif volatility_ok_fn is not None:
+            rsi_oversold_today = is_rsi_oversold_today(stock_data, rsi_threshold)
+            rsi_rebound_setup, rsi_rebound_setup_reason, rsi_vol_info = evaluate_rsi_rebound_setup(
+                stock_data,
+                rsi_threshold,
+                volatility_ok_fn,
+            )
+            if rsi_vol_info:
+                stock_data['_rsi_rebound_volatility'] = rsi_vol_info
+            elif rsi_rebound_setup_reason and not rsi_oversold_today:
+                rsi_rebound_block_reason = rsi_rebound_setup_reason
+                stock_data['_rsi_rebound_block_reason'] = rsi_rebound_setup_reason
+            if rsi_oversold_today and not rsi_vol_info:
+                _, _, oversold_vol = volatility_ok_fn(stock_data)
+                if oversold_vol:
+                    rsi_vol_info = oversold_vol
+                    stock_data['_rsi_rebound_volatility'] = oversold_vol
+            rsi_signal_active = rsi_oversold_today or rsi_rebound_setup
 
     carmen_candidate = score[0] >= carmen_gate or score[1] >= carmen_gate
-    pre_candidate = carmen_candidate or rsi_signal_active
+    pre_candidate = carmen_candidate or rsi_signal_active or rsi_pin_bar_pre
 
     stock_data['_rsi_oversold_today'] = rsi_oversold_today
     stock_data['_rsi_rebound_setup'] = rsi_rebound_setup
-    stock_data['_rsi_oversold_candidate'] = rsi_signal_active
+    stock_data['_rsi_pin_bar_pre'] = rsi_pin_bar_pre
+    stock_data['_rsi_pin_bar_setup'] = rsi_pin_bar_setup
+    stock_data['_rsi_oversold_candidate'] = rsi_signal_active or rsi_pin_bar_pre
     stock_data['_duanxian_tuo_candidate'] = False
     stock_data['_duanxian_left_tuo_candidate'] = False
 
@@ -122,6 +155,8 @@ def evaluate_scan_signals(
         score=score,
         rsi_oversold_today=rsi_oversold_today,
         rsi_rebound_setup=rsi_rebound_setup,
+        rsi_pin_bar_pre=rsi_pin_bar_pre,
+        rsi_pin_bar_setup=rsi_pin_bar_setup,
         rsi_signal_active=rsi_signal_active,
         tuo_signal_active=False,
         carmen_candidate=carmen_candidate,
@@ -129,3 +164,18 @@ def evaluate_scan_signals(
         rsi_rebound_volatility=rsi_vol_info,
         rsi_rebound_block_reason=rsi_rebound_block_reason,
     )
+
+
+def confirm_rsi_pin_bar_after_5m(
+    stock_data: dict,
+    hist_5m,
+) -> Tuple[bool, str, dict]:
+    """阶段2：拉完 5m 后确认下影量门，成功则标记 rsi_pin_bar_setup。"""
+    from rsi_rebound_signal import evaluate_rsi_pin_bar_shadow_volume
+
+    ok, reason, info = evaluate_rsi_pin_bar_shadow_volume(stock_data, hist_5m)
+    stock_data['_rsi_pin_bar_shadow'] = info
+    stock_data['_rsi_pin_bar_setup'] = bool(ok)
+    if ok:
+        stock_data['_rsi_oversold_candidate'] = True
+    return ok, reason, info

@@ -24,11 +24,15 @@ from telegram_notifier import TelegramNotifier, load_telegram_token
 from scheduler import MarketScheduler
 from async_ai import process_ai_task
 from stock_character_filter import evaluate_stock_character
-from scan_signal_eval import evaluate_scan_signals, evaluate_tuo_signals
-from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
-from rsi_rebound_signal import (
-    evaluate_macd_turn_positive,
+from scan_signal_eval import (
+    confirm_rsi_pin_bar_after_5m,
+    evaluate_scan_signals,
+    evaluate_tuo_signals,
 )
+from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
+from intraday_5m import fetch_5m_hist
+from datetime import datetime
+import pytz
 from scan_ai_common import (
     OPEN_DROP_FILTER_PCT,
     MIN_POSITION_BUILD_SCORE,
@@ -55,14 +59,33 @@ US_RSI_REBOUND_MIN_AVG_UP_PCT = 3.0
 US_RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
 US_RSI_REBOUND_MIN_AVG_RANGE_PCT = 5.0
 US_RSI_REBOUND_MIN_UP_DOWN_RATIO = 0.75
-US_RSI_REBOUND_TOP_N = 3
+US_RSI_REBOUND_TOP_N = 3  # 日常运行按弹性 Top3 播报；试跑脚本可临时改为 0
+US_RSI_PIN_BAR_HOUR_BJ_START = 6
+US_RSI_PIN_BAR_HOUR_BJ_END = 10  # [6, 10) 北京时间
 FAST_SCAN_WORKERS = max(1, int(os.getenv("CARMEN_US_FAST_SCAN_WORKERS", os.getenv("CARMEN_FAST_SCAN_WORKERS", "4")) or 4))
 AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") or 180)
 
 
+def _us_rsi_pin_bar_scan_allowed(now=None) -> bool:
+    """美股 RSI+Pin Bar：北京时间 [06:00, 10:00)。"""
+    tz = pytz.timezone("Asia/Shanghai")
+    dt = now or datetime.now(tz)
+    if dt.tzinfo is None:
+        dt = tz.localize(dt)
+    else:
+        dt = dt.astimezone(tz)
+    return US_RSI_PIN_BAR_HOUR_BJ_START <= dt.hour < US_RSI_PIN_BAR_HOUR_BJ_END
+
+
 def _is_us_rsi_oversold_candidate(stock_data: dict) -> bool:
-    from rsi_rebound_signal import is_rsi_oversold_today
-    return is_rsi_oversold_today(stock_data, US_RSI_REBOUND_THRESHOLD)
+    return bool((stock_data or {}).get('_rsi_pin_bar_setup'))
+
+
+def _confirm_us_rsi_pin_bar(symbol: str, stock_data: dict) -> tuple[bool, str, dict]:
+    hist_5m = fetch_5m_hist(symbol, trade_date=stock_data.get('date'))
+    if hist_5m is None or getattr(hist_5m, 'empty', True):
+        return False, '5m拉取失败或为空', {}
+    return confirm_rsi_pin_bar_after_5m(stock_data, hist_5m)
 
 
 def _build_us_signal_id(symbol: str, stock_data: dict, score_buy: float, kind: str = '') -> str:
@@ -90,16 +113,19 @@ def _us_rsi_rebound_elasticity_score(
 
 
 def _select_top_us_rsi_rebound_candidates(candidates, limit: int = US_RSI_REBOUND_TOP_N):
-    if not candidates or limit <= 0:
+    if not candidates:
         return []
-    return sorted(
+    ordered = sorted(
         candidates,
         key=lambda x: (
             float(x.get('rebound_elasticity_score') or 0.0),
             float((x.get('rsi_rebound_volatility') or {}).get('up_down_ratio') or 0.0),
         ),
         reverse=True,
-    )[:limit]
+    )
+    if limit is None or int(limit) <= 0:
+        return ordered
+    return ordered[: int(limit)]
 
 
 def _us_rsi_candidate_volatility_info(stock_data: dict) -> dict:
@@ -375,15 +401,20 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     failed_count += 1
                     continue
 
+                rsi_track_on = _us_rsi_pin_bar_scan_allowed()
+                rsi_pin_bar_pre = False
                 scan_state = evaluate_scan_signals(
                     stock_data,
-                    rsi_threshold=US_RSI_REBOUND_THRESHOLD,
-                    volatility_ok_fn=_us_rsi_rebound_volatility_ok,
+                    rsi_threshold=US_RSI_REBOUND_THRESHOLD if rsi_track_on else None,
+                    volatility_ok_fn=_us_rsi_rebound_volatility_ok if rsi_track_on else None,
                     silver_on_sell=False,
+                    rsi_mode="pin_bar",
+                    rsi_period=rsi_period,
                 )
                 score = scan_state.score
                 rsi_oversold_today = scan_state.rsi_oversold_today
                 rsi_rebound_setup = scan_state.rsi_rebound_setup
+                rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
                 rsi_signal_active = scan_state.rsi_signal_active
                 carmen_candidate = scan_state.carmen_candidate
                 tuo_signal_active = False
@@ -411,13 +442,16 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             stock_data = full_stock_data
                             scan_state = evaluate_scan_signals(
                                 stock_data,
-                                rsi_threshold=US_RSI_REBOUND_THRESHOLD,
-                                volatility_ok_fn=_us_rsi_rebound_volatility_ok,
+                                rsi_threshold=US_RSI_REBOUND_THRESHOLD if rsi_track_on else None,
+                                volatility_ok_fn=_us_rsi_rebound_volatility_ok if rsi_track_on else None,
                                 silver_on_sell=False,
+                                rsi_mode="pin_bar",
+                                rsi_period=rsi_period,
                             )
                             score = scan_state.score
                             rsi_oversold_today = scan_state.rsi_oversold_today
                             rsi_rebound_setup = scan_state.rsi_rebound_setup
+                            rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
                             rsi_signal_active = scan_state.rsi_signal_active
                             carmen_candidate = scan_state.carmen_candidate
                             pre_candidate = scan_state.pre_candidate
@@ -445,15 +479,16 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             avg_volume_days=avg_volume_days
                         )
 
+                        rsi_pipeline = bool(rsi_signal_active or rsi_pin_bar_pre)
                         if scan_post_backtest_pipeline_active(
                             backtest_result,
-                            rsi_signal_active=rsi_signal_active,
+                            rsi_signal_active=rsi_pipeline,
                             tuo_signal_active=tuo_signal_active,
                             carmen_candidate=carmen_candidate,
                         ):
                             backtest_str, confidence = build_scan_backtest_str(
                                 backtest_result,
-                                rsi_signal_active=rsi_signal_active,
+                                rsi_signal_active=rsi_pipeline,
                                 rsi_threshold=US_RSI_REBOUND_THRESHOLD,
                                 tuo_signal_active=tuo_signal_active,
                                 duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
@@ -462,7 +497,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
-                            if rsi_signal_active:
+                            if rsi_pipeline:
                                 signal_ok = True
                                 submit_ai = True
                                 position_build_score = float(volume_ma_info.get('position_build_score', 0) or 0)
@@ -481,7 +516,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 submit_ai = submit_ai_vol
                                 gate_blocked = signal_ok and not submit_ai_vol
 
-                            if submit_ai:
+                            if submit_ai and not rsi_pipeline:
                                 apply_duanxian_tuo_gate_metadata(
                                     stock_data,
                                     volume_ma_info,
@@ -493,7 +528,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                                 price_chk = stock_data.get('close', 0)
                                 if (
-                                    not rsi_signal_active
+                                    not rsi_pipeline
                                     and opening_ctx.open_drop_filter_enabled
                                     and is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter)
                                 ):
@@ -534,64 +569,39 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                     'stock_character_info': stock_character_info,
                                 }
                                 rsi_enqueued = False
-                                macd_ok, macd_reason = evaluate_macd_turn_positive(stock_data)
-                                if rsi_oversold_today:
-                                    if macd_ok:
+                                if rsi_pin_bar_pre:
+                                    pin_ok, pin_reason, shadow_info = _confirm_us_rsi_pin_bar(symbol, stock_data)
+                                    if pin_ok:
+                                        rsi_signal_active = True
                                         rsi_vol = _us_rsi_candidate_volatility_info(stock_data)
                                         rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
-                                        oversold_payload = {
+                                        pin_payload = {
                                             **base_payload,
-                                            'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_oversold'),
-                                            'signal_title': "📉RSI超卖信号",
+                                            'backtest_str': f"(RSI{US_RSI_REBOUND_THRESHOLD:g})",
+                                            'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_pin_bar'),
+                                            'signal_title': "📉RSI超跌+Pin Bar",
                                             'rsi_rebound_volatility': rsi_vol,
                                         }
                                         stock_data['rebound_elasticity_score'] = rebound_score
                                         stock_data['rsi_rebound_volatility'] = rsi_vol
+                                        stock_data['_rsi_pin_bar_shadow'] = shadow_info
                                         us_rsi_oversold_candidates.append({
                                             'symbol': symbol,
                                             'stock_data': stock_data,
-                                            'ai_payload': oversold_payload,
+                                            'ai_payload': pin_payload,
                                             'rsi': rsi,
-                                            'signal_label': 'US RSI超卖',
+                                            'signal_label': 'US RSI+PinBar',
                                             'rebound_elasticity_score': rebound_score,
                                             'rsi_rebound_volatility': rsi_vol,
                                         })
                                         print(
-                                            f"🧺 {symbol} US RSI超卖候选入队："
-                                            f"RSI={float(rsi or 0):.1f}，{_format_us_rsi_candidate_elasticity(us_rsi_oversold_candidates[-1])}，{macd_reason}"
+                                            f"🧺 {symbol} US RSI+Pin Bar候选入队："
+                                            f"RSI={float(rsi or 0):.1f}，{_format_us_rsi_candidate_elasticity(us_rsi_oversold_candidates[-1])}，{pin_reason}"
                                         )
                                         rsi_enqueued = True
                                     else:
-                                        print(f"⏭️  {symbol} US RSI超卖未入候选池：{macd_reason}")
-                                if rsi_rebound_setup:
-                                    if macd_ok:
-                                        rsi_vol = stock_data.get('_rsi_rebound_volatility') or {}
-                                        rebound_score = float(rsi_vol.get('rebound_elasticity_score') or 0.0)
-                                        rebound_payload = {
-                                            **base_payload,
-                                            'signal_id': _build_us_signal_id(symbol, stock_data, score[0], 'rsi_rebound'),
-                                            'signal_title': "📈反弹抄底信号",
-                                            'rsi_rebound_volatility': rsi_vol,
-                                        }
-                                        stock_data['rebound_elasticity_score'] = rebound_score
-                                        stock_data['rsi_rebound_volatility'] = rsi_vol
-                                        us_rsi_rebound_candidates.append({
-                                            'symbol': symbol,
-                                            'stock_data': stock_data,
-                                            'ai_payload': rebound_payload,
-                                            'signal_label': 'US RSI反弹',
-                                            'rebound_elasticity_score': rebound_score,
-                                            'rsi_rebound_volatility': rsi_vol,
-                                        })
-                                        print(
-                                            f"🧺 {symbol} US RSI反弹候选入队：弹性评分={rebound_score:.1f}，"
-                                            f"6个月平均+{float(rsi_vol.get('avg_up_pct') or 0):.1f}%/"
-                                            f"-{float(rsi_vol.get('avg_down_pct') or 0):.1f}%，{macd_reason}"
-                                        )
-                                        rsi_enqueued = True
-                                    else:
-                                        print(f"⏭️  {symbol} US RSI反弹未入候选池：{macd_reason}")
-                                if _should_submit_us_regular_ai_after_rsi_queue(rsi_signal_active, rsi_enqueued):
+                                        print(f"⏭️  {symbol} US RSI+Pin Bar未入候选池：{pin_reason}")
+                                if _should_submit_us_regular_ai_after_rsi_queue(rsi_pipeline, rsi_enqueued):
                                     ai_payload = {
                                         **base_payload,
                                         'signal_id': _build_us_signal_id(
@@ -607,7 +617,9 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                         print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
                                     future = executor.submit(process_ai_task, **ai_payload)
                                     stock_data['_ai_future'] = future
+                                    stock_data['_ai_launched'] = True
                                     ai_launched = True
+
                             elif gate_blocked:
                                 print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross, stock_data.get('duanxian_tuo_info'))}")
                             elif (symbol in watchlist_stocks) and score[1] >= 2.0:
@@ -677,9 +689,11 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                             '_ai_launched': ai_launched,
                             'volume_ma_info': volume_ma_info,
                             'duanxian_tuo_info': duanxian_tuo_info,
-                            '_rsi_oversold_candidate': rsi_signal_active,
+                            '_rsi_oversold_candidate': rsi_signal_active or bool(stock_data.get('_rsi_pin_bar_setup')),
                             '_rsi_oversold_today': rsi_oversold_today,
                             '_rsi_rebound_setup': rsi_rebound_setup,
+                            '_rsi_pin_bar_pre': rsi_pin_bar_pre,
+                            '_rsi_pin_bar_setup': bool(stock_data.get('_rsi_pin_bar_setup')),
                             'rsi_rebound_volatility': stock_data.get('rsi_rebound_volatility') or stock_data.get('_rsi_rebound_volatility'),
                             'rebound_elasticity_score': stock_data.get('rebound_elasticity_score'),
                         })
@@ -706,8 +720,8 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
         )
         selected_candidate_ids = {id(item) for item in selected_us_rsi_candidates}
         print(
-            f"\n📊 US RSI超卖/反弹抄底候选 {len(all_us_rsi_candidates)} 只，"
-            f"按弹性评分选 Top{min(US_RSI_REBOUND_TOP_N, len(selected_us_rsi_candidates))} 播报"
+            f"\n📊 US RSI+Pin Bar 候选 {len(all_us_rsi_candidates)} 只，"
+            f"{'全部播报' if US_RSI_REBOUND_TOP_N <= 0 else f'按弹性评分选 Top{min(US_RSI_REBOUND_TOP_N, len(selected_us_rsi_candidates))} 播报'}"
         )
         for item in selected_us_rsi_candidates:
             symbol = item.get('symbol')
@@ -715,7 +729,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
             payload = item.get('ai_payload') or {}
             signal_label = item.get('signal_label') or 'US RSI候选'
             print(
-                f"🤖 {symbol} {signal_label}Top候选，后台启动AI分析："
+                f"🤖 {symbol} {signal_label}候选，后台启动AI分析："
                 f"{_format_us_rsi_candidate_elasticity(item)}"
             )
             if not bot_notifier:
@@ -888,6 +902,9 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
     print("🚀 美股扫描程序已启动 (Hybrid Mode)")
     print(f"⏰ 定点扫描 (盘前/盘后): {scheduler.run_nodes_cfg}")
     print(f"⚡ 盘中监控: 市场开启期间每 600 秒扫描一次自选股")
+    print("📉 RSI+Pin Bar: 北京时间 06:00-10:00 额外全市场扫描一次")
+
+    us_rsi_pin_last_bj_date = None
     
     while True:
         try:
@@ -896,6 +913,7 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
             is_open = market_status['is_open']
             
             should_run = False
+            pin_bar_morning_run = False
             
             if is_open:
                 # 盘中模式：持续运行 (亚实时监控)
@@ -904,6 +922,11 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
                 # 盘前/盘后模式：仅在特定时间点运行
                 if scheduler.check_should_run():
                     should_run = True
+                elif _us_rsi_pin_bar_scan_allowed():
+                    bj_today = datetime.now(pytz.timezone("Asia/Shanghai")).date()
+                    if us_rsi_pin_last_bj_date != bj_today:
+                        should_run = True
+                        pin_bar_morning_run = True
 
             if should_run:
                 main_us(
@@ -926,6 +949,8 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
                     telegram_bot_token=telegram_bot_token,
                     telegram_chat_id=telegram_chat_id
                 )
+                if pin_bar_morning_run:
+                    us_rsi_pin_last_bj_date = datetime.now(pytz.timezone("Asia/Shanghai")).date()
             
             # 基础轮询间隔
             time.sleep(600)

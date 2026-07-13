@@ -25,7 +25,8 @@ def _hist_from_ohlc(open_price=100.0, up_pct=4.0, down_pct=2.0, n=60):
 
 def test_us_rsi_threshold_is_24():
     assert US_RSI_REBOUND_THRESHOLD == 24.0
-    assert _is_us_rsi_oversold_candidate({"rsi": 23.99}) is True
+    assert _is_us_rsi_oversold_candidate({"rsi": 23.99}) is False
+    assert _is_us_rsi_oversold_candidate({"_rsi_pin_bar_setup": True}) is True
     assert _is_us_rsi_oversold_candidate({"rsi": 24.0}) is False
     assert _is_us_rsi_oversold_candidate({"rsi": None}) is False
     assert _is_us_rsi_oversold_candidate({"rsi": math.nan}) is False

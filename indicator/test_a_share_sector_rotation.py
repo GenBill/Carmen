@@ -15,12 +15,17 @@ def _scan_state(
     pre_candidate: bool = True,
     rsi_oversold_today: bool = False,
     rsi_rebound_setup: bool = False,
+    rsi_pin_bar_pre: bool = False,
+    rsi_pin_bar_setup: bool = False,
 ) -> ScanSignalState:
     return ScanSignalState(
         score=[score_buy, score_sell],
         rsi_oversold_today=rsi_oversold_today,
         rsi_rebound_setup=rsi_rebound_setup,
-        rsi_signal_active=rsi_oversold_today or rsi_rebound_setup,
+        rsi_pin_bar_pre=rsi_pin_bar_pre,
+        rsi_pin_bar_setup=rsi_pin_bar_setup,
+        rsi_signal_active=rsi_oversold_today or rsi_rebound_setup or rsi_pin_bar_setup,
+        tuo_signal_active=False,
         carmen_candidate=score_buy >= 2.0 or score_sell >= 2.0,
         pre_candidate=pre_candidate,
         rsi_rebound_volatility={},

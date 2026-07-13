@@ -17,8 +17,15 @@ setup_proxy_if_needed(7897)
 from get_stock_price import get_stock_data, get_stock_data_offline, batch_download_stocks, enrich_stock_data_detail
 from stocks_list.get_all_stock import get_stock_list, append_manual_exclude_symbols
 from indicators import backtest_carmen_indicator
-from scan_signal_eval import evaluate_scan_signals, evaluate_tuo_signals
+from scan_signal_eval import (
+    confirm_rsi_pin_bar_after_5m,
+    evaluate_scan_signals,
+    evaluate_tuo_signals,
+)
 from sector_rotation import maybe_run_daily_sector_rotation_report, record_pre_candidate
+from intraday_5m import fetch_5m_hist
+import math
+import hashlib
 from bowl_filter import bowl_rebound_indicator
 from display_utils import print_stock_info, print_header, get_output_buffer, capture_output, clear_output_buffer
 from volume_filter import get_volume_filter, should_filter_stock
@@ -51,6 +58,133 @@ import traceback
 
 FAST_SCAN_WORKERS = max(1, int(os.getenv("CARMEN_HK_FAST_SCAN_WORKERS", os.getenv("CARMEN_FAST_SCAN_WORKERS", "4")) or 4))
 AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") or 180)
+
+HK_RSI_REBOUND_THRESHOLD = 18.0
+HK_RSI_REBOUND_TOP_N = 0
+HK_RSI_PIN_BAR_ENABLED = False  # 港股不做 RSI+Pin Bar
+HK_RSI_PIN_BAR_HOUR = 17  # 北京/香港时间 >= 17:00（启用时生效）
+HK_RSI_REBOUND_LOOKBACK_DAYS = 126
+HK_RSI_REBOUND_MIN_AVG_UP_PCT = 3.0
+HK_RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
+HK_RSI_REBOUND_MIN_AVG_RANGE_PCT = 5.0
+HK_RSI_REBOUND_MIN_UP_DOWN_RATIO = 0.75
+
+
+def _hk_rsi_pin_bar_scan_allowed(now=None) -> bool:
+    if not HK_RSI_PIN_BAR_ENABLED:
+        return False
+    tz = pytz.timezone("Asia/Hong_Kong")
+    dt = now or datetime.now(tz)
+    if dt.tzinfo is None:
+        dt = tz.localize(dt)
+    else:
+        dt = dt.astimezone(tz)
+    return dt.hour >= HK_RSI_PIN_BAR_HOUR
+
+
+def _hk_rsi_elasticity_score(avg_up_pct, avg_down_pct, avg_range_pct, up_down_ratio) -> float:
+    positive_bias = max(float(avg_up_pct) - float(avg_down_pct), 0.0)
+    return (
+        float(avg_up_pct) * 2.0
+        + float(avg_range_pct)
+        + min(float(up_down_ratio), 2.0) * 2.0
+        + positive_bias
+    )
+
+
+def _hk_rsi_rebound_volatility_ok(stock_data: dict):
+    info = {
+        'lookback_days': HK_RSI_REBOUND_LOOKBACK_DAYS,
+        'avg_up_pct': None,
+        'avg_down_pct': None,
+        'avg_range_pct': None,
+        'up_down_ratio': None,
+        'rebound_elasticity_score': None,
+        'passed': False,
+        'reason': '',
+    }
+    hist = (stock_data or {}).get('hist')
+    required_cols = {'Open', 'High', 'Low'}
+    if hist is None or getattr(hist, 'empty', True) or not required_cols.issubset(set(hist.columns)):
+        info['reason'] = '无历史OHLC数据'
+        return False, info['reason'], info
+    window = hist.tail(HK_RSI_REBOUND_LOOKBACK_DAYS).copy()
+    if len(window) < 40:
+        info['reason'] = f'6个月波动样本不足({len(window)}/40)'
+        return False, info['reason'], info
+    open_ = window['Open'].astype(float)
+    high = window['High'].astype(float)
+    low = window['Low'].astype(float)
+    valid = open_.gt(0) & high.gt(0) & low.gt(0)
+    if int(valid.sum()) < 40:
+        info['reason'] = f'有效OHLC样本不足({int(valid.sum())}/40)'
+        return False, info['reason'], info
+    open_, high, low = open_[valid], high[valid], low[valid]
+    up_pct = ((high - open_) / open_ * 100.0).clip(lower=0)
+    down_pct = ((open_ - low) / open_ * 100.0).clip(lower=0)
+    avg_up_pct = float(up_pct.mean())
+    avg_down_pct = float(down_pct.mean())
+    avg_range_pct = avg_up_pct + avg_down_pct
+    up_down_ratio = avg_up_pct / max(avg_down_pct, 1e-9)
+    rebound_elasticity_score = _hk_rsi_elasticity_score(avg_up_pct, avg_down_pct, avg_range_pct, up_down_ratio)
+    info.update({
+        'avg_up_pct': avg_up_pct,
+        'avg_down_pct': avg_down_pct,
+        'avg_range_pct': avg_range_pct,
+        'up_down_ratio': up_down_ratio,
+        'rebound_elasticity_score': rebound_elasticity_score,
+    })
+    if avg_up_pct < HK_RSI_REBOUND_MIN_AVG_UP_PCT:
+        info['reason'] = f'反弹弹性不足(平均+{avg_up_pct:.2f}%/-{avg_down_pct:.2f}%)'
+        return False, info['reason'], info
+    if avg_down_pct < HK_RSI_REBOUND_MIN_AVG_DOWN_PCT:
+        info['reason'] = f'波动不足(平均+{avg_up_pct:.2f}%/-{avg_down_pct:.2f}%)'
+        return False, info['reason'], info
+    if avg_range_pct < HK_RSI_REBOUND_MIN_AVG_RANGE_PCT:
+        info['reason'] = f'总振幅不足(平均+{avg_up_pct:.2f}%/-{avg_down_pct:.2f}%)'
+        return False, info['reason'], info
+    if up_down_ratio < HK_RSI_REBOUND_MIN_UP_DOWN_RATIO:
+        info['reason'] = f'单边下跌强、反弹弱(平均+{avg_up_pct:.2f}%/-{avg_down_pct:.2f}%)'
+        return False, info['reason'], info
+    info['passed'] = True
+    info['reason'] = (
+        f'6个月弹性合格(评分={rebound_elasticity_score:.1f}, '
+        f'平均+{avg_up_pct:.2f}%/-{avg_down_pct:.2f}%, 上下比={up_down_ratio:.2f})'
+    )
+    return True, info['reason'], info
+
+
+def _confirm_hk_rsi_pin_bar(symbol: str, stock_data: dict):
+    hist_5m = fetch_5m_hist(symbol, trade_date=stock_data.get('date'))
+    if hist_5m is None or getattr(hist_5m, 'empty', True):
+        return False, '5m拉取失败或为空', {}
+    return confirm_rsi_pin_bar_after_5m(stock_data, hist_5m)
+
+
+def _select_top_hk_rsi_candidates(candidates, limit: int = HK_RSI_REBOUND_TOP_N):
+    if not candidates:
+        return []
+    ordered = sorted(
+        candidates,
+        key=lambda x: (
+            float(x.get('rebound_elasticity_score') or 0.0),
+            float((x.get('rsi_rebound_volatility') or {}).get('up_down_ratio') or 0.0),
+        ),
+        reverse=True,
+    )
+    if limit is None or int(limit) <= 0:
+        return ordered
+    return ordered[: int(limit)]
+
+
+def _build_hk_signal_id(symbol: str, stock_data: dict, score_buy: float, kind: str = '') -> str:
+    date = stock_data.get('date', 'unknown')
+    close = stock_data.get('close', 0)
+    base = f"{symbol}|{date}|{close:.2f}|{score_buy:.2f}|{kind}"
+    digest = hashlib.md5(base.encode('utf-8')).hexdigest()[:8]
+    tag = kind or 'buy'
+    return f"sig_{tag}_{digest}"
+
 
 def get_stock_list_from_csv(stock_path: str):
     """
@@ -205,6 +339,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
     alert_count = 0
     failed_count = 0
     stocks_data_for_html = []
+    hk_rsi_pin_candidates = []
 
     for symbol in stock_symbols:
         try:
@@ -221,8 +356,20 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     failed_count += 1
                     continue
                 
-                scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
+                rsi_track_on = _hk_rsi_pin_bar_scan_allowed()
+                rsi_pin_bar_pre = False
+                rsi_signal_active = False
+                scan_state = evaluate_scan_signals(
+                    stock_data,
+                    rsi_threshold=HK_RSI_REBOUND_THRESHOLD if rsi_track_on else None,
+                    volatility_ok_fn=_hk_rsi_rebound_volatility_ok if rsi_track_on else None,
+                    silver_on_sell=False,
+                    rsi_mode="pin_bar",
+                    rsi_period=rsi_period,
+                )
                 score = scan_state.score
+                rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
+                rsi_signal_active = scan_state.rsi_signal_active
                 carmen_candidate = scan_state.carmen_candidate
                 tuo_signal_active = False
                 pre_candidate = scan_state.pre_candidate
@@ -247,8 +394,17 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                         )
                         if full_stock_data:
                             stock_data = full_stock_data
-                            scan_state = evaluate_scan_signals(stock_data, silver_on_sell=False)
+                            scan_state = evaluate_scan_signals(
+                                stock_data,
+                                rsi_threshold=HK_RSI_REBOUND_THRESHOLD if rsi_track_on else None,
+                                volatility_ok_fn=_hk_rsi_rebound_volatility_ok if rsi_track_on else None,
+                                silver_on_sell=False,
+                                rsi_mode="pin_bar",
+                                rsi_period=rsi_period,
+                            )
                             score = scan_state.score
+                            rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
+                            rsi_signal_active = scan_state.rsi_signal_active
                             carmen_candidate = scan_state.carmen_candidate
                             pre_candidate = scan_state.pre_candidate
                         else:
@@ -273,34 +429,44 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             macd_signal=macd_signal, 
                             avg_volume_days=avg_volume_days
                         )
+                        rsi_pipeline = bool(rsi_signal_active or rsi_pin_bar_pre)
                         if scan_post_backtest_pipeline_active(
                             backtest_result,
+                            rsi_signal_active=rsi_pipeline,
                             tuo_signal_active=tuo_signal_active,
                             carmen_candidate=carmen_candidate,
                         ):
                             backtest_str, confidence = build_scan_backtest_str(
                                 backtest_result,
+                                rsi_signal_active=rsi_pipeline,
+                                rsi_threshold=HK_RSI_REBOUND_THRESHOLD,
                                 tuo_signal_active=tuo_signal_active,
                                 duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
                                 left_tuo_candidate=bool(stock_data.get('_duanxian_left_tuo_candidate')),
                             )
 
-                            # 后台 AI（与 A 股同款量能+金叉闸门，见 scan_ai_common）
                             volume_ma_info = stock_data.get('volume_ma_info') or {}
                             duanxian_tuo_info = stock_data.get('duanxian_tuo_info') or {}
-                            submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
-                                should_submit_scan_ai(
-                                    score[0],
-                                    confidence,
-                                    volume_ma_info,
-                                    duanxian_tuo_info,
-                                    tuo_signal_active=tuo_signal_active,
+                            if rsi_pipeline:
+                                signal_ok = True
+                                submit_ai = True
+                                position_build_score = float(volume_ma_info.get('position_build_score', 0) or 0)
+                                has_recent_golden_cross = bool(volume_ma_info.get('has_recent_golden_cross', False))
+                                gate_blocked = False
+                            else:
+                                submit_ai_vol, signal_ok, position_build_score, has_recent_golden_cross = (
+                                    should_submit_scan_ai(
+                                        score[0],
+                                        confidence,
+                                        volume_ma_info,
+                                        duanxian_tuo_info,
+                                        tuo_signal_active=tuo_signal_active,
+                                    )
                                 )
-                            )
-                            submit_ai = submit_ai_vol
-                            gate_blocked = signal_ok and not submit_ai_vol
+                                submit_ai = submit_ai_vol
+                                gate_blocked = signal_ok and not submit_ai_vol
 
-                            if submit_ai:
+                            if submit_ai and not rsi_pipeline:
                                 apply_duanxian_tuo_gate_metadata(
                                     stock_data,
                                     volume_ma_info,
@@ -311,7 +477,11 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                             if submit_ai:
                                 opening_ctx = resolve_opening_price_context_for_filter(symbol, stock_data)
                                 price_chk = stock_data.get('close', 0)
-                                if opening_ctx.open_drop_filter_enabled and is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter):
+                                if (
+                                    not rsi_pipeline
+                                    and opening_ctx.open_drop_filter_enabled
+                                    and is_buy_blocked_by_open_gap(price_chk, opening_ctx.open_for_filter)
+                                ):
                                     submit_ai = False
                                     print(
                                         f"⏭️  {symbol} 当前价较开盘价跌幅≥{OPEN_DROP_FILTER_PCT:g}%，跳过买入/后台分析"
@@ -324,34 +494,79 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 avg_volume = stock_data.get('avg_volume', 1)
                                 volume_ratio = (estimated_volume / avg_volume * 100) if avg_volume > 0 else None
 
-                                print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
-                                if not bot_notifier:
-                                    print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
+                                rsi_enqueued = False
+                                if rsi_pin_bar_pre:
+                                    pin_ok, pin_reason, shadow_info = _confirm_hk_rsi_pin_bar(symbol, stock_data)
+                                    if pin_ok:
+                                        rsi_signal_active = True
+                                        _, _, rsi_vol = _hk_rsi_rebound_volatility_ok(stock_data)
+                                        rebound_score = float((rsi_vol or {}).get('rebound_elasticity_score') or 0.0)
+                                        pin_payload = {
+                                            'symbol': symbol,
+                                            'market': "HKA",
+                                            'bot_notifier': bot_notifier,
+                                            'price': price,
+                                            'score': score[0],
+                                            'backtest_str': f"(RSI{HK_RSI_REBOUND_THRESHOLD:g})",
+                                            'rsi': rsi,
+                                            'volume_ratio': volume_ratio,
+                                            'bowl_score': bowl_score,
+                                            'volume_ma_info': stock_data.get('volume_ma_info'),
+                                            'duanxian_tuo_info': stock_data.get('duanxian_tuo_info'),
+                                            'rsi_prev': stock_data.get('rsi_prev'),
+                                            'dif': stock_data.get('dif'),
+                                            'dea': stock_data.get('dea'),
+                                            'dif_dea_slope': stock_data.get('dif_dea_slope'),
+                                            'open_for_gap_filter': opening_ctx.open_for_filter,
+                                            'opening_uncertain': opening_ctx.opening_uncertain,
+                                            'open_gap_filter_enabled': opening_ctx.open_drop_filter_enabled,
+                                            'signal_id': _build_hk_signal_id(symbol, stock_data, score[0], 'rsi_pin_bar'),
+                                            'signal_title': "📉RSI超跌+Pin Bar",
+                                            'rsi_rebound_volatility': rsi_vol,
+                                        }
+                                        stock_data['rebound_elasticity_score'] = rebound_score
+                                        stock_data['rsi_rebound_volatility'] = rsi_vol
+                                        stock_data['_rsi_pin_bar_shadow'] = shadow_info
+                                        hk_rsi_pin_candidates.append({
+                                            'symbol': symbol,
+                                            'stock_data': stock_data,
+                                            'ai_payload': pin_payload,
+                                            'rebound_elasticity_score': rebound_score,
+                                            'rsi_rebound_volatility': rsi_vol,
+                                            'signal_label': 'HK RSI+PinBar',
+                                        })
+                                        print(f"🧺 {symbol} HK RSI+Pin Bar候选入队：{pin_reason}")
+                                        rsi_enqueued = True
+                                    else:
+                                        print(f"⏭️  {symbol} HK RSI+Pin Bar未入候选池：{pin_reason}")
 
-                                future = executor.submit(
-                                    process_ai_task,
-                                    symbol=symbol,
-                                    market="HKA",
-                                    bot_notifier=bot_notifier,
-                                    price=price,
-                                    score=score[0],
-                                    backtest_str=backtest_str,
-                                    rsi=rsi,
-                                    volume_ratio=volume_ratio,
-                                    bowl_score=bowl_score,
-                                    volume_ma_info=stock_data.get('volume_ma_info'),
-                                    duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
-                                    duanxian_tuo_text=stock_data.get('_duanxian_tuo_display_text'),
-                                    rsi_prev=stock_data.get('rsi_prev'),
-                                    dif=stock_data.get('dif'),
-                                    dea=stock_data.get('dea'),
-                                    dif_dea_slope=stock_data.get('dif_dea_slope'),
-                                    open_for_gap_filter=opening_ctx.open_for_filter,
-                                    opening_uncertain=opening_ctx.opening_uncertain,
-                                    open_gap_filter_enabled=opening_ctx.open_drop_filter_enabled,
-                                )
-
-                                stock_data['_ai_future'] = future
+                                if (not rsi_pipeline) or (rsi_pipeline and not rsi_enqueued and not rsi_pin_bar_pre):
+                                    print(f"🤖 {symbol} 触发信号，后台启动AI分析...")
+                                    if not bot_notifier:
+                                        print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
+                                    future = executor.submit(
+                                        process_ai_task,
+                                        symbol=symbol,
+                                        market="HKA",
+                                        bot_notifier=bot_notifier,
+                                        price=price,
+                                        score=score[0],
+                                        backtest_str=backtest_str,
+                                        rsi=rsi,
+                                        volume_ratio=volume_ratio,
+                                        bowl_score=bowl_score,
+                                        volume_ma_info=stock_data.get('volume_ma_info'),
+                                        duanxian_tuo_info=stock_data.get('duanxian_tuo_info'),
+                                        duanxian_tuo_text=stock_data.get('_duanxian_tuo_display_text'),
+                                        rsi_prev=stock_data.get('rsi_prev'),
+                                        dif=stock_data.get('dif'),
+                                        dea=stock_data.get('dea'),
+                                        dif_dea_slope=stock_data.get('dif_dea_slope'),
+                                        open_for_gap_filter=opening_ctx.open_for_filter,
+                                        opening_uncertain=opening_ctx.opening_uncertain,
+                                        open_gap_filter_enabled=opening_ctx.open_drop_filter_enabled,
+                                    )
+                                    stock_data['_ai_future'] = future
 
                             elif gate_blocked:
                                 print(f"⏭️  {symbol} {skip_gate_log_suffix(position_build_score, has_recent_golden_cross, stock_data.get('duanxian_tuo_info'))}")
@@ -371,7 +586,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     failed_count += 1
                 else:
                     # 统计信号 (无论盘中盘后都统计，以便CLI显示)
-                    if score[0] >= 2.0 or tuo_signal_active:
+                    if score[0] >= 2.0 or rsi_signal_active or tuo_signal_active:
                         alert_count += 1
                     
                     if not pre_candidate:
@@ -430,6 +645,32 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
             print(f"⚠️  处理 {symbol} 时出错: {e}")
             continue
     
+
+    row_by_symbol = {row.get('symbol'): row for row in stocks_data_for_html}
+    if hk_rsi_pin_candidates:
+        selected = _select_top_hk_rsi_candidates(hk_rsi_pin_candidates, HK_RSI_REBOUND_TOP_N)
+        selected_ids = {id(x) for x in selected}
+        print(
+            f"\n📊 HK RSI+Pin Bar 候选 {len(hk_rsi_pin_candidates)} 只，"
+            f"{'全部播报' if HK_RSI_REBOUND_TOP_N <= 0 else f'按弹性评分选 Top{min(HK_RSI_REBOUND_TOP_N, len(selected))} 播报'}"
+        )
+        for item in selected:
+            symbol = item.get('symbol')
+            stock_data = item.get('stock_data') or {}
+            payload = item.get('ai_payload') or {}
+            print(f"🤖 {symbol} HK RSI+PinBar 候选，后台启动AI分析")
+            if not bot_notifier:
+                print(f"ℹ️  {symbol} 未配置 Telegram/QQ：后台 AI 仍会继续生成缓存，但不发送推送")
+            future = executor.submit(process_ai_task, **payload)
+            stock_data['_ai_future'] = future
+            row = row_by_symbol.get(symbol)
+            if row is not None:
+                row['_ai_future'] = future
+        for item in hk_rsi_pin_candidates:
+            if id(item) in selected_ids:
+                continue
+            print(f"⏭️  {item.get('symbol')} HK RSI+PinBar 未入Top{HK_RSI_REBOUND_TOP_N}")
+
     # 打印分隔线
     capture_output(f"{'='*120}")
     
@@ -582,9 +823,7 @@ if __name__ == "__main__":
         market='HK',
         run_nodes_cfg=[
             {'hour': 12, 'minute': 10},
-            # {'hour': 14, 'minute': 10},
-            # {'hour': 15, 'minute': 10},
-            # {'hour': 16, 'minute': 10}
+            {'hour': 17, 'minute': 0},  # RSI+Pin Bar 窗口
         ]
     )
 
