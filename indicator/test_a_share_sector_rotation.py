@@ -163,6 +163,33 @@ def test_build_sector_rotation_title_and_template():
     assert "重点观察方向：" in template
 
 
+def test_has_b_or_above_rotation_parses_cluster_grades():
+    high = (
+        "📊 板块轮动分析 · 🇨🇳 A股 · 2026-07-03\n"
+        "结论：有轮动\n"
+        "Cluster 1：半导体，优先级 B\n"
+        "判断：多只联动\n"
+        "边缘信号：无\n"
+    )
+    low = (
+        "📊 板块轮动分析 · 🇺🇸 美股 · 2026-07-03\n"
+        "结论：偏弱\n"
+        "Cluster 1：消费电子，优先级 C\n"
+        "判断：仅主题联想\n"
+        "Cluster 2：小盘成长，优先级 D\n"
+        "边缘信号：NVDA\n"
+    )
+    empty = "📊 板块轮动分析 · 🇭🇰 港股 · 2026-07-03\n结论：无有效 cluster\n边缘信号：0700\n"
+    assert sr.extract_cluster_priorities(high) == ["B"]
+    assert sr.has_b_or_above_rotation(high) is True
+    assert sr.extract_cluster_priorities(low) == ["C", "D"]
+    assert sr.has_b_or_above_rotation(low) is False
+    assert sr.extract_cluster_priorities(empty) == []
+    assert sr.has_b_or_above_rotation(empty) is False
+    assert sr.has_b_or_above_rotation("Cluster 1：AI，优先级 S") is True
+    assert sr.has_b_or_above_rotation("Cluster 1：AI，优先级 A") is True
+
+
 def test_build_sector_rotation_prompt_minimal_payload(monkeypatch):
     monkeypatch.setattr(sr, "load_telegram_token", lambda token_path=None: ("token", "123"))
     signals = [
@@ -200,3 +227,71 @@ def test_us_record_and_report_share_session_key(tmp_path, monkeypatch):
     assert day == date(2026, 7, 3)
     assert len(sr.load_daily_signals("US", day)) == 1
     assert sr.should_run_sector_rotation_report("US", day) is True
+
+
+def test_run_daily_skips_send_when_no_b_or_above(tmp_path, monkeypatch):
+    _patch_market_files(monkeypatch, "HK", tmp_path, "hk.json", "hk_state.json")
+    when = _bj(2026, 7, 3, 17, 0)
+    monkeypatch.setattr(sr, "_beijing_now", lambda w=None: when)
+    monkeypatch.setattr(sr, "session_date_for_market", lambda market, w=None: date(2026, 7, 3))
+    monkeypatch.setattr(sr, "load_telegram_token", lambda token_path=None: ("token", "123"))
+    monkeypatch.setattr(sr, "_openclaw_timeout", lambda: 1)
+    monkeypatch.setattr(
+        sr,
+        "_call_openclaw_sector_rotation",
+        lambda market, prompt, timeout: (
+            "BEGIN_TELEGRAM_MESSAGE\n"
+            "📊 板块轮动分析 · 🇭🇰 港股 · 2026-07-03\n"
+            "结论：偏弱\n"
+            "Cluster 1：互联网，优先级 C\n"
+            "判断：联动不足\n"
+            "边缘信号：0700\n"
+            "END_TELEGRAM_MESSAGE"
+        ),
+    )
+    sent = {"called": False}
+    monkeypatch.setattr(sr, "send_telegram_html", lambda message: sent.__setitem__("called", True))
+    monkeypatch.setattr(sr, "append_signal_audit", lambda payload: None)
+
+    sr.record_pre_candidate(
+        "HK",
+        "0700.HK",
+        {},
+        _scan_state(score_buy=2.2),
+        {"0700.HK": "腾讯控股"},
+    )
+    assert sr.run_daily_sector_rotation_report("HK") is False
+    assert sent["called"] is False
+    assert sr.should_run_sector_rotation_report("HK", date(2026, 7, 3)) is False
+    assert sr._load_state("HK").get("status") == "skipped"
+
+
+def test_run_daily_sends_when_has_b_or_above(tmp_path, monkeypatch):
+    _patch_market_files(monkeypatch, "US", tmp_path, "us.json", "us_state.json")
+    when = _bj(2026, 7, 3, 10, 0)
+    monkeypatch.setattr(sr, "_beijing_now", lambda w=None: when)
+    monkeypatch.setattr(sr, "session_date_for_market", lambda market, w=None: date(2026, 7, 3))
+    monkeypatch.setattr(sr, "load_telegram_token", lambda token_path=None: ("token", "123"))
+    monkeypatch.setattr(sr, "_openclaw_timeout", lambda: 1)
+    monkeypatch.setattr(
+        sr,
+        "_call_openclaw_sector_rotation",
+        lambda market, prompt, timeout: (
+            "BEGIN_TELEGRAM_MESSAGE\n"
+            "📊 板块轮动分析 · 🇺🇸 美股 · 2026-07-03\n"
+            "结论：有轮动\n"
+            "Cluster 1：半导体，优先级 B\n"
+            "判断：多只联动\n"
+            "边缘信号：无\n"
+            "END_TELEGRAM_MESSAGE"
+        ),
+    )
+    sent = {"body": None}
+    monkeypatch.setattr(sr, "send_telegram_html", lambda message: sent.__setitem__("body", message))
+    monkeypatch.setattr(sr, "append_signal_audit", lambda payload: None)
+
+    sr.record_pre_candidate("US", "NVDA", {}, _scan_state(score_buy=2.5))
+    assert sr.run_daily_sector_rotation_report("US") is True
+    assert sent["body"] is not None
+    assert "优先级 B" in sent["body"]
+    assert sr._load_state("US").get("status") == "sent"

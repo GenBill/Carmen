@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -30,6 +31,13 @@ from telegram_notifier import (
 BEIJING_TZ = pytz.timezone("Asia/Shanghai")
 RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 REPORT_SIGNAL_TYPES = frozenset({"carmen_buy", "rsi_rebound"})
+# B 级及以上才对外发送；C/D/E 或仅边缘信号则静默跳过
+REPORT_MIN_PRIORITY_GRADES = frozenset({"S", "A", "B"})
+_CLUSTER_PRIORITY_RE = re.compile(
+    r"Cluster\s*\d+\s*[：:]\s*.*?优先级\s*([SABCDE])\b",
+    re.IGNORECASE,
+)
+_TERMINAL_REPORT_STATUSES = frozenset({"sent", "skipped"})
 
 _SIGNALS_LOCKS: Dict[str, threading.RLock] = {m: threading.RLock() for m in ("A", "HK", "US")}
 _STATE_LOCKS: Dict[str, threading.RLock] = {m: threading.RLock() for m in ("A", "HK", "US")}
@@ -307,6 +315,21 @@ def build_sector_rotation_body_template(market: str, report_date: str) -> str:
     )
 
 
+def extract_cluster_priorities(body: str) -> List[str]:
+    """从 Telegram 正文解析 Cluster 优先级（S/A/B/C/D/E）。"""
+    grades: List[str] = []
+    for match in _CLUSTER_PRIORITY_RE.finditer(body or ""):
+        grade = (match.group(1) or "").strip().upper()
+        if grade:
+            grades.append(grade)
+    return grades
+
+
+def has_b_or_above_rotation(body: str) -> bool:
+    """当日是否存在 B 级及以上板块轮动 Cluster。"""
+    return any(g in REPORT_MIN_PRIORITY_GRADES for g in extract_cluster_priorities(body))
+
+
 def build_sector_rotation_prompt(
     market: str,
     report_date: str,
@@ -337,6 +360,7 @@ def build_sector_rotation_prompt(
                 "识别当日是否存在板块/主题 cluster 异动",
                 "输出 1-3 个 Cluster，按优先级 S / A / B / C / D / E 排序",
                 "边缘信号列未形成 cluster 的零散标的",
+                "若仅有 C/D/E 或无法形成有效 cluster，仍按模板如实标注优先级",
             ],
             "constraints": [
                 "不给确定性买卖指令",
@@ -467,7 +491,10 @@ def should_run_sector_rotation_report(
     if force:
         return True
     state = _load_state(market)
-    if state.get("last_report_date") == day.isoformat() and state.get("status") == "sent":
+    if (
+        state.get("last_report_date") == day.isoformat()
+        and state.get("status") in _TERMINAL_REPORT_STATUSES
+    ):
         return False
     return len(filter_signals_for_report(market, load_daily_signals(market, day))) >= 1
 
@@ -540,6 +567,23 @@ def run_daily_sector_rotation_report(
         body = _extract_telegram_message(reply).strip()
         if not body:
             raise RuntimeError("OpenClaw 返回空 Telegram 正文")
+        priorities = extract_cluster_priorities(body)
+        if not has_b_or_above_rotation(body):
+            mark_report_success(market, day, len(report_signals), status="skipped")
+            append_signal_audit(
+                {
+                    "event": "sector_rotation_skipped_low_grade",
+                    "market": market,
+                    "report_date": day.isoformat(),
+                    "signal_count": len(report_signals),
+                    "priorities": priorities,
+                }
+            )
+            print(
+                f"ℹ️  当日无 B 级以上轮动，跳过发送 {label}板块轮动报告 "
+                f"({day.isoformat()}) signals={len(report_signals)} priorities={priorities or ['无']}"
+            )
+            return False
         send_telegram_html(body)
         mark_report_success(market, day, len(report_signals), status="sent")
         append_signal_audit(
@@ -548,6 +592,7 @@ def run_daily_sector_rotation_report(
                 "market": market,
                 "report_date": day.isoformat(),
                 "signal_count": len(report_signals),
+                "priorities": priorities,
             }
         )
         print(f"✅ {label}板块轮动报告已发送 ({day.isoformat()}) signals={len(report_signals)}")
