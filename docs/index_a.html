@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="97ca994cef0d3e9188a6d4bf3f756907">
+    <meta data-hash="c7dea666ba440cf16827a3abe98d2167">
     <title>Carmen Stock Scanner - A股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -152,23 +152,37 @@
         <pre id="output"></pre>
         
         <!-- AI分析结果部分 -->
+        <div class="ai-analysis-section"><div class="ai-analysis-header">AI深度分析报告</div>
+        <div class="ai-analysis-item">
+            <div class="ai-analysis-header-item">
+                <div>
+                    <span class="ai-analysis-symbol">600546.SS</span>
+                    <span class="ai-analysis-price">当前价格: $13.22</span>
+                </div>
+                <span class="ai-analysis-score">买入评分: 2.4</span>
+            </div>
+            <div class="ai-analysis-content">分析失败: Error code: 402 - {&#x27;error&#x27;: {&#x27;message&#x27;: &#x27;Insufficient Balance&#x27;, &#x27;type&#x27;: &#x27;unknown_error&#x27;, &#x27;param&#x27;: None, &#x27;code&#x27;: &#x27;invalid_request_error&#x27;}}</div>
+        </div>
+        </div>
         
-        
-        <div class="upload-time">📤 上传时间: 2026-08-06 15:42:36</div>
+        <div class="upload-time">📤 上传时间: 2026-08-06 16:11:47</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ A股市场扫描 | 2026-08-06 15:36:57 CST
+        const terminalOutput = `⏰ A股市场扫描 | 2026-08-06 16:02:44 CST
 查询 4692 只股票 | RSI8 | MACD(8,17,9) | A股市场
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
 ========================================================================================================================
+600021.SS |  $14.77 [92m -0.81%[0m | 量比:[97m    99.3%[0m | RSI:  54.2 [92m↓[0m 50.6 | DIF:[92m -0.03[0m DEA:[92m -0.11[0m 斜率: [97m 0.00[0m | 
+600546.SS |  $13.22 [91m +7.74%[0m | 量比:[91m[1m   257.8%[0m | RSI:  46.3 [91m↑[0m 65.1 | DIF:[91m  0.09[0m DEA:[91m  0.04[0m 斜率: [91m+0.04[0m | [91m[1mBuy 2.4[0m (31/60) vs [92mSell 0.0[0m
+601965.SS |  $14.01 [92m -1.20%[0m | 量比:[91m   183.1%[0m | RSI:  61.5 [92m↓[0m 48.8 | DIF:[91m  0.33[0m DEA:[91m  0.37[0m 斜率: [92m-0.07[0m | 
 300085.SZ |  $31.16 [91m +2.77%[0m | 量比:[97m   116.8%[0m | RSI:  62.8 [92m↓[0m 57.3 | DIF:[91m  0.02[0m DEA:[92m -0.53[0m 斜率: [91m+0.05[0m | 
 ========================================================================================================================
-⚠️ 本轮查询: 成功 2018 | 失败 2674
-🔔 本次扫描发现 7 个信号！
+⚠️ 本轮查询: 成功 4686 | 失败 6
+🔔 本次扫描发现 16 个信号！
 
 📋 黑名单摘要: 6980 只股票 | 最近7天新增: 2 | 今日已检查: 0 | 平均成交金额: $2,284,959 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
