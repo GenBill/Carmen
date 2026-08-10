@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="e25e29faf8a4633143675043e35fc450">
+    <meta data-hash="7145e417c46bc320470632d516d4b71a">
     <title>Carmen Stock Scanner - A股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -157,7 +157,18 @@
             <div class="ai-analysis-header-item">
                 <div>
                     <span class="ai-analysis-symbol">600267.SS</span>
-                    <span class="ai-analysis-price">当前价格: $14.32</span>
+                    <span class="ai-analysis-price">当前价格: $14.11</span>
+                </div>
+                <span class="ai-analysis-score">买入评分: 2.6</span>
+            </div>
+            <div class="ai-analysis-content">分析失败: Error code: 402 - {&#x27;error&#x27;: {&#x27;message&#x27;: &#x27;Insufficient Balance&#x27;, &#x27;type&#x27;: &#x27;unknown_error&#x27;, &#x27;param&#x27;: None, &#x27;code&#x27;: &#x27;invalid_request_error&#x27;}}</div>
+        </div>
+        
+        <div class="ai-analysis-item">
+            <div class="ai-analysis-header-item">
+                <div>
+                    <span class="ai-analysis-symbol">002541.SZ</span>
+                    <span class="ai-analysis-price">当前价格: $20.57</span>
                 </div>
                 <span class="ai-analysis-score">买入评分: 2.4</span>
             </div>
@@ -165,24 +176,25 @@
         </div>
         </div>
         
-        <div class="upload-time">📤 上传时间: 2026-08-10 13:55:42</div>
+        <div class="upload-time">📤 上传时间: 2026-08-10 14:26:55</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ A股市场扫描 | 2026-08-10 13:41:31 CST
+        const terminalOutput = `⏰ A股市场扫描 | 2026-08-10 14:15:50 CST
 查询 4693 只股票 | RSI8 | MACD(8,17,9) | A股市场
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
 ========================================================================================================================
-600021.SS |  $14.69 [92m -1.28%[0m | 量比:[92m    69.4%[0m | RSI:  52.8 [92m↓[0m 48.3 | DIF:[92m -0.02[0m DEA:[92m -0.08[0m 斜率: [92m-0.02[0m | 
-600267.SS |  $14.32 [91m +3.24%[0m | 量比:[91m[1m   369.8%[0m | RSI:  71.9 [91m↑[0m 80.4 | DIF:[91m  0.49[0m DEA:[91m  0.27[0m 斜率: [91m+0.12[0m | [91m[1mBuy 2.4[0m (35/48) vs [92mSell 0.0[0m
-601965.SS |  $14.46 [91m +2.77%[0m | 量比:[97m    78.6%[0m | RSI:  52.1 [91m↑[0m 59.5 | DIF:[91m  0.26[0m DEA:[91m  0.34[0m 斜率: [92m-0.02[0m | 
-300085.SZ |  $30.40 [92m -1.97%[0m | 量比:[92m    53.9%[0m | RSI:  56.7 [92m↓[0m 50.6 | DIF:[91m  0.09[0m DEA:[92m -0.31[0m 斜率: [92m-0.08[0m | 
+600021.SS |  $14.74 [92m -0.94%[0m | 量比:[92m    69.3%[0m | RSI:  52.8 [92m↓[0m 49.5 | DIF:[92m -0.01[0m DEA:[92m -0.08[0m 斜率: [97m 0.00[0m | 
+600267.SS |  $14.11 [91m +1.73%[0m | 量比:[91m[1m   395.3%[0m | RSI:  71.9 [91m↑[0m 79.3 | DIF:[91m  0.47[0m DEA:[91m  0.27[0m 斜率: [91m+0.11[0m | [91m[1mBuy 2.6[0m (35/48) vs [92mSell 0.0[0m
+601965.SS |  $14.39 [91m +2.27%[0m | 量比:[97m    80.1%[0m | RSI:  52.1 [91m↑[0m 58.1 | DIF:[91m  0.26[0m DEA:[91m  0.33[0m 斜率: [92m-0.02[0m | 
+002541.SZ |  $20.57 [91m +9.24%[0m | 量比:[97m   146.8%[0m | RSI:  34.7 [91m↑[0m 58.9 | DIF:[92m -0.05[0m DEA:[91m  0.09[0m 斜率: [91m+0.10[0m | [91m[1mBuy 2.4[0m (40/63) vs [92mSell 0.0[0m
+300085.SZ |  $30.58 [92m -1.39%[0m | 量比:[92m    54.5%[0m | RSI:  56.7 [92m↓[0m 52.1 | DIF:[91m  0.11[0m DEA:[92m -0.30[0m 斜率: [92m-0.07[0m | 
 ========================================================================================================================
 ⚠️ 本轮查询: 成功 4688 | 失败 5
-🔔 本次扫描发现 51 个信号！
+🔔 本次扫描发现 31 个信号！
 
 📋 黑名单摘要: 6981 只股票 | 最近7天新增: 1 | 今日已检查: 1 | 平均成交金额: $2,284,631 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
