@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="b70d7185ede6d68e81b52d28fc78378c">
+    <meta data-hash="91460e62e744ff99d1b3f434536e52a1">
     <title>Carmen Stock Scanner - 美股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -152,37 +152,15 @@
         <pre id="output"></pre>
         
         <!-- AI分析结果部分 -->
-        <div class="ai-analysis-section"><div class="ai-analysis-header">AI深度分析报告</div>
-        <div class="ai-analysis-item">
-            <div class="ai-analysis-header-item">
-                <div>
-                    <span class="ai-analysis-symbol">GME</span>
-                    <span class="ai-analysis-price">当前价格: $18.73</span>
-                </div>
-                <span class="ai-analysis-score">买入评分: 0.0</span>
-            </div>
-            <div class="ai-analysis-content">分析失败: Error code: 402 - {&#x27;error&#x27;: {&#x27;message&#x27;: &#x27;Insufficient Balance&#x27;, &#x27;type&#x27;: &#x27;unknown_error&#x27;, &#x27;param&#x27;: None, &#x27;code&#x27;: &#x27;invalid_request_error&#x27;}}</div>
-        </div>
         
-        <div class="ai-analysis-item">
-            <div class="ai-analysis-header-item">
-                <div>
-                    <span class="ai-analysis-symbol">ITUB</span>
-                    <span class="ai-analysis-price">当前价格: $7.33</span>
-                </div>
-                <span class="ai-analysis-score">买入评分: 0.0</span>
-            </div>
-            <div class="ai-analysis-content">分析失败: Error code: 402 - {&#x27;error&#x27;: {&#x27;message&#x27;: &#x27;Insufficient Balance&#x27;, &#x27;type&#x27;: &#x27;unknown_error&#x27;, &#x27;param&#x27;: None, &#x27;code&#x27;: &#x27;invalid_request_error&#x27;}}</div>
-        </div>
-        </div>
         
-        <div class="upload-time">📤 上传时间: 2026-08-15 06:01:22</div>
+        <div class="upload-time">📤 上传时间: 2026-08-17 20:03:56</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `🌙 盘后时段 | 盘前/盘后模式 | 2026-08-14 18:00:09 EDT
-查询 2081 只股票 | RSI8 | MACD(8,17,9) | 缓存929分钟
+        const terminalOutput = `⏰ 盘前时段 | 盘前/盘后模式 | 2026-08-17 08:01:56 EDT
+查询 2081 只股票 | RSI8 | MACD(8,17,9) | 缓存87分钟
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
@@ -210,7 +188,7 @@ QQQ    | $729.64 [92m -0.49%[0m | 量比:[92m    51.4%[0m | RSI:  68.0 [92m
 GLD    | $401.43 [97m -0.19%[0m | 量比:[92m    50.2%[0m | RSI:  65.7 [91m↑[0m 68.1 | DIF:[91m  7.26[0m DEA:[91m  5.10[0m 斜率: [92m-0.66[0m | 
 ========================================================================================================================
 ⚠️ 本轮查询: 成功 2079 | 失败 2
-🔔 本次扫描发现 26 个信号！`;
+🔔 本次扫描发现 24 个信号！`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
     </script>
