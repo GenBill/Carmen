@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta data-hash="601e05ff2423c1b470b57cb68084b8f3">
+    <title>Carmen Stock Scanner - 美股监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', Courier, Monaco, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
+        }
+        
+        .header {
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        
+        #output {
+            white-space: pre;
+            overflow-x: auto;
+            font-family: inherit;
+            margin: 0;
+        }
+        
+        .upload-time {
+            color: #8b949e;
+            font-size: 0.9em;
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #30363d;
+            text-align: right;
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #0d1117;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
+        
+        /* AI分析结果样式 */
+        .ai-analysis-section {
+            margin-top: 30px;
+            border-top: 2px solid #30363d;
+            padding-top: 20px;
+        }
+        
+        .ai-analysis-header {
+            color: #58a6ff;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .ai-analysis-header::before {
+            content: "🤖";
+            margin-right: 8px;
+        }
+        
+        .ai-analysis-item {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        
+        .ai-analysis-header-item {
+            background: #161b22;
+            padding: 12px 15px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .ai-analysis-symbol {
+            color: #58a6ff;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .ai-analysis-score {
+            background: #238636;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        
+        .ai-analysis-content {
+            padding: 15px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .ai-analysis-price {
+            color: #8b949e;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    
+        <nav style="background: #0d1117; padding: 10px 0; margin-bottom: 20px; border-bottom: 1px solid #30363d;">
+            <div style="max-width: 1800px; margin: 0 auto; padding: 0 20px; display: flex; gap: 10px;">
+                <a href="index.html" style="color: #58a6ff; text-decoration: none; padding: 8px 16px; background: #238636; border-radius: 4px;">🇺🇸 美股</a><a href="index_hk.html" style="color: #8b949e; text-decoration: none; padding: 8px 16px; background: #21262d; border-radius: 4px;">🇭🇰 港股</a><a href="index_a.html" style="color: #8b949e; text-decoration: none; padding: 8px 16px; background: #21262d; border-radius: 4px;">🇨🇳 A股</a>
+            </div>
+        </nav>
+        
+    <div class="container">
+        <div class="header">Carmen Stock Scanner - 美股监控</div>
+        <pre id="output"></pre>
+        
+        <!-- AI分析结果部分 -->
+        
+        
+        <div class="upload-time">📤 上传时间: 2026-09-08 10:05:30</div>
+    </div>
+    <script>
+        // 使用ansi_up将ANSI颜色代码转换为HTML
+        const ansi_up = new AnsiUp();
+        const terminalOutput = ``;
+        const html = ansi_up.ansi_to_html(terminalOutput);
+        document.getElementById('output').innerHTML = html;
+    </script>
+</body>
+</html>

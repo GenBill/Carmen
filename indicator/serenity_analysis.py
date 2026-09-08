@@ -181,7 +181,7 @@ def save_serenity_cache_entry(
             "symbol": sym,
             "message": msg,
             "created_at": now.isoformat(timespec="seconds"),
-            "model": model or os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip() or "agent-default",
+            "model": model or os.environ.get("CARMEN_SERENITY_HERMES_MODEL", "").strip() or "agent-default",
             "market": market or "",
             "stock_cn_name": stock_cn_name or "",
         }
@@ -304,8 +304,10 @@ def build_serenity_prompt(
     )
 
 
-def _extract_openclaw_reply(raw: str) -> str:
+def _extract_agent_reply(raw: str) -> str:
     text = (raw or "").strip()
+    if text.startswith("session_id:"):
+        text = "\n".join(text.splitlines()[1:]).strip()
     if not text:
         return ""
 
@@ -338,7 +340,7 @@ def _extract_openclaw_reply(raw: str) -> str:
                     return picked
         return ""
 
-    # `openclaw agent --json` usually emits pretty-printed JSON.
+    # Hermes `chat -q` may emit plain text or a JSON-compatible wrapper.
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
@@ -389,34 +391,11 @@ def _extract_telegram_message(reply: str) -> str:
     return text
 
 
-def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
-    openclaw_bin = os.environ.get(
-        "CARMEN_OPENCLAW_BIN",
-        "/home/serv/.nvm/versions/node/v22.22.0/bin/openclaw",
-    )
-    agent_id = os.environ.get("CARMEN_SERENITY_OPENCLAW_AGENT", "main")
-    model = os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip()
-    session_prefix = os.environ.get("CARMEN_SERENITY_OPENCLAW_SESSION_PREFIX", "tmp-carmen-serenity").strip() or "tmp-carmen-serenity"
-    prompt_hash = hashlib.sha1(prompt.encode("utf-8", errors="ignore")).hexdigest()[:10]
-    session_id = f"{session_prefix}-{int(time.time())}-{prompt_hash}"
-    cmd = [
-        openclaw_bin,
-        "agent",
-        "--agent",
-        agent_id,
-        "--session-id",
-        session_id,
-        "--message",
-        prompt,
-        "--json",
-        "--timeout",
-        str(timeout_seconds),
-    ]
-    if model:
-        cmd.extend(["--model", model])
+def _call_hermes_serenity_skill(prompt: str, timeout_seconds: int) -> str:
+    hermes_bin = os.environ.get("CARMEN_HERMES_BIN", "/home/serv/.local/bin/hermes")
     cp = subprocess.run(
-        cmd,
-        cwd="/home/serv/.openclaw/workspace",
+        [hermes_bin, "chat", "-Q", "-q", prompt],
+        cwd="/home/serv/Wyrd-Memory",
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -425,10 +404,10 @@ def _call_openclaw_serenity_skill(prompt: str, timeout_seconds: int) -> str:
     )
     if cp.returncode != 0:
         detail = (cp.stderr or cp.stdout or "").strip().splitlines()[-1:]
-        raise RuntimeError(detail[0] if detail else f"openclaw agent exited {cp.returncode}")
-    reply = _extract_openclaw_reply(cp.stdout)
+        raise RuntimeError(detail[0] if detail else f"Hermes chat exited {cp.returncode}")
+    reply = _extract_agent_reply(cp.stdout)
     if not reply:
-        raise RuntimeError("openclaw agent returned empty reply")
+        raise RuntimeError("Hermes returned an empty reply")
     return reply
 
 
@@ -446,9 +425,9 @@ def generate_serenity_analysis(
         stock_cn_name=stock_cn_name,
     )
     try:
-        body = _call_openclaw_serenity_skill(
+        body = _call_hermes_serenity_skill(
             prompt,
-            timeout_seconds=int(os.environ.get("CARMEN_SERENITY_OPENCLAW_TIMEOUT", "300")),
+            timeout_seconds=int(os.environ.get("CARMEN_SERENITY_HERMES_TIMEOUT", "300")),
         ).strip()
         body = _extract_telegram_message(body).strip()
         if not body:
@@ -458,7 +437,7 @@ def generate_serenity_analysis(
         save_serenity_cache_entry(
             symbol,
             message,
-            model=os.environ.get("CARMEN_SERENITY_OPENCLAW_MODEL", "").strip() or "agent-default",
+            model=os.environ.get("CARMEN_SERENITY_HERMES_MODEL", "").strip() or "agent-default",
             market=market,
             stock_cn_name=stock_cn_name,
         )

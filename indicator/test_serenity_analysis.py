@@ -56,7 +56,7 @@ def test_generate_serenity_analysis_saves_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(serenity_analysis, "CACHE_FILE", tmp_path / "serenity_cache.json")
     monkeypatch.setattr(
         serenity_analysis,
-        "_call_openclaw_serenity_skill",
+        "_call_hermes_serenity_skill",
         lambda prompt, timeout_seconds: (
             "BEGIN_TELEGRAM_MESSAGE\n"
             "产业链/chokepoint cached body\n"
@@ -75,7 +75,7 @@ def test_generate_serenity_analysis_saves_cache(tmp_path, monkeypatch):
     assert hit["message"] == msg
 
 
-def test_openclaw_skips_model_by_default(monkeypatch):
+def test_hermes_quiet_command(monkeypatch):
     captured = {}
 
     class Result:
@@ -87,12 +87,9 @@ def test_openclaw_skips_model_by_default(monkeypatch):
         captured["cmd"] = cmd
         return Result()
 
-    monkeypatch.delenv("CARMEN_SERENITY_OPENCLAW_MODEL", raising=False)
     monkeypatch.setattr(serenity_analysis.subprocess, "run", fake_run)
-
-    assert serenity_analysis._call_openclaw_serenity_skill("prompt", 1) == "ok"
-    assert captured["cmd"][captured["cmd"].index("--agent") + 1] == "main"
-    assert "--model" not in captured["cmd"]
+    assert serenity_analysis._call_hermes_serenity_skill("prompt", 1) == "ok"
+    assert captured["cmd"] == ["/home/serv/.local/bin/hermes", "chat", "-Q", "-q", "prompt"]
 
 
 def test_async_ai_sends_cached_serenity_without_claim_or_generation(monkeypatch):

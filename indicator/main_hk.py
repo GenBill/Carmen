@@ -61,8 +61,9 @@ AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") o
 
 HK_RSI_REBOUND_THRESHOLD = 18.0
 HK_RSI_REBOUND_TOP_N = 0
-HK_RSI_PIN_BAR_ENABLED = False  # 港股不做 RSI+Pin Bar
-HK_RSI_PIN_BAR_HOUR = 17  # 北京/香港时间 >= 17:00（启用时生效）
+HK_RSI_PIN_BAR_ENABLED = True
+HK_RSI_PIN_BAR_HOUR = 17  # 周五港股收盘后，北京/香港时间 >= 17:00
+HK_RSI_PIN_BAR_WEEKDAY = 4
 HK_RSI_REBOUND_LOOKBACK_DAYS = 126
 HK_RSI_REBOUND_MIN_AVG_UP_PCT = 3.0
 HK_RSI_REBOUND_MIN_AVG_DOWN_PCT = 1.5
@@ -79,7 +80,7 @@ def _hk_rsi_pin_bar_scan_allowed(now=None) -> bool:
         dt = tz.localize(dt)
     else:
         dt = dt.astimezone(tz)
-    return dt.hour >= HK_RSI_PIN_BAR_HOUR
+    return dt.weekday() == HK_RSI_PIN_BAR_WEEKDAY and dt.hour >= HK_RSI_PIN_BAR_HOUR
 
 
 def _hk_rsi_elasticity_score(avg_up_pct, avg_down_pct, avg_range_pct, up_down_ratio) -> float:
@@ -366,6 +367,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                     silver_on_sell=False,
                     rsi_mode="pin_bar",
                     rsi_period=rsi_period,
+                    rsi_require_weekly_context=True,
                 )
                 score = scan_state.score
                 rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
@@ -401,6 +403,7 @@ def main_hk(stock_path: str = 'stocks_list/cache/china_screener_HK.csv',
                                 silver_on_sell=False,
                                 rsi_mode="pin_bar",
                                 rsi_period=rsi_period,
+                                rsi_require_weekly_context=True,
                             )
                             score = scan_state.score
                             rsi_pin_bar_pre = scan_state.rsi_pin_bar_pre
@@ -818,12 +821,12 @@ if __name__ == "__main__":
         QQ_KEY, QQ_NUMBER = '', ''
     
     # 初始化调度器
-    # 港股运行节点: 12:05(午休), 15:30(收盘前30分钟), 16:10(收盘)
+    # 港股运行节点: 12:10(午休), 周五 17:00 RSI+Pin Bar 周K窗口
     scheduler = MarketScheduler(
         market='HK',
         run_nodes_cfg=[
             {'hour': 12, 'minute': 10},
-            {'hour': 17, 'minute': 0},  # RSI+Pin Bar 窗口
+            {'hour': 17, 'minute': 0},  # RSI+Pin Bar 周K窗口
         ]
     )
 

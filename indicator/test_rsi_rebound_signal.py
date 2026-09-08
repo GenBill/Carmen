@@ -4,6 +4,7 @@ from rsi_rebound_signal import (
     evaluate_macd_turn_positive,
     evaluate_rsi_pin_bar_prefilter,
     evaluate_rsi_pin_bar_shadow_volume,
+    evaluate_weekly_rsi_bottom_context,
     evaluate_rsi_rebound_setup,
     had_rsi_oversold_in_lookback,
     is_bullish_pin_bar_moderate,
@@ -30,6 +31,27 @@ def _hist_from_ohlc(open_price=100.0, up_pct=4.0, down_pct=2.0, n=60, close_pric
 
 def _vol_ok(_stock_data):
     return True, "ok", {"rebound_elasticity_score": 10.0}
+
+
+def _weekly_context_hist(weekly_closes):
+    rows = []
+    idx = []
+    start = pd.Timestamp("2026-01-05")
+    for week_idx, week_close in enumerate(weekly_closes):
+        base_day = start + pd.Timedelta(days=week_idx * 7)
+        for day in range(5):
+            dt = base_day + pd.Timedelta(days=day)
+            close = float(week_close)
+            open_ = close + 0.2
+            rows.append({
+                "Open": open_,
+                "High": max(open_, close) + 0.3,
+                "Low": min(open_, close) - 0.8,
+                "Close": close,
+                "Volume": 1_000_000,
+            })
+            idx.append(dt)
+    return pd.DataFrame(rows, index=pd.DatetimeIndex(idx))
 
 
 def test_oversold_today_does_not_require_turning():
@@ -96,6 +118,22 @@ def test_pin_bar_mode_sets_pre_not_active_until_shadow():
     assert state.rsi_signal_active is False
     assert state.rsi_oversold_today is False
     assert state.rsi_rebound_setup is False
+
+
+def test_weekly_rsi_context_passes_deep_weekly_oversold():
+    hist = _weekly_context_hist([100, 98, 95, 92, 89, 86, 83, 80, 77, 74, 71, 68])
+    ok, reason, info = evaluate_weekly_rsi_bottom_context({"hist": hist}, rsi_period=8)
+    assert ok is True
+    assert info["passed"] is True
+    assert "周RSI" in reason
+
+
+def test_weekly_rsi_context_blocks_non_bottom_weekly_chart():
+    hist = _weekly_context_hist([70, 72, 75, 78, 81, 84, 87, 90, 93, 96, 99, 102])
+    ok, reason, info = evaluate_weekly_rsi_bottom_context({"hist": hist}, rsi_period=8)
+    assert ok is False
+    assert info["passed"] is False
+    assert "周K底部上下文不足" in reason
 
 
 def test_shadow_volume_avg5_or_day_ratio():

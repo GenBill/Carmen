@@ -15,554 +15,128 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import yfinance as yf
 import pandas as pd
 from ddgs import DDGS
+from hithink_finance import get_hithink_client
 
-# A 股数据（akshare，与 basic_analysis 共用逻辑，避免重复）
-try:
-    import akshare as ak
-    import requests
-    from bs4 import BeautifulSoup
-    import re
-    _AKSHARE_AVAILABLE = True
-except ImportError:
-    _AKSHARE_AVAILABLE = False
-
-
-_A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL = 0.0
-_A_SHARE_TURNOVER_BREAKER_COOLDOWN_SEC = 120.0
-
-
-# ============== A 股数据获取（与 basic_analysis 共用，以 akshare 为准） ==============
-#
-# 东财 A 股行情：
-# - 优先：ak 的「个股 get」`push2.eastmoney.com/api/qt/stock/get`（与 stock_bid_ask_em 同源），
-#   单标的、单请求，避免 stock_zh_a_spot_em 拉全 A 的 clist 分页（82.push2 易 RemoteDisconnected）。
-# - 失败再回退：ak.stock_zh_a_spot_em() 全表按代码匹配（仍可能受网络/限流影响）。
-# 「换手率」在返回中经 _coerce 规范为 0~100 的有限 float(%) 或 None。
-
-
-def _em_code_to_six(x) -> str:
-    """
-    将东财 A 股「代码」列标量（int/float/字符串/NaN 等）规范为 6 位数字字符串（如 000001）。
-    无法解析则返回空串。
-    """
-    if x is None or isinstance(x, bool):
-        return ""
-    try:
-        if pd.isna(x):
-            return ""
-    except Exception:
-        pass
-    if isinstance(x, (int, float)) and not isinstance(x, bool):
-        if isinstance(x, float) and (not math.isfinite(x) or x < 0):
-            return ""
-        return f"{int(x):06d}"
-    s = str(x).strip()
-    if not s or s in ("<NA>", "NaN", "None", "nan"):
-        return ""
-    for conv in (int, float):
-        try:
-            n = int(conv(s)) if not isinstance(s, (int, float)) else int(s)
-            if 0 <= n < 10**7:
-                return f"{n:06d}"
-        except (TypeError, ValueError, OverflowError):
-            continue
-    return ""
-
-
-def _coerce_eastmoney_turnover_pct(raw) -> Optional[float]:
-    """
-    东财/akshare 的「换手率」可能为标量/字符串带 %/NaN；返回有限 float（百分数，如 3.2 表示 3.2%）或 None。
-    """
-    if raw is None or isinstance(raw, bool):
-        return None
-    try:
-        if pd.isna(raw):
-            return None
-    except Exception:
-        pass
-    if isinstance(raw, str):
-        t = raw.strip().rstrip("%").strip()
-        if not t or t.upper() in ("N/A", "NA", "-", "--", "NONE", "NULL"):
-            return None
-        try:
-            v = float(t)
-        except ValueError:
-            return None
-    else:
-        try:
-            v = float(raw)
-        except (TypeError, ValueError):
-            return None
-    if not math.isfinite(v) or v < 0:
-        return None
-    if v > 100:
-        return None
-    return v
-
-
-def _em_secid_a_share(code: str) -> Optional[str]:
-    """A 股 6 位 code → 东财 secid 形如 market.code；北交所等复杂规则可后续再补。"""
-    c = (code or "").strip()
-    if not (c.isdigit() and len(c) == 6):
-        return None
-    if c.startswith("6"):
-        return f"1.{c}"
-    if c[0] in "003":
-        return f"0.{c}"
-    return f"0.{c}"
-
-
-def _em_push2_stock_get_data_curl_cffi(
-    code: str,
-    fields: str,
-    *,
-    require_nonempty_data: bool = True,
-    timeout: float = 10,
-    max_retries: int = 3,
-) -> Optional[Dict[str, Any]]:
-    """
-    GET `push2.eastmoney.com/api/qt/stock/get`，返回 JSON 的 `data` 对象或 None。
-
-    与行情 `_em_stock_bid_ask_curl_cffi` 同传输：impersonate=chrome、空串禁代理
-    直连、3 次重试。`require_nonempty_data`：为 True 时 `data` 为 {} 或 null
-    视为失败重试，与原 bid-ask 行为一致；为 False 时 `data` 为 {} 也接受（aux 用）。
-    """
-    if not (code and code.isdigit() and len(code) == 6):
-        return None
-    try:
-        from curl_cffi import requests as cc_requests
-    except Exception:
-        return None
-    market_code = 1 if code.startswith("6") else 0
-    url = "https://push2.eastmoney.com/api/qt/stock/get"
-    params = {
-        "fltt": "2",
-        "invt": "2",
-        "fields": fields,
-        "secid": f"{market_code}.{code}",
-    }
-    retry_count = max(1, int(max_retries))
-    for i in range(retry_count):
-        try:
-            r = cc_requests.get(
-                url,
-                params=params,
-                impersonate="chrome",
-                timeout=timeout,
-                proxies={"http": "", "https": ""},
-            )
-            if r.status_code != 200:
-                raise RuntimeError(f"HTTP {r.status_code}")
-            j = r.json() or {}
-            d = j.get("data")
-            if d is None:
-                pass
-            elif require_nonempty_data and not d:
-                pass
-            else:
-                return d if isinstance(d, dict) else None
-        except Exception:
-            pass
-        if i < retry_count - 1:
-            time.sleep(0.4 * (i + 1))
-    return None
-
-
-def _em_stock_bid_ask_curl_cffi(code: str) -> Optional[Dict[str, Any]]:
-    """
-    `push2.eastmoney.com/api/qt/stock/get` 单标的 snapshot 的 curl_cffi 实现。
-
-    用 impersonate=chrome 绕过 python requests 的 TLS 指纹识别（东财间歇性
-    RemoteDisconnected 的根因），并显式 `proxies` 空串直连，避开 Clash 对
-    push2 短连接无通知关闭的问题。
-
-    字段映射严格对齐 akshare.stock.stock_ask_bid_em.stock_bid_ask_em 的 dict
-    输出（36 条 item/value），供 `_fetch_a_share_quotes_bid_ask` 作为首选路径。
-    失败返回 None 由上层回退。
-    """
-    if not (code and code.isdigit() and len(code) == 6):
-        return None
-    fields = (
-        "f120,f121,f122,f174,f175,f59,f163,f43,f57,f58,f169,f170,f46,f44,f51,"
-        "f168,f47,f164,f116,f60,f45,f52,f50,f48,f167,f117,f71,f161,f49,f530,"
-        "f135,f136,f137,f138,f139,f141,f142,f144,f145,f147,f148,f140,f143,f146,"
-        "f149,f55,f62,f162,f92,f173,f104,f105,f84,f85,f183,f184,f185,f186,f187,"
-        "f188,f189,f190,f191,f192,f107,f111,f86,f177,f78,f110,f262,f263,f264,f267,"
-        "f268,f255,f256,f257,f258,f127,f199,f128,f198,f259,f260,f261,f171,f277,f278,"
-        "f279,f288,f152,f250,f251,f252,f253,f254,f269,f270,f271,f272,f273,f274,f275,"
-        "f276,f265,f266,f289,f290,f286,f285,f292,f293,f294,f295"
-    )
-    data = _em_push2_stock_get_data_curl_cffi(code, fields, require_nonempty_data=True)
-    if not data:
-        return None
-
-    def _vol(k: str) -> Optional[float]:
-        v = data.get(k)
-        return (v * 100) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-    return {
-        "sell_5": data.get("f31"), "sell_5_vol": _vol("f32"),
-        "sell_4": data.get("f33"), "sell_4_vol": _vol("f34"),
-        "sell_3": data.get("f35"), "sell_3_vol": _vol("f36"),
-        "sell_2": data.get("f37"), "sell_2_vol": _vol("f38"),
-        "sell_1": data.get("f39"), "sell_1_vol": _vol("f40"),
-        "buy_1": data.get("f19"),  "buy_1_vol": _vol("f20"),
-        "buy_2": data.get("f17"),  "buy_2_vol": _vol("f18"),
-        "buy_3": data.get("f15"),  "buy_3_vol": _vol("f16"),
-        "buy_4": data.get("f13"),  "buy_4_vol": _vol("f14"),
-        "buy_5": data.get("f11"),  "buy_5_vol": _vol("f12"),
-        "最新": data.get("f43"),
-        "均价": data.get("f71"),
-        "涨幅": data.get("f170"),
-        "涨跌": data.get("f169"),
-        "总手": data.get("f47"),
-        "金额": data.get("f48"),
-        "换手": data.get("f168"),
-        "量比": data.get("f50"),
-        "最高": data.get("f44"),
-        "最低": data.get("f45"),
-        "今开": data.get("f46"),
-        "昨收": data.get("f60"),
-        "涨停": data.get("f51"),
-        "跌停": data.get("f52"),
-        "外盘": data.get("f49"),
-        "内盘": data.get("f161"),
-    }
-
-
-def fetch_a_share_today_open_from_ak(code: str) -> Optional[float]:
-    """
-    东财接口「今开」（与 stock_bid_ask_em / push2 stock get 同源），作 A 股开盘价的 akshare 核对基准。
-    失败返回 None。
-    """
-    if not _AKSHARE_AVAILABLE:
-        return None
-    want = _em_code_to_six(str(code or "").split(".")[0])
-    if len(want) != 6:
-        return None
-    m = _fetch_a_share_quotes_bid_ask(want)
-    if not m:
-        return None
-    jk = m.get("今开")
-    if jk is None:
-        return None
-    try:
-        v = float(jk)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(v) or v <= 0:
-        return None
-    return round(v, 4)
-
-
-def fetch_a_share_turnover_rate(code: str) -> Optional[float]:
-    """
-    轻量获取 A 股换手率(%)。
-
-    扫描阶段只需要换手率闸门。东财不稳定时使用熔断，避免每个候选股
-    都被 push2/akshare fallback 拖死；未知换手率由调用方按“不拦截”处理。
-    """
-    global _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL
-
-    if not _AKSHARE_AVAILABLE:
-        return None
-    want = _em_code_to_six(str(code or "").split(".")[0])
-    if len(want) != 6:
-        return None
-
-    now = time.time()
-    if now < _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL:
-        return None
-
-    data = _em_push2_stock_get_data_curl_cffi(
-        want,
-        "f168",
-        require_nonempty_data=True,
-        timeout=4,
-        max_retries=1,
-    )
-    if data is not None:
-        return _coerce_eastmoney_turnover_pct(data.get("f168"))
-
-    _A_SHARE_TURNOVER_BREAKER_DOWN_UNTIL = now + _A_SHARE_TURNOVER_BREAKER_COOLDOWN_SEC
-    return None
-
-
-def _fetch_a_share_quotes_bid_ask(
-    code: str,
-) -> Optional[Dict[str, Any]]:
-    """
-    东财单标的 snapshot：与 akshare.stock_bid_ask_em 同接口、同字段语义。
-    返回 dict: 最新, 涨幅, 换手, 量比 等，失败返回 None。
-
-    实现优先级：curl_cffi impersonate（抗 TLS 指纹 / 直连绕 Clash）
-    → akshare 原生 requests（兜底，保持既有行为）。
-    """
-    if not _AKSHARE_AVAILABLE:
-        return None
-    m = _em_stock_bid_ask_curl_cffi(code)
-    if m is not None:
-        return m
-    try:
-        from akshare.stock.stock_ask_bid_em import stock_bid_ask_em
-
-        dfm = stock_bid_ask_em(symbol=code)
-    except Exception:
-        return None
-    if dfm is None or dfm.empty or "item" not in dfm.columns or "value" not in dfm.columns:
-        return None
-    return dict(zip(dfm["item"], dfm["value"]))
-
-
-def _em_stock_get_aux_f58_f9_f23(code: str) -> Dict[str, Any]:
-    """
-    同 host 单请求取 f58 简称 + f9/f23（市盈/市净 常见字段，东财有则带）。
-
-    优先 `_em_push2_stock_get_data_curl_cffi`（与行情同传输）；失败回退
-    `requests`（与旧实现一致）。失败返回 {}。
-    """
-    c = (code or "").strip()
-    sec = _em_secid_a_share(c)
-    if not sec or not _AKSHARE_AVAILABLE:
-        return {}
-    d: Optional[Dict[str, Any]] = _em_push2_stock_get_data_curl_cffi(
-        c, "f58,f9,f23", require_nonempty_data=False
-    )
-    if d is None:
-        try:
-            r = requests.get(
-                "https://push2.eastmoney.com/api/qt/stock/get",
-                params={
-                    "fltt": "2",
-                    "invt": "2",
-                    "secid": sec,
-                    "fields": "f58,f9,f23",
-                },
-                timeout=12,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            r.raise_for_status()
-            d = (r.json() or {}).get("data") or {}
-        except Exception:
-            return {}
-    return {
-        "name": d.get("f58"),
-        "pe_ttm": d.get("f9"),
-        "pb_q": d.get("f23"),
-    }
+# ============== A 股数据获取（同花顺） ==============
 
 
 def _is_a_share(symbol: str) -> bool:
-    """判断是否为 A 股代码（6 位数字或 .SS/.SZ 后缀）"""
-    s = str(symbol).strip().upper()
-    if s.endswith(".SS") or s.endswith(".SZ"):
-        return len(s) >= 8
-    if s.isdigit() and len(s) == 6:
-        return True
-    return False
+    """判断是否为 A 股代码。"""
+    value = str(symbol or "").strip().upper()
+    return (
+        (len(value) == 6 and value.isdigit())
+        or value.endswith((".SS", ".SH", ".SZ", ".BJ"))
+    )
 
 
 def _normalize_a_share_code(symbol: str) -> str:
-    """提取 A 股 6 位代码"""
-    s = str(symbol).strip()
-    if s.endswith(".SS") or s.endswith(".SZ"):
-        return s[:6]
-    return s if s.isdigit() and len(s) == 6 else ""
+    """提取 A 股 6 位代码。"""
+    value = str(symbol or "").strip().upper().split(".")[0]
+    return value if len(value) == 6 and value.isdigit() else ""
 
 
 def _to_yfinance_a_share(symbol: str) -> str:
-    """转换为 yfinance 所需格式（如 300935.SZ）"""
+    """转换为 yfinance 使用的 A 股代码。"""
     code = _normalize_a_share_code(symbol)
     if not code:
         return symbol
-    return f"{code}.SZ" if code.startswith(("0", "3")) else f"{code}.SS"
+    if code.startswith(("0", "3")):
+        return f"{code}.SZ"
+    return f"{code}.SS"
 
 
-def _fetch_a_share_holder_count(code: str) -> str:
-    """从 akshare 获取最新股东户数"""
-    if not _AKSHARE_AVAILABLE:
-        return "N/A"
+def fetch_a_share_turnover_rate(code: str) -> Optional[float]:
+    """使用同花顺成交量、最新价和流通市值计算 A 股换手率(%)。"""
+    want = _normalize_a_share_code(code)
+    if not want:
+        return None
     try:
-        df = ak.stock_zh_a_gdhs_detail_em(symbol=code)
-        if df.empty or len(df) < 1:
-            return "N/A"
-        latest = df.iloc[-1]
-        count = latest.get("股东户数-本次", latest.get("股东户数", "N/A"))
-        if pd.isna(count):
-            return "N/A"
-        cnt = float(count)
-        return f"{cnt/10000:.2f}万" if cnt >= 10000 else f"{int(cnt)}"
+        value = get_hithink_client().get_turnover_pct(want)
+        return round(value, 4) if value is not None else None
     except Exception:
-        return "N/A"
+        return None
 
 
-def _fetch_a_share_profit_forecast(code: str) -> str:
-    """从 akshare 获取最新业绩预告"""
-    if not _AKSHARE_AVAILABLE:
-        return "暂无"
-    dates = ["20241231", "20240930", "20240630", "20231231"]
-    for date in dates:
-        try:
-            df = ak.stock_yjyg_em(date=date)
-            if df.empty:
-                continue
-            col_code = "股票代码" if "股票代码" in df.columns else "代码"
-            if col_code not in df.columns:
-                continue
-            sub = df[df[col_code].astype(str) == str(code)]
-            if sub.empty:
-                continue
-            row = sub.iloc[0]
-            pred = row.get("预测指标", row.get("业绩变动", ""))
-            change = row.get("业绩变动", row.get("业绩变动幅度", ""))
-            return f"{pred}: {change}"[:80]
-        except Exception:
-            continue
-    return "暂无"
-
-
-def _fetch_a_share_concepts(code: str) -> list:
-    """从东方财富页面提取概念标签"""
-    if not _AKSHARE_AVAILABLE:
-        return []
+def _hithink_report_id(statement: Dict[str, Any]) -> Optional[str]:
+    """将同花顺最新财报记录转换为财务指标接口的 YYYY-[1-4]。"""
     try:
-        prefix = "sz" if code.startswith("3") or code.startswith("0") else "sh"
-        url = f"https://quote.eastmoney.com/{prefix}{code}.html"
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        tags = soup.find_all("span", class_="tag")
-        return [t.get_text(strip=True) for t in tags if t.get_text(strip=True)][:5]
-    except Exception:
-        return []
+        year = int(statement.get("fiscal_year"))
+    except (TypeError, ValueError):
+        return None
+    period_map = {"Q1": 1, "H1": 2, "Q2": 2, "Q3": 3, "FY": 4, "Q4": 4}
+    quarter = period_map.get(str(statement.get("fiscal_period") or "").upper())
+    return f"{year}-{quarter}" if quarter else None
+
+
+def _hithink_indicator_value(data: Dict[str, Any], index_id: str):
+    for ability in data.get("abilities") or []:
+        for indicator in ability.get("indicators") or []:
+            if indicator.get("index_id") != index_id:
+                continue
+            value = indicator.get("value")
+            try:
+                return float(value) if value is not None else "N/A"
+            except (TypeError, ValueError):
+                return "N/A"
+    return "N/A"
 
 
 def fetch_a_share_data(code: str, name: str = None) -> Dict[str, Any]:
-    """
-    获取 A 股行情与基本面数据（以 akshare 东财源为准）。
-
-    行情/换手率：优先用东财 `stock/get` 单只接口（经 ak.stock_bid_ask_em），失败再回退全 A `stock_zh_a_spot_em`。
-    「换手率」在返回中经清洗为 0~100 的有限 float(%) 或 None。
-
-    供 basic_analysis 和 Agent 工具复用，避免重复载入。
-    """
-    if not _AKSHARE_AVAILABLE:
+    """使用同花顺获取 A 股行情、换手率、估值和财务指标。"""
+    want = _normalize_a_share_code(code)
+    if not want:
         return {}
     try:
-        want = _em_code_to_six(str(code or "").split(".")[0])
-        if len(want) != 6:
-            return {}
-
-        m = _fetch_a_share_quotes_bid_ask(want)
-        current = None
-        if m is None:
-            try:
-                spot = ak.stock_zh_a_spot_em()
-                if spot.empty or "代码" not in spot.columns:
-                    return {}
-                key = spot["代码"].map(_em_code_to_six)
-                match = spot[key == want]
-                if match.empty:
-                    return {}
-                current = match.iloc[0]
-            except Exception:
-                return {}
-
-        if m is not None:
-            price = m.get("最新")
-            change = m.get("涨幅")
-            turnover = _coerce_eastmoney_turnover_pct(m.get("换手"))
-            vol_ratio_raw = m.get("量比")
-        else:
-            price = current["最新价"]
-            change = current["涨跌幅"]
-            turnover = _coerce_eastmoney_turnover_pct(current.get("换手率"))
-            vol_ratio_raw = current.get("量比")
-
-        try:
-            vol_ratio = (
-                round(float(vol_ratio_raw), 2) if vol_ratio_raw is not None and not pd.isna(vol_ratio_raw) else "N/A"
-            )
-        except (TypeError, ValueError):
-            vol_ratio = "N/A"
-
-        if vol_ratio == "N/A":
-            try:
-                hist = ak.stock_zh_a_hist(
-                    symbol=want,
-                    period="daily",
-                    start_date=(datetime.now() - pd.Timedelta(days=90)).strftime("%Y%m%d"),
-                )
-                hist = hist.sort_values("日期")
-                if len(hist) >= 5:
-                    roll_mean = hist["成交量"].rolling(5).mean().iloc[-1]
-                    vol_ratio = (
-                        round(hist["成交量"].iloc[-1] / roll_mean, 2) if roll_mean and roll_mean > 0 else "N/A"
-                    )
-            except Exception:
-                pass
-
-        roe, pe, pb, revenue_growth = "N/A", "N/A", "N/A", "N/A"
-        try:
-            financials = ak.stock_financial_analysis_indicator(symbol=want)
-            if not financials.empty:
-                latest_fin = financials.iloc[-1]
-                roe = latest_fin.get("ROE", "N/A")
-                pe = latest_fin.get("PE", "N/A")
-                pb = latest_fin.get("PB", "N/A")
-                revenue_growth = latest_fin.get("营业总收入同比增长率", "N/A")
-        except Exception:
-            pass
-
-        aux = _em_stock_get_aux_f58_f9_f23(want)
-        if pe == "N/A" and aux.get("pe_ttm") is not None:
-            pe = aux["pe_ttm"]
-        if pb == "N/A" and aux.get("pb_q") is not None:
-            pb = aux["pb_q"]
-        if m is None and current is not None:
-            if pe == "N/A" and pd.notna(current.get("市盈率-动态")):
-                pe = current["市盈率-动态"]
-            if pb == "N/A" and pd.notna(current.get("市净率")):
-                pb = current["市净率"]
-
-        stock_name = name or aux.get("name")
-        if not stock_name and current is not None:
-            stock_name = current.get("名称")
-        if not stock_name:
-            stock_name = want
-
-        industry = "N/A"
-        try:
-            info_df = ak.stock_individual_info_em(symbol=want)
-            if not info_df.empty and "item" in info_df.columns and "value" in info_df.columns:
-                info = dict(zip(info_df["item"], info_df["value"]))
-                industry = info.get("行业", "N/A")
-        except Exception:
-            pass
-
-        holders = _fetch_a_share_holder_count(want)
-        forecast = _fetch_a_share_profit_forecast(want)
-        concepts = _fetch_a_share_concepts(want)
-        if not concepts:
-            concepts = [industry] if industry != "N/A" else []
-
-        return {
-            "代码": want,
-            "名称": stock_name,
-            "最新价": price,
-            "涨跌幅": change,
-            "换手率": turnover,
-            "量比": vol_ratio,
-            "ROE": roe,
-            "PE": pe,
-            "PB": pb,
-            "营收同比增长": revenue_growth,
-            "行业": industry,
-            "股东户数": holders,
-            "概念": concepts[:5],
-            "最新预告": forecast,
-        }
+        client = get_hithink_client()
+        snapshots = client.get_snapshot([want])
     except Exception:
         return {}
+    if not snapshots:
+        return {}
+
+    snapshot = snapshots[0]
+    valuation: Dict[str, Any] = {}
+    try:
+        rows = client.get_valuations([want])
+        if rows:
+            valuation = rows[0]
+    except Exception:
+        pass
+
+    turnover = None
+    try:
+        value = client.get_turnover_pct(want)
+        turnover = round(value, 4) if value is not None else None
+    except Exception:
+        pass
+
+    indicators: Dict[str, Any] = {}
+    try:
+        statements = client.get_income_statements(want, period="quarterly", limit=1)
+        report = _hithink_report_id(statements[0]) if statements else None
+        if report:
+            indicators = client.get_financial_indicators(want, report)
+    except Exception:
+        pass
+
+    return {
+        "代码": want,
+        "名称": name or valuation.get("name") or want,
+        "最新价": snapshot.get("last_price"),
+        "涨跌幅": snapshot.get("price_change_ratio_pct"),
+        "换手率": turnover,
+        "量比": "N/A",
+        "ROE": _hithink_indicator_value(indicators, "index_weighted_avg_roe"),
+        "PE": valuation.get("pe_ttm", "N/A"),
+        "PB": valuation.get("pb_mrq", "N/A"),
+        "营收同比增长": _hithink_indicator_value(
+            indicators, "calculate_operating_income_yoy_growth_ratio"
+        ),
+        "行业": "N/A",
+        "股东户数": "N/A",
+        "概念": [],
+        "最新预告": "N/A",
+    }
 
 
 # ============== 工具定义 ==============
@@ -636,7 +210,7 @@ def search_web(query: str, max_results: int = 5) -> str:
 
 @tool
 def get_stock_data_comprehensive(symbol: str, period: str = "1mo") -> str:
-    """获取股票完整数据（价格+财务+基本面）。A 股优先使用 akshare（含股东户数、业绩预告、行业、概念），港股/美股使用 yfinance。一次调用即可，避免重复获取。
+    """获取股票完整数据（价格+财务+基本面）。A 股使用同花顺，港股/美股使用 yfinance。
     
     Args:
         symbol: 股票代码，如 "AAPL", "0700.HK", "600519", "300935.SZ"

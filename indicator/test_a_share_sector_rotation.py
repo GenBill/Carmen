@@ -127,7 +127,7 @@ def test_post_close_window_uses_beijing_now(monkeypatch):
     assert sr.is_post_close_scan("A") is False
 
 
-def test_openclaw_cmd_skips_model_by_default(monkeypatch):
+def test_hermes_quiet_command(monkeypatch):
     captured = {}
 
     class Result:
@@ -139,11 +139,9 @@ def test_openclaw_cmd_skips_model_by_default(monkeypatch):
         captured["cmd"] = cmd
         return Result()
 
-    monkeypatch.delenv("CARMEN_SECTOR_ROTATION_OPENCLAW_MODEL", raising=False)
     monkeypatch.setattr(sr.subprocess, "run", fake_run)
-
-    assert sr._call_openclaw_sector_rotation("A", "prompt", 1) == "ok"
-    assert "--model" not in captured["cmd"]
+    assert sr._call_hermes_sector_rotation("A", "prompt", 1) == "ok"
+    assert captured["cmd"] == ["/home/serv/.local/bin/hermes", "chat", "-Q", "-q", "prompt"]
 
 
 def test_filter_signals_hk_and_us():
@@ -235,10 +233,10 @@ def test_run_daily_skips_send_when_no_b_or_above(tmp_path, monkeypatch):
     monkeypatch.setattr(sr, "_beijing_now", lambda w=None: when)
     monkeypatch.setattr(sr, "session_date_for_market", lambda market, w=None: date(2026, 7, 3))
     monkeypatch.setattr(sr, "load_telegram_token", lambda token_path=None: ("token", "123"))
-    monkeypatch.setattr(sr, "_openclaw_timeout", lambda: 1)
+    monkeypatch.setattr(sr, "_hermes_timeout", lambda: 1)
     monkeypatch.setattr(
         sr,
-        "_call_openclaw_sector_rotation",
+        "_call_hermes_sector_rotation",
         lambda market, prompt, timeout: (
             "BEGIN_TELEGRAM_MESSAGE\n"
             "📊 板块轮动分析 · 🇭🇰 港股 · 2026-07-03\n"
@@ -272,10 +270,10 @@ def test_run_daily_sends_when_has_b_or_above(tmp_path, monkeypatch):
     monkeypatch.setattr(sr, "_beijing_now", lambda w=None: when)
     monkeypatch.setattr(sr, "session_date_for_market", lambda market, w=None: date(2026, 7, 3))
     monkeypatch.setattr(sr, "load_telegram_token", lambda token_path=None: ("token", "123"))
-    monkeypatch.setattr(sr, "_openclaw_timeout", lambda: 1)
+    monkeypatch.setattr(sr, "_hermes_timeout", lambda: 1)
     monkeypatch.setattr(
         sr,
-        "_call_openclaw_sector_rotation",
+        "_call_hermes_sector_rotation",
         lambda market, prompt, timeout: (
             "BEGIN_TELEGRAM_MESSAGE\n"
             "📊 板块轮动分析 · 🇺🇸 美股 · 2026-07-03\n"

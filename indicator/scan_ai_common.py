@@ -10,6 +10,8 @@ from datetime import date
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, NamedTuple, Optional, Tuple
 
+from hithink_finance import get_hithink_client
+
 MIN_POSITION_BUILD_SCORE = 8.0
 IMMINENT_CROSS_WEIGHT = 0.5
 TUO_ACTUAL_CROSS_THRESHOLD = 3
@@ -24,64 +26,39 @@ _A_SHARE_TODAY_OPEN_CACHE: Optional[Dict[str, float]] = None
 _A_SHARE_TODAY_OPEN_CACHE_DATE: Optional[date] = None
 
 
-def _fetch_a_share_today_open_map_once() -> Dict[str, float]:
-    """拉取 A 股今开字典（进程内按自然日缓存；当日首次触发后全日复用）。"""
+def _fetch_a_share_today_open_once(symbol: str) -> Optional[float]:
+    """从同花顺查询一只候选股的今开价，并按自然日缓存。"""
     global _A_SHARE_TODAY_OPEN_CACHE, _A_SHARE_TODAY_OPEN_CACHE_DATE
     today = date.today()
-    if _A_SHARE_TODAY_OPEN_CACHE is not None and _A_SHARE_TODAY_OPEN_CACHE_DATE == today:
-        return _A_SHARE_TODAY_OPEN_CACHE
-    result = _fetch_a_share_today_open_map_impl()
-    _A_SHARE_TODAY_OPEN_CACHE = result
-    _A_SHARE_TODAY_OPEN_CACHE_DATE = today
-    return result
-
-
-def _fetch_a_share_today_open_map_impl() -> Dict[str, float]:
-    """实际拉取 A 股今开字典。"""
+    if _A_SHARE_TODAY_OPEN_CACHE is None or _A_SHARE_TODAY_OPEN_CACHE_DATE != today:
+        _A_SHARE_TODAY_OPEN_CACHE = {}
+        _A_SHARE_TODAY_OPEN_CACHE_DATE = today
+    code = str(symbol or "").split(".")[0]
+    if code in _A_SHARE_TODAY_OPEN_CACHE:
+        return _A_SHARE_TODAY_OPEN_CACHE[code]
     try:
-        import akshare as ak
-
-        spot = ak.stock_zh_a_spot()
+        rows = get_hithink_client().get_snapshot([symbol])
     except Exception:
-        return {}
-    if spot is None or spot.empty:
-        return {}
-    code_col = "代码"
-    open_col = "今开"
-    if code_col not in spot.columns or open_col not in spot.columns:
-        return {}
-    import pandas as pd
-
-    tmp = spot[[code_col, open_col]].copy()
-    tmp[code_col] = (
-        tmp[code_col]
-        .astype(str)
-        .str.extract(r"(\d{6})", expand=False)
-    )
-    result: Dict[str, float] = {}
-    for _, row in tmp.iterrows():
-        code = str(row[code_col]).strip()
-        if not code or len(code) != 6:
-            continue
-        try:
-            v = float(row[open_col])
-        except Exception:
-            continue
-        if not math.isfinite(v) or v <= 0:
-            continue
-        result[code] = v
-    return result
+        return None
+    if not rows:
+        return None
+    value = _finite_positive_open(rows[0].get("open_price"))
+    if value is not None:
+        _A_SHARE_TODAY_OPEN_CACHE[code] = value
+    return value
 
 
 def fetch_a_share_today_open_map() -> Dict[str, float]:
-    """获取 A 股今开字典（进程内按自然日缓存）。保留对外接口。"""
-    return _fetch_a_share_today_open_map_once()
+    """返回进程内当日已查询候选股的同花顺今开价缓存。"""
+    if _A_SHARE_TODAY_OPEN_CACHE_DATE != date.today():
+        return {}
+    return dict(_A_SHARE_TODAY_OPEN_CACHE or {})
 
 
 class OpeningPriceContext(NamedTuple):
     """开盘价上下文。
 
-    - A 股：akshare/东财「今开」可信，启用开盘跌幅闸门，不展示不确定性警告。
+    - A 股：同花顺「今开」可信，启用开盘跌幅闸门。
     - HK/美股：yfinance open 仅提示可能不准，不用于拦截。
     """
 
@@ -172,25 +149,22 @@ def resolve_opening_price_context_for_filter(
     a_share_today_open_map: Optional[Dict[str, float]] = None,
 ) -> OpeningPriceContext:
     """
-    A 股：优先使用传入的 akshare 今开字典；无不准确警告，启用闸门。
-    未提供今开字典：当日首次触发时自动拉全市场一次，进程内当日复用，失败则不启用闸门。
+    A 股：优先使用传入的今开字典；否则从同花顺查询当前候选股并按日缓存。
     HK/美股：yfinance open 可能不准，只展示不确定性警告，不做拦截。
     """
     open_chart = _finite_positive_open(stock_data.get('open'))
     upper = (symbol or '').upper()
     if upper.endswith('.SS') or upper.endswith('.SZ'):
         code = symbol.split('.')[0]
-        ak_open: Optional[float] = None
+        verified_open: Optional[float] = None
         if isinstance(a_share_today_open_map, dict):
-            ak_open = a_share_today_open_map.get(code)
+            verified_open = a_share_today_open_map.get(code)
         else:
-            # 自动从缓存获取
-            cache_map = _fetch_a_share_today_open_map_once()
-            ak_open = cache_map.get(code)
-        ak_open = _finite_positive_open(ak_open)
-        if ak_open is None:
+            verified_open = _fetch_a_share_today_open_once(symbol)
+        verified_open = _finite_positive_open(verified_open)
+        if verified_open is None:
             return OpeningPriceContext(open_chart, False, False)
-        return OpeningPriceContext(ak_open, False, True)
+        return OpeningPriceContext(verified_open, False, True)
     return OpeningPriceContext(open_chart, True, False)
 
 

@@ -65,7 +65,7 @@ import traceback
 from typing import Optional
 import hashlib
 
-# A 股：仅当东财/ak 返回「有效」换手率(%) 且 <= 本阈值时，关闭后台 AI/买入推送；不挡终端/列表打印
+# A 股：同花顺返回有效换手率且未达到分时阈值时，关闭后台 AI/买入推送；终端与列表继续展示
 # 北京时间：10:00 前 2%，10:00–12:00 前 5%，下午盘 10%
 A_SHARE_MIN_TURNOVER_PCT_EARLY_AM = 2.0
 A_SHARE_MIN_TURNOVER_PCT_AM = 5.0
@@ -122,8 +122,8 @@ def _a_share_min_turnover_pct_now() -> float:
 
 def _a_share_turnover_effective(raw) -> Optional[float]:
     """
-    仅当东财/ak 成功给出有限浮点(0~100)换手率(%) 时用于过滤/拦截；
-    None/NaN/越界/拉取失败 一律视为「未知」，不拦截、不挡打印。
+    同花顺成功给出有限浮点(0~100)换手率(%) 时用于过滤；
+    其他值按未知处理，信号继续进入后续流程并保留提示。
     """
     if raw is None or isinstance(raw, bool):
         return None
@@ -639,7 +639,7 @@ def main_a(stock_path: str = 'stocks_list/cache/china_screener_A.csv',
                         )
                     except Exception as e:
                         print(
-                            f"⚠️  {symbol} 东财/ak 换手率拉取失败（{e}），"
+                            f"⚠️  {symbol} 同花顺换手率拉取失败（{e}），"
                             f"本标的换手不做 {min_tp:g}% 拦截，信号照常"
                         )
                         turnover_rate = None

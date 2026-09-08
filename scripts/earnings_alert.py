@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Set
 
 import requests
 
-REPORTER_PATH = '/home/serv/.openclaw/workspace/scripts/reporter.py'
+REPORTER_PATH = '/home/serv/Wyrd-Memory/scripts/reporter.py'
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 INDICATOR_DIR = os.path.join(BASE_DIR, 'indicator')
@@ -19,7 +19,7 @@ from telegram_notifier import TelegramNotifier, load_telegram_token, build_teleg
 
 # Dedicated earnings-alert watchlist. Keep this independent from trading/buy-signal watchlists.
 WATCHLIST_PATH = os.path.join(BASE_DIR, 'data', 'earnings_watchlist_us.txt')
-INFO_BOT_TOKEN_PATH = '/home/serv/.openclaw/secrets/telegram_daily_news.token'
+INFO_BOT_TOKEN_PATH = '/home/serv/.hermes/secrets/telegram_daily_news.token'
 LOG_PREFIX = '[earnings-alert]'
 NASDAQ_CALENDAR_URL = 'https://api.nasdaq.com/api/calendar/earnings'
 LOOKAHEAD_DAYS = 3

@@ -40,7 +40,7 @@ def process_ai_task(
 ):
     """
     后台执行统一 AI 链路 build_or_load_ai_result，返回完整 ai result dict（单对象，非二元组）。
-    开盘价跌幅闸门在所有量能闸门之后执行；仅 A 股 akshare 今开可信时启用。
+    开盘价跌幅闸门在所有量能闸门之后执行；A 股同花顺今开有效时启用。
     """
     try:
         from analysis import build_or_load_ai_result, empty_refined_info

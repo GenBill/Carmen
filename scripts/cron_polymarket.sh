@@ -7,7 +7,7 @@ cd /home/serv/Carmen
 PYTHON_BIN="/home/serv/miniforge3/envs/Quant/bin/python3"
 SCRIPT_PATH="/home/serv/Carmen/scripts/polymarket_monitor.py"
 LOG_FILE="/home/serv/Carmen/scripts/polymarket_cron.log"
-INFO_BOT_TOKEN_FILE="/home/serv/.openclaw/secrets/telegram_daily_news.token"
+INFO_BOT_TOKEN_FILE="/home/serv/.hermes/secrets/telegram_daily_news.token"
 MAX_RETRIES=4
 RETRY_SLEEP=1800
 

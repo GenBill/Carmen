@@ -78,6 +78,7 @@ def evaluate_scan_signals(
     silver_on_sell: bool = True,
     rsi_mode: str = "classic",
     rsi_period: int = 8,
+    rsi_require_weekly_context: bool = False,
 ) -> ScanSignalState:
     """
     一次完成 CARMEN 综合分与 RSI 判定，并写入 stock_data 缓存字段。
@@ -110,6 +111,7 @@ def evaluate_scan_signals(
                 stock_data,
                 rsi_threshold,
                 rsi_period=rsi_period,
+                require_weekly_context=rsi_require_weekly_context,
             )
             stock_data['_rsi_pin_bar_pre'] = rsi_pin_bar_pre
             stock_data['_rsi_pin_bar_pre_reason'] = pre_reason

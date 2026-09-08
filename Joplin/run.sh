@@ -8,4 +8,4 @@ python scripts/average_down_calc.py -p 238 -f 10000 -mode B
 python scripts/average_down_calc.py -p 238 -f 10000 -mode B -n GLW
 
 # 自定义输出路径
-python scripts/average_down_calc.py -p 238 -f 10000 -mode A -o Joplin/GLW.md
+python scripts/average_down_calc.py -p 250 -f 40000 -mode A -o Joplin/CBRS.md

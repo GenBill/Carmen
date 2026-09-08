@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""探测 akshare 能否为「回撤预警」拉取：入队日起最高价 + 最新价。
+"""探测同花顺能否为「回撤预警」拉取：入队日起最高价 + 最新价。
 
 运行（项目根目录）:
-  python scripts/test_akshare_rebound_quote.py
-  python scripts/test_akshare_rebound_quote.py --symbol 002930.SZ --since 2026-05-07
+  python scripts/test_hithink_rebound_quote.py
+  python scripts/test_hithink_rebound_quote.py --symbol 002930.SZ --since 2026-05-07
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "indicator"))
 
-from rebound_ak_quote import akshare_available, fetch_rebound_quote  # noqa: E402
+from rebound_hithink_quote import fetch_rebound_quote  # noqa: E402
 
 QUEUE_FILE = ROOT / "indicator" / "runtime" / "a_share_high_build_alerts.json"
 
@@ -29,11 +29,7 @@ def probe(symbol: str, since: str) -> dict[str, Any]:
         "symbol": symbol,
         "since": since_d.isoformat(),
         "ok": False,
-        "akshare_import": akshare_available(),
     }
-    if not result["akshare_import"]:
-        result["error"] = "import akshare 失败"
-        return result
 
     quote = fetch_rebound_quote(symbol, since_d)
     if not quote:
@@ -60,7 +56,7 @@ def probe(symbol: str, since: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="akshare 回撤预警行情探测")
+    parser = argparse.ArgumentParser(description="同花顺回撤预警行情探测")
     parser.add_argument("--symbol", default=None, help="如 002930.SZ")
     parser.add_argument("--since", default=None, help="入队预警日 YYYY-MM-DD")
     args = parser.parse_args()

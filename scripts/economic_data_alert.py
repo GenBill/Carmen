@@ -26,7 +26,7 @@ if INDICATOR_DIR not in sys.path:
 
 from telegram_notifier import load_telegram_token, build_telegram_request_kwargs, parse_telegram_chat_ids  # noqa: E402
 
-INFO_BOT_TOKEN_PATH = '/home/serv/.openclaw/secrets/telegram_daily_news.token'
+INFO_BOT_TOKEN_PATH = '/home/serv/.hermes/secrets/telegram_daily_news.token'
 STATE_PATH = '/home/serv/Carmen/runtime/economic_data_alert_state.json'
 LOG_PREFIX = '[economic-data-alert]'
 NASDAQ_ECON_URL = 'https://api.nasdaq.com/api/calendar/economicevents'
@@ -38,7 +38,7 @@ REQUEST_HEADERS = {
     'Referer': 'https://www.nasdaq.com/',
 }
 TELEGRAM_REQUEST_KWARGS = build_telegram_request_kwargs(timeout=15)
-WYRD_TRIGGER_SCRIPT = '/home/serv/.openclaw/workspace/scripts/wyrd_telegram_trigger.sh'
+WYRD_TRIGGER_SCRIPT = '/home/serv/Wyrd-Memory/scripts/wyrd_telegram_trigger.sh'
 
 WATCH_COUNTRIES = {'United States', 'China'}
 
@@ -472,7 +472,7 @@ def trigger_wyrd_group_analysis(group: Dict) -> None:
     env.setdefault('HOME', '/home/serv')
     subprocess.run(
         cmd,
-        cwd='/home/serv/.openclaw/workspace',
+        cwd='/home/serv/Wyrd-Memory',
         env=env,
         check=True,
         timeout=960,

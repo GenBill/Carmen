@@ -18,15 +18,17 @@ import html
 import json
 import re
 import subprocess
-import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from hithink_finance import get_hithink_client
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "overfit_data"
-CACHE_DIR = OUT_DIR / "market_cache_akshare"
+CACHE_DIR = OUT_DIR / "market_cache_hithink"
 NAME_FILE = ROOT / "stocks_list" / "cache" / "china_screener_A.csv"
 GH_PAGES_REF = "origin/gh-pages"
 HTML_PATHS = ("docs/index_a.html", "docs/index_hka.html")
@@ -189,86 +191,60 @@ def extract_html_signals(limit_commits: Optional[int] = None) -> List[Dict[str, 
     return sorted(deduped.values(), key=lambda r: (r["signal_date"], r["symbol"], r["buy_score"] or 0))
 
 
-def ak_symbol(symbol: str) -> str:
-    return symbol.split(".", 1)[0]
-
-
 def history_cache_file(symbol: str, signal_date: str) -> Path:
     return CACHE_DIR / f"{symbol}_{signal_date}_250d.json"
 
 
-def normalize_akshare_hist(raw: Any) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    if raw is None or getattr(raw, "empty", True):
-        return rows
-    for _, item in raw.iterrows():
-        date_value = item.get("日期")
-        rows.append(
-            {
-                "date": str(date_value)[:10],
-                "open": parse_float(item.get("开盘")),
-                "high": parse_float(item.get("最高")),
-                "low": parse_float(item.get("最低")),
-                "close": parse_float(item.get("收盘")),
-                "volume": parse_float(item.get("成交量")),
-                "amount": parse_float(item.get("成交额")),
-                "turnover_rate": parse_float(item.get("换手率")),
-                "change_pct": parse_float(item.get("涨跌幅")),
-            }
-        )
-    return rows
+def _historical_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    timestamp = int(item["date_ms"]) / 1000
+    return {
+        "date": datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(
+            ZoneInfo("Asia/Shanghai")
+        ).date().isoformat(),
+        "open": parse_float(item.get("open_price")),
+        "high": parse_float(item.get("high_price")),
+        "low": parse_float(item.get("low_price")),
+        "close": parse_float(item.get("close_price")),
+        "volume": parse_float(item.get("volume")),
+        "amount": parse_float(item.get("amount")),
+        "turnover_rate": parse_float(item.get("turnover_ratio_pct")),
+        "change_pct": parse_float(item.get("pct_change")),
+    }
 
 
-def fetch_akshare_history(symbol: str, signal_date: str, sleep_seconds: float = 0.2) -> Dict[str, Any]:
+def fetch_hithink_history(symbol: str, signal_date: str) -> Dict[str, Any]:
     cache_file = history_cache_file(symbol, signal_date)
     if cache_file.exists():
         return json.loads(cache_file.read_text(encoding="utf-8"))
 
-    import akshare as ak
-
     end_dt = datetime.strptime(signal_date, "%Y-%m-%d")
     start_dt = end_dt - timedelta(days=520)
-    raw = ak.stock_zh_a_hist(
-        symbol=ak_symbol(symbol),
-        period="daily",
-        start_date=start_dt.strftime("%Y%m%d"),
-        end_date=end_dt.strftime("%Y%m%d"),
-        adjust="",
+    items = get_hithink_client().get_historical(
+        symbol,
+        start=start_dt.date(),
+        end=(end_dt + timedelta(days=1)).date(),
+        adjust="none",
     )
-    rows = normalize_akshare_hist(raw)
-    rows = [row for row in rows if row["date"] <= signal_date]
-    rows = rows[-250:]
+    rows = [_historical_row(item) for item in items]
+    rows = sorted((row for row in rows if row["date"] <= signal_date), key=lambda row: row["date"])[-250:]
     payload = {
         "symbol": symbol,
         "signal_date": signal_date,
-        "provider": "akshare.stock_zh_a_hist",
-        "adjust": "",
+        "provider": "hithink.prices.historical",
+        "adjust": "none",
         "bar_count": len(rows),
         "kline_250d": [
-            {
-                "date": row["date"],
-                "open": row["open"],
-                "high": row["high"],
-                "low": row["low"],
-                "close": row["close"],
-            }
+            {key: row[key] for key in ("date", "open", "high", "low", "close")}
             for row in rows
         ],
         "volume_250d": [
-            {
-                "date": row["date"],
-                "volume": row["volume"],
-                "amount": row["amount"],
-                "turnover_rate": row["turnover_rate"],
-            }
+            {key: row[key] for key in ("date", "volume", "amount", "turnover_rate")}
             for row in rows
         ],
         "raw_daily_250d": rows,
     }
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    if sleep_seconds > 0:
-        time.sleep(sleep_seconds)
     return payload
 
 
@@ -288,7 +264,7 @@ def build_samples(signals: List[Dict[str, Any]], fetch_market: bool) -> Tuple[Li
         sample = dict(signal)
         if fetch_market:
             try:
-                hist = fetch_akshare_history(signal["symbol"], signal["signal_date"])
+                hist = fetch_hithink_history(signal["symbol"], signal["signal_date"])
                 sample["kline_250d"] = hist["kline_250d"]
                 sample["volume_250d"] = hist["volume_250d"]
                 sample["market_data_provider"] = hist["provider"]
@@ -305,8 +281,8 @@ def build_samples(signals: List[Dict[str, Any]], fetch_market: bool) -> Tuple[Li
                 )
                 sample["kline_250d"] = []
                 sample["volume_250d"] = []
-                sample["market_data_provider"] = "akshare.stock_zh_a_hist"
-                sample["market_data_adjust"] = ""
+                sample["market_data_provider"] = "hithink.prices.historical"
+                sample["market_data_adjust"] = "none"
                 sample["bar_count"] = 0
         else:
             sample["kline_250d"] = []
@@ -322,7 +298,7 @@ def build_samples(signals: List[Dict[str, Any]], fetch_market: bool) -> Tuple[Li
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--parse-only", action="store_true", help="Do not fetch akshare market data")
+    parser.add_argument("--parse-only", action="store_true", help="Do not fetch HiThink market data")
     parser.add_argument("--limit-commits", type=int, default=None, help="Debug: only inspect newest N commits")
     args = parser.parse_args()
 
@@ -384,7 +360,7 @@ Files:
 
 - `clean_signals.csv`: one deduplicated A-share buy signal per `symbol + signal_date + buy_score`.
 - `clean_samples.jsonl`: one JSON object per signal, with `kline_250d` and `volume_250d` arrays.
-- `market_cache_akshare/`: cached per-symbol/per-date akshare history payloads.
+- `market_cache_hithink/`: cached per-symbol/per-date HiThink history payloads.
 - `clean_summary.json`: row counts and fetch failures.
 
 Sample JSONL shape:

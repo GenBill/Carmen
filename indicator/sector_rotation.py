@@ -20,7 +20,7 @@ import pytz
 import requests
 
 from scan_signal_eval import ScanSignalState
-from serenity_analysis import _extract_openclaw_reply, _extract_telegram_message
+from serenity_analysis import _extract_agent_reply, _extract_telegram_message
 from telegram_notifier import (
     append_signal_audit,
     build_telegram_request_kwargs,
@@ -134,9 +134,9 @@ def _normalize_market(market: str) -> str:
     return m
 
 
-def _openclaw_timeout() -> int:
+def _hermes_timeout() -> int:
     try:
-        return max(60, int(os.environ.get("CARMEN_SECTOR_ROTATION_OPENCLAW_TIMEOUT", "420") or 420))
+        return max(60, int(os.environ.get("CARMEN_SECTOR_ROTATION_HERMES_TIMEOUT", "420") or 420))
     except Exception:
         return 420
 
@@ -392,39 +392,12 @@ def build_sector_rotation_prompt(
     )
 
 
-def _call_openclaw_sector_rotation(market: str, prompt: str, timeout_seconds: int) -> str:
-    market = _normalize_market(market)
-    cfg = MARKET_CONFIGS[market]
-    openclaw_bin = os.environ.get(
-        "CARMEN_OPENCLAW_BIN",
-        "/home/serv/.nvm/versions/node/v22.22.0/bin/openclaw",
-    )
-    agent_id = os.environ.get("CARMEN_SECTOR_ROTATION_OPENCLAW_AGENT", "main")
-    model = os.environ.get("CARMEN_SECTOR_ROTATION_OPENCLAW_MODEL", "").strip()
-    session_prefix = (
-        os.environ.get("CARMEN_SECTOR_ROTATION_OPENCLAW_SESSION_PREFIX", cfg["session_prefix"]).strip()
-        or cfg["session_prefix"]
-    )
-    prompt_hash = hashlib.sha1(prompt.encode("utf-8", errors="ignore")).hexdigest()[:10]
-    session_id = f"{session_prefix}-{int(time.time())}-{prompt_hash}"
-    cmd = [
-        openclaw_bin,
-        "agent",
-        "--agent",
-        agent_id,
-        "--session-id",
-        session_id,
-        "--message",
-        prompt,
-        "--json",
-        "--timeout",
-        str(timeout_seconds),
-    ]
-    if model:
-        cmd.extend(["--model", model])
+def _call_hermes_sector_rotation(market: str, prompt: str, timeout_seconds: int) -> str:
+    _normalize_market(market)
+    hermes_bin = os.environ.get("CARMEN_HERMES_BIN", "/home/serv/.local/bin/hermes")
     cp = subprocess.run(
-        cmd,
-        cwd="/home/serv/.openclaw/workspace",
+        [hermes_bin, "chat", "-Q", "-q", prompt],
+        cwd="/home/serv/Wyrd-Memory",
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -433,10 +406,10 @@ def _call_openclaw_sector_rotation(market: str, prompt: str, timeout_seconds: in
     )
     if cp.returncode != 0:
         detail = (cp.stderr or cp.stdout or "").strip().splitlines()[-1:]
-        raise RuntimeError(detail[0] if detail else f"openclaw agent exited {cp.returncode}")
-    reply = _extract_openclaw_reply(cp.stdout)
+        raise RuntimeError(detail[0] if detail else f"Hermes chat exited {cp.returncode}")
+    reply = _extract_agent_reply(cp.stdout)
     if not reply:
-        raise RuntimeError("openclaw agent returned empty reply")
+        raise RuntimeError("Hermes returned an empty reply")
     return reply
 
 
@@ -563,10 +536,10 @@ def run_daily_sector_rotation_report(
     )
 
     try:
-        reply = _call_openclaw_sector_rotation(market, prompt, _openclaw_timeout())
+        reply = _call_hermes_sector_rotation(market, prompt, _hermes_timeout())
         body = _extract_telegram_message(reply).strip()
         if not body:
-            raise RuntimeError("OpenClaw 返回空 Telegram 正文")
+            raise RuntimeError("Hermes 返回空 Telegram 正文")
         priorities = extract_cluster_priorities(body)
         if not has_b_or_above_rotation(body):
             mark_report_success(market, day, len(report_signals), status="skipped")

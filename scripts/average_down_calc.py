@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""加仓点位与股数计算：5 笔等额资金，模式 A / 模式 B。"""
+"""加仓点位与股数计算：模式 A / 模式 B / 模式 C。"""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,7 @@ from pathlib import Path
 
 TRANCHES = 5
 TRANCHES_A = 6
+TRANCHES_C = 6
 DEFAULT_MD_PATH = Path(__file__).resolve().parent.parent / "Joplin" / "temp.md"
 
 
@@ -23,16 +24,16 @@ class Tranche:
     spent: float
 
 
-def _calc_tranches(
+def _calc_tranches_from_amounts(
     tranche_specs: list[tuple[int, float, float]],
-    total_funds: float,
-    num_tranches: int,
+    amounts: list[float],
 ) -> list[Tranche]:
-    """等额分配资金；买不完的余额滚入下一笔可用金额。"""
-    per_amount = total_funds / num_tranches
+    """按各笔金额分配；买不完的余额滚入下一笔可用金额。"""
     carry = 0.0
     rows: list[Tranche] = []
-    for index, step_drop_pct, price in tranche_specs:
+    for (index, step_drop_pct, price), per_amount in zip(
+        tranche_specs, amounts, strict=True
+    ):
         available = per_amount + carry
         shares = int(available // price)
         spent = shares * price
@@ -48,6 +49,18 @@ def _calc_tranches(
             )
         )
     return rows
+
+
+def _calc_tranches(
+    tranche_specs: list[tuple[int, float, float]],
+    total_funds: float,
+    num_tranches: int,
+) -> list[Tranche]:
+    """等额分配资金；买不完的余额滚入下一笔可用金额。"""
+    per_amount = total_funds / num_tranches
+    return _calc_tranches_from_amounts(
+        tranche_specs, [per_amount] * num_tranches
+    )
 
 
 def calc_mode_a(current_price: float, total_funds: float) -> list[Tranche]:
@@ -68,6 +81,19 @@ def calc_mode_b(current_price: float, total_funds: float) -> list[Tranche]:
         price = price * 0.84
         specs.append((i, 16.0, price))
     return _calc_tranches(specs, total_funds, TRANCHES)
+
+
+def calc_mode_c(current_price: float, total_funds: float) -> list[Tranche]:
+    """第 1 笔用 50% 资金现价建仓，剩余资金分 5 笔，每跌 16% 补一笔。"""
+    specs: list[tuple[int, float, float]] = [(1, 0.0, current_price)]
+    price = current_price
+    for i in range(2, TRANCHES_C + 1):
+        price = price * 0.84
+        specs.append((i, 16.0, price))
+    first_amount = total_funds * 0.5
+    topup_amount = (total_funds - first_amount) / TRANCHES
+    amounts = [first_amount] + [topup_amount] * TRANCHES
+    return _calc_tranches_from_amounts(specs, amounts)
 
 
 COL_SEP = "  |  "
@@ -170,14 +196,32 @@ def format_md(
     total_funds: float,
     title: str = "加仓计划",
 ) -> str:
-    per_amount = total_funds / (TRANCHES_A if mode == "A" else TRANCHES)
     total_spent = sum(r.spent for r in rows)
     total_shares = sum(r.shares for r in rows)
     unused = total_funds - total_spent
 
     if mode == "A":
+        per_amount = total_funds / TRANCHES_A
+        funds_desc = (
+            f"加仓总资金：{_format_money(total_funds)}"
+            f"（每笔分配 {_format_money(per_amount)}）"
+        )
         mode_desc = "分 6 笔等额加仓，第 1 笔现价买入，之后每笔相对上一笔再跌 16%"
+    elif mode == "C":
+        first_amount = total_funds * 0.5
+        topup_amount = (total_funds - first_amount) / TRANCHES
+        funds_desc = (
+            f"加仓总资金：{_format_money(total_funds)}"
+            f"（首笔 {_format_money(first_amount)}，"
+            f"补仓每笔 {_format_money(topup_amount)}）"
+        )
+        mode_desc = "首笔 50% 现价建仓，剩余资金分 5 笔，每跌 16% 补一笔"
     else:
+        per_amount = total_funds / TRANCHES
+        funds_desc = (
+            f"加仓总资金：{_format_money(total_funds)}"
+            f"（每笔分配 {_format_money(per_amount)}）"
+        )
         mode_desc = "每笔相对上一笔再跌 16%"
 
     lines = [
@@ -186,16 +230,13 @@ def format_md(
         "## 概览",
         "",
         f"- 当前价格：**{current_price:.2f}**",
-        (
-            f"- 加仓总资金：{_format_money(total_funds)}"
-            f"（每笔分配 {_format_money(per_amount)}）"
-        ),
+        f"- {funds_desc}",
         f"- 模式 **{mode}**：{mode_desc}",
         "",
         "### 建仓进度",
         "",
     ]
-    first_at_market = mode == "A"
+    first_at_market = mode in {"A", "C"}
     lines.extend(
         _tranche_progress_line(row, first_at_market=first_at_market) for row in rows
     )
@@ -233,6 +274,8 @@ def export_md(
         rows = calc_mode_a(current_price, total_funds)
     elif mode == "B":
         rows = calc_mode_b(current_price, total_funds)
+    elif mode == "C":
+        rows = calc_mode_c(current_price, total_funds)
     else:
         raise ValueError(f"未知模式: {mode}")
 
@@ -263,6 +306,10 @@ def print_tg(current_price: float, total_funds: float) -> None:
     print("方案B 跌 16% 开始接")
     for row in calc_mode_b(current_price, total_funds):
         print(f"{row.price:.2f} @ {row.shares}股")
+    print()
+    print("方案C 半仓建仓后分 5 笔补")
+    for row in calc_mode_c(current_price, total_funds):
+        print(f"{row.price:.2f} @ {row.shares}股")
 
 
 def run(current_price: float, total_funds: float) -> None:
@@ -274,11 +321,12 @@ def run(current_price: float, total_funds: float) -> None:
     per_amount = total_funds / TRANCHES
     print()
     print(f"当前价格: {current_price:.2f}")
-    print(f"加仓总资金: {total_funds:.2f}  (每笔分配 {per_amount:.2f})")
+    print(f"加仓总资金: {total_funds:.2f}  (模式 A/B 每笔分配 {per_amount:.2f})")
     print()
 
     mode_a = calc_mode_a(current_price, total_funds)
     mode_b = calc_mode_b(current_price, total_funds)
+    mode_c = calc_mode_c(current_price, total_funds)
 
     print_mode(
         "模式 A：分 6 笔等额加仓，第 1 笔现价买入，之后每笔相对上一笔再跌 16%",
@@ -290,11 +338,16 @@ def run(current_price: float, total_funds: float) -> None:
         mode_b,
         total_funds,
     )
+    print_mode(
+        "模式 C：首笔 50% 现价建仓，剩余资金分 5 笔，每跌 16% 补一笔",
+        mode_c,
+        total_funds,
+    )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="计算 5 笔等额加仓的点位与股数（模式 A / 模式 B）",
+        description="计算加仓点位与股数（模式 A / 模式 B / 模式 C）",
     )
     parser.add_argument("-p", "--price", type=float, help="当前标的价格")
     parser.add_argument("-f", "--funds", type=float, help="用于加仓的总资金")
@@ -307,7 +360,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-mode",
         "--mode",
-        choices=["A", "B", "a", "b"],
+        choices=["A", "B", "C", "a", "b", "c"],
         type=str,
         help="导出指定模式的 Markdown 到 Joplin/temp.md",
     )
@@ -369,7 +422,7 @@ def main() -> None:
             run(args.price, args.funds)
         return
 
-    print("加仓计算（资金均分 5 笔）")
+    print("加仓计算（模式 A / B / C）")
     price = args.price if args.price is not None else prompt_float("当前标的价格")
     funds = args.funds if args.funds is not None else prompt_float("用于加仓的资金")
     if args.tg:

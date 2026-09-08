@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""随机抽取 A 股，对比 akshare / yfinance 的今日开盘价。
+"""随机抽取 A 股，对比同花顺 / yfinance 的今日开盘价。
 
 运行：
   cd /home/serv/Carmen
@@ -9,20 +9,21 @@
 from __future__ import annotations
 
 import argparse
-import os
 import random
-from contextlib import contextmanager
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import akshare as ak
 import pandas as pd
 import pytz
 import yfinance as yf
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from hithink_finance import get_hithink_client  # noqa: E402
+
 A_LIST = ROOT / "stocks_list" / "cache" / "china_screener_A.csv"
 CN_TZ = pytz.timezone("Asia/Shanghai")
 
@@ -49,37 +50,13 @@ def load_a_share_pool() -> pd.DataFrame:
     return df.drop_duplicates("Symbol")
 
 
-@contextmanager
-def without_proxy():
-    """部分国内行情源经本机代理会断连；akshare 调用期间临时直连。"""
-    keys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
-    old = {k: os.environ.get(k) for k in keys}
-    try:
-        for k in keys:
-            os.environ.pop(k, None)
-        yield
-    finally:
-        for k, v in old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
-def get_akshare_open_map() -> dict[str, Any]:
-    """用新浪实时 A 股接口取今日今开；一次性拉全市场，避免逐只请求。
-
-    备注：EastMoney 的 stock_zh_a_spot_em 在本机网络路径偶发断连；
-    stock_zh_a_spot 更慢但当前更稳定。
-    """
-    spot = ak.stock_zh_a_spot()
-    code_col = "代码"
-    open_col = "今开"
-    if code_col not in spot.columns or open_col not in spot.columns:
-        raise ValueError(f"akshare 返回列异常: {list(spot.columns)}")
-    tmp = spot[[code_col, open_col]].copy()
-    tmp[code_col] = tmp[code_col].astype(str).str.extract(r"(\d{6})", expand=False)
-    return dict(zip(tmp[code_col], tmp[open_col]))
+def get_hithink_open_map(symbols: list[str]) -> dict[str, Any]:
+    """批量获取抽样标的今日今开。"""
+    rows = get_hithink_client().get_snapshot(symbols)
+    return {
+        str(row.get("thscode", "")).split(".", 1)[0]: row.get("open_price")
+        for row in rows
+    }
 
 
 def get_yfinance_today_open(symbol: str, today: str) -> tuple[Any, str]:
@@ -114,7 +91,7 @@ def fmt_price(x: Any) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="随机抽取 A 股，对比 akshare / yfinance 今日开盘价")
+    parser = argparse.ArgumentParser(description="随机抽取 A 股，对比同花顺 / yfinance 今日开盘价")
     parser.add_argument("-n", "--count", type=int, default=10, help="抽样数量，默认 10")
     parser.add_argument("--seed", type=int, default=None, help="随机种子；不填则真随机")
     args = parser.parse_args()
@@ -127,24 +104,24 @@ def main() -> None:
     rng = random.Random(args.seed)
     sample = pool.sample(n=args.count, random_state=rng.randrange(2**32) if args.seed is not None else None)
 
-    ak_open = get_akshare_open_map()
+    hithink_open = get_hithink_open_map(sample["Symbol"].tolist())
 
     rows = []
     for _, item in sample.iterrows():
         symbol = item["Symbol"]
         code = item["Code"]
         yf_open, note = get_yfinance_today_open(symbol, today)
-        ak_val = ak_open.get(code)
+        hithink_val = hithink_open.get(code)
         diff = None
-        if ak_val is not None and yf_open is not None and not pd.isna(ak_val):
-            diff = float(ak_val) - float(yf_open)
+        if hithink_val is not None and yf_open is not None and not pd.isna(hithink_val):
+            diff = float(hithink_val) - float(yf_open)
         rows.append(
             {
                 "symbol": symbol,
                 "name": item.get("Name", ""),
-                "akshare_open": fmt_price(ak_val),
+                "hithink_open": fmt_price(hithink_val),
                 "yfinance_open": fmt_price(yf_open),
-                "diff_ak_minus_yf": "NA" if diff is None else f"{diff:.3f}",
+                "diff_hithink_minus_yf": "NA" if diff is None else f"{diff:.3f}",
                 "note": note,
             }
         )

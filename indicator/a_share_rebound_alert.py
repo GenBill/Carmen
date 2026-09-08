@@ -18,7 +18,7 @@ import pandas as pd
 import pytz
 
 from a_share_st_filter import is_st_or_delisting_name
-from rebound_ak_quote import fetch_rebound_quote
+from rebound_hithink_quote import fetch_rebound_quote
 from telegram_notifier import append_signal_audit, carmen_alerts_muted
 
 try:
@@ -284,21 +284,21 @@ def check_rebound_conditions(
 
 
 def _drop_display_lines(
-    ak_quote: Optional[Dict[str, Any]],
+    hithink_quote: Optional[Dict[str, Any]],
     scan_price: Optional[float] = None,
 ) -> List[str]:
-    """akshare 跌幅仅展示；取不到则输出警告，不参与过滤。"""
-    if ak_quote:
-        peak = float(ak_quote.get("peak_high") or 0)
-        current = float(ak_quote.get("current_price") or 0)
+    """同花顺跌幅仅展示；数据缺失时输出提示并保持触发结果。"""
+    if hithink_quote:
+        peak = float(hithink_quote.get("peak_high") or 0)
+        current = float(hithink_quote.get("current_price") or 0)
         if peak > 0 and current > 0:
             drop_pct = (peak - current) / peak * 100.0
             return [
                 f"入队以来最高: {peak:.2f}",
-                f"当前价格(akshare): {current:.2f}",
+                f"当前价格(同花顺): {current:.2f}",
                 f"较入队以来最高跌幅: {drop_pct:.2f}%",
             ]
-    lines = ["⚠️ 跌幅数据暂不可用（akshare 未取到入队以来行情，不影响本次触发）"]
+    lines = ["⚠️ 同花顺跌幅数据暂不可用，本次触发结果保持有效"]
     if scan_price and float(scan_price) > 0:
         lines.append(f"扫描现价(参考): {float(scan_price):.2f}")
     return lines
@@ -310,7 +310,7 @@ def _format_rebound_message(
     peak_high: Optional[float],
     peak_low: Optional[float],
     scan_price: Optional[float],
-    ak_quote: Optional[Dict[str, Any]] = None,
+    hithink_quote: Optional[Dict[str, Any]] = None,
 ) -> str:
     symbol = entry.get("symbol", "")
     split_symbol = str(symbol).split(".")
@@ -356,7 +356,7 @@ def run_rebound_alert_scan(
 
     满足条件时推送预警；同一标的每个交易日最多推送一次（按日去重）。
     若提供 on_signal 回调，则在推送成功后以 payload 形式触达下游（如下单接口）。
-    akshare 跌幅仅写入预警正文展示，不参与过滤。
+    同花顺跌幅仅写入预警正文展示，不参与过滤。
     返回本轮触发条数。
     """
     if notifier is None:
@@ -422,16 +422,16 @@ def run_rebound_alert_scan(
             )
             continue
 
-        ak_quote = fetch_rebound_quote(symbol, first_d)
-        if not ak_quote:
-            print(f"⚠️  {symbol} akshare 跌幅展示不可用，仍按策略条件推送")
+        hithink_quote = fetch_rebound_quote(symbol, first_d)
+        if not hithink_quote:
+            print(f"⚠️  {symbol} 同花顺跌幅展示不可用，仍按策略条件推送")
         msg = _format_rebound_message(
             entry,
             ma_trigger,
             peak_high=peak_high,
             peak_low=peak_low,
             scan_price=scan_price,
-            ak_quote=ak_quote,
+            hithink_quote=hithink_quote,
         )
         signal_id = f"rebound:{symbol}:{entry.get('first_alert_date')}:{today_iso}"
         sent = notifier.send_message(msg, reply_markup=None, parse_mode="HTML")

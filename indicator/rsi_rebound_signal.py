@@ -128,6 +128,124 @@ RSI_PIN_LOOKBACK_BARS = 3
 RSI_PIN_SHADOW_DAY_RATIO = 0.40
 RSI_PIN_SHADOW_AVG5_MULT = 0.60
 RSI_PIN_AVG_VOLUME_DAYS = 5
+RSI_WEEKLY_CONTEXT_CEILING = 45.0
+RSI_WEEKLY_CONTEXT_FLOOR = 35.0
+
+
+def _weekly_ohlc_from_daily_hist(hist):
+    if hist is None or getattr(hist, 'empty', True):
+        return None
+    need = {'Open', 'High', 'Low', 'Close'}
+    if not need.issubset(set(hist.columns)):
+        return None
+    try:
+        import pandas as pd
+
+        weekly = hist.copy()
+        if not isinstance(weekly.index, pd.DatetimeIndex):
+            weekly.index = pd.to_datetime(weekly.index, errors='coerce')
+            weekly = weekly[weekly.index.notna()]
+        if getattr(weekly.index, 'tz', None) is not None:
+            weekly.index = weekly.index.tz_localize(None)
+        agg = {
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+        }
+        if 'Volume' in weekly.columns:
+            agg['Volume'] = 'sum'
+        return weekly.resample('W-FRI').agg(agg).dropna(subset=['Open', 'High', 'Low', 'Close'])
+    except Exception:
+        return None
+
+
+def evaluate_weekly_rsi_bottom_context(
+    stock_data: dict,
+    *,
+    rsi_period: int = 8,
+    rsi_ceiling: float = RSI_WEEKLY_CONTEXT_CEILING,
+    rsi_floor: float = RSI_WEEKLY_CONTEXT_FLOOR,
+) -> Tuple[bool, str, dict]:
+    """
+    周 K 底部上下文：
+    - 周 RSI 深度低位直接通过；
+    - 或周 RSI 低位且本周 RSI/周 K 有止跌迹象。
+    """
+    info = {
+        'weekly_rsi': None,
+        'weekly_rsi_prev': None,
+        'rsi_ceiling': float(rsi_ceiling),
+        'rsi_floor': float(rsi_floor),
+        'weekly_stabilized': False,
+        'passed': False,
+        'reason': '',
+    }
+    hist = (stock_data or {}).get('hist')
+    weekly = _weekly_ohlc_from_daily_hist(hist)
+    min_bars = max(int(rsi_period) + 3, 10)
+    if weekly is None or getattr(weekly, 'empty', True) or len(weekly) < min_bars:
+        info['reason'] = f'周K样本不足({0 if weekly is None else len(weekly)}/{min_bars})'
+        return False, info['reason'], info
+
+    from get_stock_price import calculate_rsi
+
+    rsi_series = calculate_rsi(weekly['Close'].astype(float), period=int(rsi_period), return_series=True)
+    if rsi_series is None or getattr(rsi_series, 'empty', True) or len(rsi_series) < 2:
+        info['reason'] = '周RSI序列无效'
+        return False, info['reason'], info
+
+    weekly_rsi = finite_rsi(rsi_series.iloc[-1])
+    weekly_rsi_prev = finite_rsi(rsi_series.iloc[-2])
+    if weekly_rsi is None or weekly_rsi_prev is None:
+        info['reason'] = '周RSI当前/前值无效'
+        return False, info['reason'], info
+
+    latest = weekly.iloc[-1]
+    prev_close = _finite_float(weekly['Close'].iloc[-2]) if len(weekly) >= 2 else None
+    open_ = _finite_float(latest.get('Open'))
+    high = _finite_float(latest.get('High'))
+    low = _finite_float(latest.get('Low'))
+    close = _finite_float(latest.get('Close'))
+    if None in (open_, high, low, close) or high <= low:
+        info['reason'] = '周K OHLC无效'
+        return False, info['reason'], info
+
+    body = abs(close - open_)
+    bar_range = high - low
+    lower_shadow = min(open_, close) - low
+    rsi_improving = weekly_rsi >= weekly_rsi_prev
+    weekly_stabilized = (
+        close >= open_
+        or (lower_shadow >= max(body, 1e-9) * 1.5 and close >= low + bar_range * 0.5)
+        or (prev_close is not None and close >= prev_close)
+    )
+    info.update({
+        'weekly_rsi': weekly_rsi,
+        'weekly_rsi_prev': weekly_rsi_prev,
+        'weekly_stabilized': weekly_stabilized,
+    })
+
+    if weekly_rsi <= float(rsi_floor):
+        info['passed'] = True
+        info['reason'] = f'周RSI深度低位({weekly_rsi:.1f}<={rsi_floor:g})'
+        return True, info['reason'], info
+
+    if weekly_rsi <= float(rsi_ceiling) and (rsi_improving or weekly_stabilized):
+        info['passed'] = True
+        reason_bits = [f'周RSI低位({weekly_rsi:.1f}<={rsi_ceiling:g})']
+        if rsi_improving:
+            reason_bits.append(f'周RSI止跌({weekly_rsi_prev:.1f}->{weekly_rsi:.1f})')
+        if weekly_stabilized:
+            reason_bits.append('周K止跌')
+        info['reason'] = '；'.join(reason_bits)
+        return True, info['reason'], info
+
+    info['reason'] = (
+        f'周K底部上下文不足(周RSI {weekly_rsi:.1f}, '
+        f'前值 {weekly_rsi_prev:.1f}, 周K止跌={weekly_stabilized})'
+    )
+    return False, info['reason'], info
 
 
 def latest_daily_ohlc(stock_data: dict) -> Optional[Tuple[float, float, float, float]]:
@@ -284,8 +402,9 @@ def evaluate_rsi_pin_bar_prefilter(
     *,
     lookback_bars: int = RSI_PIN_LOOKBACK_BARS,
     rsi_period: int = 8,
+    require_weekly_context: bool = False,
 ) -> Tuple[bool, str]:
-    """阶段1：近端 RSI 超跌 + 当日 Pin Bar 形态（不拉 5m）。"""
+    """阶段1：近端 RSI 超跌 + 当日 Pin Bar 形态 + 可选周 K 底部上下文。"""
     rsi_ok, rsi_reason = had_rsi_oversold_in_lookback(
         stock_data, threshold, lookback_bars=lookback_bars, rsi_period=rsi_period,
     )
@@ -294,6 +413,14 @@ def evaluate_rsi_pin_bar_prefilter(
     pin_ok, pin_reason = is_bullish_pin_bar_moderate(stock_data)
     if not pin_ok:
         return False, pin_reason
+    if require_weekly_context:
+        weekly_ok, weekly_reason, weekly_info = evaluate_weekly_rsi_bottom_context(
+            stock_data, rsi_period=rsi_period,
+        )
+        stock_data['_rsi_weekly_context'] = weekly_info
+        if not weekly_ok:
+            return False, weekly_reason
+        return True, f'{rsi_reason}；{pin_reason}；{weekly_reason}'
     return True, f'{rsi_reason}；{pin_reason}'
 
 
@@ -353,4 +480,3 @@ def evaluate_rsi_pin_bar_shadow_volume(
         f'ratio={shadow_vol / day_vol:.2f}, avg5d={avg_txt})'
     )
     return False, info['reason'], info
-

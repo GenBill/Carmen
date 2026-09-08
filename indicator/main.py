@@ -62,19 +62,23 @@ US_RSI_REBOUND_MIN_UP_DOWN_RATIO = 0.75
 US_RSI_REBOUND_TOP_N = 3  # 日常运行按弹性 Top3 播报；试跑脚本可临时改为 0
 US_RSI_PIN_BAR_HOUR_BJ_START = 6
 US_RSI_PIN_BAR_HOUR_BJ_END = 10  # [6, 10) 北京时间
+US_RSI_PIN_BAR_BJ_WEEKDAY = 5  # 美东周五收盘后，对应北京时间周六早盘
 FAST_SCAN_WORKERS = max(1, int(os.getenv("CARMEN_US_FAST_SCAN_WORKERS", os.getenv("CARMEN_FAST_SCAN_WORKERS", "4")) or 4))
 AI_FUTURE_TIMEOUT_SEC = float(os.getenv("CARMEN_AI_FUTURE_TIMEOUT_SEC", "180") or 180)
 
 
 def _us_rsi_pin_bar_scan_allowed(now=None) -> bool:
-    """美股 RSI+Pin Bar：北京时间 [06:00, 10:00)。"""
+    """美股 RSI+Pin Bar：美东周五收盘后，北京时间周六 [06:00, 10:00)。"""
     tz = pytz.timezone("Asia/Shanghai")
     dt = now or datetime.now(tz)
     if dt.tzinfo is None:
         dt = tz.localize(dt)
     else:
         dt = dt.astimezone(tz)
-    return US_RSI_PIN_BAR_HOUR_BJ_START <= dt.hour < US_RSI_PIN_BAR_HOUR_BJ_END
+    return (
+        dt.weekday() == US_RSI_PIN_BAR_BJ_WEEKDAY
+        and US_RSI_PIN_BAR_HOUR_BJ_START <= dt.hour < US_RSI_PIN_BAR_HOUR_BJ_END
+    )
 
 
 def _is_us_rsi_oversold_candidate(stock_data: dict) -> bool:
@@ -410,6 +414,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                     silver_on_sell=False,
                     rsi_mode="pin_bar",
                     rsi_period=rsi_period,
+                    rsi_require_weekly_context=True,
                 )
                 score = scan_state.score
                 rsi_oversold_today = scan_state.rsi_oversold_today
@@ -447,6 +452,7 @@ def main_us(stock_path: str='', rsi_period=8, macd_fast=8, macd_slow=17, macd_si
                                 silver_on_sell=False,
                                 rsi_mode="pin_bar",
                                 rsi_period=rsi_period,
+                                rsi_require_weekly_context=True,
                             )
                             score = scan_state.score
                             rsi_oversold_today = scan_state.rsi_oversold_today
@@ -902,7 +908,7 @@ def run_scheduler(stock_path='my_stock_symbols.txt',
     print("🚀 美股扫描程序已启动 (Hybrid Mode)")
     print(f"⏰ 定点扫描 (盘前/盘后): {scheduler.run_nodes_cfg}")
     print(f"⚡ 盘中监控: 市场开启期间每 600 秒扫描一次自选股")
-    print("📉 RSI+Pin Bar: 北京时间 06:00-10:00 额外全市场扫描一次")
+    print("📉 RSI+Pin Bar: 每周五美股收盘后，北京时间周六 06:00-10:00 结合周K额外全市场扫描一次")
 
     us_rsi_pin_last_bj_date = None
     

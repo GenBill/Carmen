@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agent.deepseek import DeepSeekAPI
+from research_summary import format_research_summary_note
 
 # 缓存配置
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'analysis_cache')
@@ -1270,6 +1271,7 @@ def build_or_load_ai_result(symbol: str, period_days: int = 250, market: str = N
 请用专业、简洁的语言进行分析，重点关注技术指标的信号强度和可靠性，并充分考虑当前时间因素对美股交易的影响。
 接口允许的话，你也可以适当检索一些新闻、政策、事件并分析其对美股交易的影响。
 """
+            research_note = format_research_summary_note(symbol, telegram_html=False)
 
             prompt = f"""
 【硬性要求】正文中标的代码 {symbol} 须至少出现两次；文中 RSI、MACD、成交量等数值必须与下方「格式化数据」一致，禁止套用其它股票或示例行情。
@@ -1279,6 +1281,11 @@ def build_or_load_ai_result(symbol: str, period_days: int = 250, market: str = N
 {time_info}
 
 {analysis_data}
+
+【研报/EPS摘要】
+{research_note}
+
+分析时必须纳入上述研报/EPS摘要：重点说明未来三年 EPS/净利润趋势是否支持当前短线信号；如果摘要显示暂缺，也要在风险提示中说明缺少研报/EPS支撑。
 
 请提供以下分析内容：
 

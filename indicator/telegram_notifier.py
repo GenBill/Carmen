@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, List
 
 from earnings_proximity import earnings_proximity_note
+from research_summary import format_research_summary_note
 from scan_ai_common import MIN_POSITION_BUILD_SCORE, evaluate_duanxian_tuo_gates, format_duanxian_tuo_display
 
 # 模块级全局缓存：{symbol: last_push_timestamp}
@@ -102,6 +103,7 @@ def format_signal_snapshot(
     stock_cn_name: Optional[str] = None,
     opening_uncertain_warning: bool = False,
     earnings_note: Optional[str] = None,
+    research_note: Optional[str] = None,
     stock_character_info: Optional[Dict] = None,
     rsi_rebound_volatility: Optional[Dict] = None,
 ) -> str:
@@ -216,6 +218,8 @@ def format_signal_snapshot(
     if earnings_note:
         note_line = html.escape(earnings_note) if telegram_html else earnings_note
         parts.append(note_line)
+    if research_note:
+        parts.append(research_note)
     return "\n".join(parts)
 
 
@@ -609,6 +613,7 @@ class TelegramNotifier:
                 volume_spike_text = "暂无"
 
         earn_note = earnings_proximity_note(symbol)
+        research_note = format_research_summary_note(symbol, telegram_html=True)
         msg = format_signal_snapshot(
             title=signal_title or ("📈反弹抄底信号" if is_rsi_rebound_signal else "📈 买入信号提醒"),
             symbol=symbol,
@@ -636,13 +641,15 @@ class TelegramNotifier:
             stock_cn_name=stock_cn_name,
             opening_uncertain_warning=opening_uncertain,
             earnings_note=earn_note,
+            research_note=research_note,
             stock_character_info=stock_character_info,
             rsi_rebound_volatility=rsi_rebound_volatility,
         )
         reply_markup = {
             "inline_keyboard": [
                 [{"text": "🤖 AI分析", "callback_data": f"ai_analysis:{symbol}"}],
-                [{"text": "📊 查基本面", "callback_data": f"fundamental:{symbol}"}]
+                [{"text": "📊 查基本面", "callback_data": f"fundamental:{symbol}"}],
+                [{"text": "🧾 查研报", "callback_data": f"research:{symbol}"}]
             ]
         }
         success = self.send_message(msg, reply_markup=reply_markup)

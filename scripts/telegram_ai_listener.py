@@ -42,6 +42,8 @@ from analysis import (  # noqa: E402
 from get_stock_price import get_stock_data  # noqa: E402
 from stock_character_filter import evaluate_stock_character  # noqa: E402
 from indicators import carmen_indicator, vegas_indicator, silver_indicator  # noqa: E402
+from wyckoff_analysis import format_wyckoff_report  # noqa: E402
+from research_summary import format_research_summary_note  # noqa: E402
 
 TELEGRAM_REQUEST_KWARGS = build_telegram_request_kwargs(timeout=30)
 TELEGRAM_REQUEST_KWARGS_FAST = build_telegram_request_kwargs(timeout=15)
@@ -128,8 +130,10 @@ def register_bot_commands(bot_token: str):
         {'command': 'help', 'description': '查看 Carmen Telegram 指令'},
         {'command': 'ai_analysis', 'description': '仅读缓存：/ai_analysis 600519SS'},
         {'command': 'score', 'description': '实时评分+股性：/score 002930'},
+        {'command': 'wyckoff', 'description': '维科夫阶段参考：/wyckoff 002930'},
         {'command': 'stock_character', 'description': '股性评分：/stock_character 002930'},
         {'command': 'duanxian', 'description': '短线是银分析：/duanxian 002930'},
+        {'command': 'research', 'description': '联网查研报/评级：/research 002930'},
         {'command': 'audit', 'description': '审计链：/audit 002930'},
         {'command': 'call', 'description': '加仓表：/call 116.8 60000'}
     ]
@@ -277,6 +281,27 @@ def query_stock_character(symbol: str) -> Tuple[str, Optional[str]]:
     return format_stock_character_report(symbol, stock_data, info, telegram_html=True), 'HTML'
 
 
+def query_wyckoff(symbol: str) -> Tuple[str, Optional[str]]:
+    try:
+        stock_data = get_stock_data(
+            symbol,
+            rsi_period=8,
+            macd_fast=8,
+            macd_slow=17,
+            macd_signal=9,
+            avg_volume_days=8,
+            use_cache=True,
+            cache_minutes=15,
+        )
+    except Exception as e:
+        return f'Wyckoff 阶段判断失败: {symbol} | {e}', None
+
+    if not stock_data:
+        return f'未获取到 {symbol} 行情/指标数据', None
+
+    return format_wyckoff_report(symbol, stock_data, telegram_html=True), 'HTML'
+
+
 def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
     try:
         stock_data = get_stock_data(
@@ -318,6 +343,8 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
         volume_spike_text = '暂无'
 
     stock_character_info = evaluate_stock_character(stock_data)
+    wyckoff_text = format_wyckoff_report(symbol, stock_data, telegram_html=True)
+    research_note = format_research_summary_note(symbol, telegram_html=True)
     score_text = format_signal_snapshot(
             title='📊 实时评分',
             symbol=symbol,
@@ -344,7 +371,9 @@ def query_realtime_score(symbol: str) -> Tuple[str, Optional[str]]:
             telegram_html=True,
             stock_cn_name=stock_cn_name,
             opening_uncertain_warning=False,
+            research_note=research_note,
         )
+    score_text += '\n\n' + wyckoff_text
     score_text += '\n\n' + format_stock_character_report(symbol, stock_data, stock_character_info, telegram_html=True)
     return (
         score_text,
@@ -414,9 +443,11 @@ def build_help_text() -> str:
         "/help 查看帮助\n"
         "/ai_analysis 002930 读取已缓存 AI 分析\n"
         "/score 002930 实时计算当前评分 + 股性评分\n"
+        "/wyckoff 002930 只看维科夫阶段参考\n"
         "/股性 002930 只看股性评分\n"
         "/stock_character 002930 只看股性评分\n"
         "/duanxian 002930 OpenClaw 短线是银 AI 分析\n"
+        "/research 002930 联网查研报/评级/目标价\n"
         "短线是银分析 002930 自然语言触发\n"
         "/audit 002930 查看最近审计链\n"
         "/call 116.8 60000 计算加仓下单价和股数"
@@ -556,6 +587,35 @@ def spawn_fundamental_worker(symbol: str, bot_token: str, chat_id: str, reply_to
         return False
 
 
+def spawn_research_worker(symbol: str, bot_token: str, chat_id: str, reply_to_message_id: Optional[int] = None) -> bool:
+    ensure_runtime_dir()
+    log_path = os.path.join(RUNTIME_DIR, f"research_{symbol.replace('.', '_')}_{int(time.time())}.log")
+    worker_script = os.path.join(SCRIPT_DIR, 'handle_research_click.py')
+    env = os.environ.copy()
+    env.setdefault('PYTHONUNBUFFERED', '1')
+    try:
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            subprocess.Popen(
+                [
+                    sys.executable, '-u', worker_script,
+                    '--symbol', symbol,
+                    '--bot-token', bot_token,
+                    '--chat-id', str(chat_id),
+                    '--reply-to-message-id', str(reply_to_message_id or ''),
+                ],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                cwd=CARMEN_ROOT,
+                env=env,
+                start_new_session=True,
+            )
+        print(f"🚀 research worker spawned: symbol={symbol} log={log_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ spawn research worker failed: {e}")
+        return False
+
+
 def spawn_duanxian_worker(symbol: str, bot_token: str, chat_id: str, reply_to_message_id: Optional[int] = None) -> bool:
     ensure_runtime_dir()
     log_path = os.path.join(RUNTIME_DIR, f"duanxian_{symbol.replace('.', '_')}_{int(time.time())}.log")
@@ -602,6 +662,10 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
             symbol = normalize_symbol(data.split(':', 1)[1])
             ok = spawn_fundamental_worker(symbol, bot_token, chat_id, reply_to_message_id=message.get('message_id'))
             answer_callback(bot_token, query['id'], '已收到，正在查询基本面…' if ok else '启动查询失败')
+        elif data.startswith('research:'):
+            symbol = normalize_symbol(data.split(':', 1)[1])
+            ok = spawn_research_worker(symbol, bot_token, chat_id, reply_to_message_id=message.get('message_id'))
+            answer_callback(bot_token, query['id'], '已收到，正在联网查研报…' if ok else '启动查询失败')
         return
 
     if 'message' in update:
@@ -651,6 +715,18 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
             )
             return
 
+        symbol = extract_symbol_from_message(text, 'wyckoff')
+        if symbol:
+            body, mode = query_wyckoff(symbol)
+            send_message(
+                bot_token,
+                chat_id,
+                body,
+                reply_to_message_id=message.get('message_id'),
+                parse_mode=mode,
+            )
+            return
+
         symbol = extract_stock_character_symbol_from_message(text)
         if symbol:
             body, mode = query_stock_character(symbol)
@@ -671,6 +747,18 @@ def handle_update(bot_token: str, expected_chat_id: str, update: dict):
                 chat_id,
                 f"📘 已收到 短线是银 AI 分析 {html.escape(symbol)}，正在启动 OpenClaw 临时 session…"
                 if ok else f"📘 短线是银分析启动失败: {html.escape(symbol)}",
+                reply_to_message_id=message.get('message_id'),
+            )
+            return
+
+        symbol = extract_symbol_from_message(text, 'research')
+        if symbol:
+            ok = spawn_research_worker(symbol, bot_token, chat_id, reply_to_message_id=message.get('message_id'))
+            send_message(
+                bot_token,
+                chat_id,
+                f"🧾 已收到研报/评级速查 {html.escape(symbol)}，正在启动联网检索…"
+                if ok else f"🧾 研报/评级速查启动失败: {html.escape(symbol)}",
                 reply_to_message_id=message.get('message_id'),
             )
             return
