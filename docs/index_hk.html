@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta data-hash="949c0833150d7b92f60817f2d013f23e">
+    <meta data-hash="296c47580066448f70b9ca10cbaf189e">
     <title>Carmen Stock Scanner - 港股监控</title>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
     <style>
@@ -154,13 +154,13 @@
         <!-- AI分析结果部分 -->
         
         
-        <div class="upload-time">📤 上传时间: 2026-09-10 17:07:47</div>
+        <div class="upload-time">📤 上传时间: 2026-09-11 12:18:42</div>
     </div>
     <script>
         // 使用ansi_up将ANSI颜色代码转换为HTML
         const ansi_up = new AnsiUp();
-        const terminalOutput = `⏰ 港股市场扫描 | 2026-09-10 17:01:45 CST
-查询 2781 只股票 | RSI8 | MACD(8,17,9) | 港股市场
+        const terminalOutput = `⏰ 港股市场扫描 | 2026-09-11 12:18:03 CST
+查询 2785 只股票 | RSI8 | MACD(8,17,9) | 港股市场
 
 ========================================================================================================================
  股票  |   价格涨跌幅    |      量比      |   RSI (前 → 今)   |             MACD指标              |       信号       
@@ -173,10 +173,10 @@
 1810.HK |  $25.92 [92m -0.46%[0m | 量比:[97m   113.1%[0m | RSI:  37.9 [92m↓[0m 34.3 | DIF:[92m -0.26[0m DEA:[92m  0.00[0m 斜率: [92m-0.08[0m | 
 9988.HK | $106.90 [92m -0.28%[0m | 量比:[97m    93.5%[0m | RSI:  37.0 [92m↓[0m 29.8 | DIF:[92m -2.73[0m DEA:[92m -2.29[0m 斜率: [91m+0.08[0m | 
 ========================================================================================================================
-⚠️ 本轮查询: 成功 671 | 失败 2110
+⚠️ 本轮查询: 成功 671 | 失败 2114
 🔔 本次扫描发现 4 个信号！
 
-📋 黑名单摘要: 7179 只股票 | 最近7天新增: 13 | 今日已检查: 0 | 平均成交金额: $2,368,316 | 移除阈值: $20,000,000 (2.0x)`;
+📋 黑名单摘要: 7179 只股票 | 最近7天新增: 11 | 今日已检查: 0 | 平均成交金额: $2,368,316 | 移除阈值: $20,000,000 (2.0x)`;
         const html = ansi_up.ansi_to_html(terminalOutput);
         document.getElementById('output').innerHTML = html;
     </script>
