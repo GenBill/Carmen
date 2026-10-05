@@ -1,18 +1,18 @@
 {
-  "last_update": "2026-10-05T08:25:42.316853",
-  "last_update_readable": "2026-10-05 08:25:42",
-  "content_hash": "dabcd91354c02c3b09e51ff5dcf1c5c2",
+  "last_update": "2026-10-05T10:31:50.499613",
+  "last_update_readable": "2026-10-05 10:31:50",
+  "content_hash": "4b9deab0b615dbcc6f277c7f4ead6530",
   "html_file": "docs/index_a.html",
-  "html_file_size": 15767,
+  "html_file_size": 14504,
   "market_status": "A股市场扫描",
-  "update_time": "2026-10-05 08:08:17",
+  "update_time": "2026-10-05 10:20:21",
   "mode": "A股市场模式",
   "stats": {
     "total_scanned": 4709,
     "success_count": 4693,
-    "signal_count": 18,
+    "signal_count": 6,
     "blacklist_count": 0,
-    "stocks_displayed": 14
+    "stocks_displayed": 4
   },
   "config": {
     "rsi_period": 8,
